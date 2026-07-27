@@ -1,0 +1,47 @@
+name: Bootstrap ArchVerse r28 from staging PR
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bootstrap-archverse-r28-pr
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'linux/r28-developer-cleanup-scan-gate' &&
+      github.event.pull_request.title == 'Publish ArchVerse r28 to main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out protected main context
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Run verified publisher from staging branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin linux/r28-developer-cleanup-scan-gate
+          git show origin/linux/r28-developer-cleanup-scan-gate:.r28-stage/publish-r28.sh > /tmp/publish-r28.sh
+          chmod +x /tmp/publish-r28.sh
+          /tmp/publish-r28.sh
+
+      - name: Close staging pull request
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr close "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --comment 'r28 was published directly to main and released successfully.'
