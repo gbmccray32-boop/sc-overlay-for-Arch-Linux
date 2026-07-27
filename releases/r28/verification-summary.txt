@@ -1,0 +1,33 @@
+ArchVerse Overlay r28 verification summary
+========================================
+
+Original archive SHA-256:
+f1143274930eb332b3581def5156852780da4a83af5a1d607bb513ef1eeaff43
+
+Release verifier result: PASSED
+
+Checks completed:
+- Required release files present
+- Six Scan Mode references present: 2°, 5°, 11°, 22°, 45°, 90°
+- JavaScript syntax passed
+- Shell syntax passed
+- 11 of 11 Node tests passed
+- Canonical signature table passed: 26 ores, 155 unique signatures, 1 collision
+- Scan Mode masks preprocess and self-match
+- Script permissions passed
+
+Test groups:
+1. Browser widget and held-F focus latch
+2. Continuous OCR on Wayland
+3. evdev held-key and dedicated shortcut parser
+4. Hold-key capture for F and Right Alt
+5. Mining OCR integration
+6. Mining OCR parser
+7. Mining signature hard whitelist
+8. Scan Mode reference and audio gate
+9. Star Citizen PID-session binding
+10. Unified Shift+F5 and single-canvas behavior
+11. Window manager and canvas preservation
+
+Final result:
+SC Overlay r28 release verification passed.

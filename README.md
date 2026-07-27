@@ -1,109 +1,56 @@
-# SC Overlay
+# ArchVerse Overlay for Arch Linux
 
-<p align="center">
-  <img src="build/icon.png" alt="SC Overlay blueprint tracker logo" width="180" />
-</p>
+> **Unofficial community Linux port.** ArchVerse Overlay is maintained by
+> [`gbmccray32-boop`](https://github.com/gbmccray32-boop) and is based on
+> SubliminalsTV's SC Overlay source. It is not an official SubliminalsTV release.
 
-SC Overlay is a desktop companion for Star Citizen. It started as a log watcher, but it has grown into a full in-game overlay built out of widgets you place, size and stack wherever you want them — mission and blueprint tracking, mining, and a few quality-of-life helpers that make the game feel less like a spreadsheet and more like a tool you actually use.
+ArchVerse Overlay is the Arch Linux/CachyOS-focused edition of the Star Citizen
+companion overlay. The current verified Linux build is **r28**.
 
-You can try the widgets in your browser, without installing anything: **[sc-overlay.subliminal.gg](https://sc-overlay.subliminal.gg)** runs the real ones.
+## Current Linux release
 
-This project is designed to be practical first and transparent second. If a feature needs extra processing, OCR, or a server-side handoff, it is opt-in and clearly separated from the local-first experience.
-
-## What it does
-
-The overlay is one transparent canvas across your monitors. Drag a widget where you want it, pull its corner to size it, and drop one onto another to stack them as tabs in a shared frame. Nine of them:
-
-- **Blueprints** — follow the mission you are currently tracking, see its blueprint pool with your real drop odds, and mark what you have already collected.
-- **Mining assistant** — reads the scan signature and names the deposit, calls out the ones you asked it to watch for, and counts your refinery jobs down with an alarm when they land.
-- **Reputation track** — your standing with a mission giver, the rank ladder above you, and which rank-gated ships sit at the top of it.
-- **Party split** — split a haul by SCU rather than by aUEC, price it from bundled commodity data, and save the split for the day the ore actually sells.
-- **Notepad** — scratch notes you can type into without leaving the game.
-- **Twitch chat** — any channel's live chat, rendered in the overlay's own styling.
-- **SC Feed** — Star Citizen news that surfaces when something breaks, then gets out of the way.
-- **Binding chart** — your own control chart on a hotkey.
-- **Web page** — whatever site you keep checking, pinned over the game.
-
-Plus:
-
-- **Sixteen skins**, fifteen of them drawn from a manufacturer's own cockpit. Leave it on auto and the overlay matches whatever ship you are flying.
-- **Fabricator helper**: optional OCR can identify a fabrication kiosk item and help build a capture for the blueprint catalog.
-- **Optional sync**: if you enable it, the app can send data to my servers for account-based or collection-related features.
-- Free, and it updates itself.
-
-## Privacy and opt-in
-
-This matters.
-
-- OCR features are opt-in. They are not enabled by default.
-- Any feature that sends data to my servers is opt-in. If you do not enable it, nothing leaves your machine.
-- The core experience is local-first. The overlay can work without sending your data anywhere.
-- If you do not want a feature, leave it off. That is the intended default.
-
-In plain English: if you want the extra automation, you turn it on. If you do not, the app still works and stays local.
-
-## How it works
-
-The app watches Star Citizen's game log and turns it into structured events. Those events feed the overlay UI, which can surface mission info, blueprint progress, and other helpers while you play.
-
-Optional OCR can be enabled when you want help reading fabrication screens. That is a separate path from the local mission-tracking experience.
-
-## Quick start
-
-Requirements:
-
-- Windows
-- Star Citizen installed and running
-
-Install the desktop app:
-
-- Download the latest installer from [sc-overlay.subliminal.gg](https://sc-overlay.subliminal.gg), or from the releases page here.
-- Run the installer and follow the setup prompts. The installer is unsigned, so Windows SmartScreen will warn you — More info, then Run anyway.
-- Launch the app and keep Star Citizen running while you use it.
-
-The app checks for updates on its own, so this is a one-time install.
-
-## Development notes
-
-If you are working from source or building the project yourself, install the following first:
-
-- Node.js
-- npm
-
-Then install dependencies:
+The complete developer-ready r28 source/install archive is stored under
+[`releases/r28`](releases/r28/). GitHub's connector cannot attach a binary asset
+to a Release object directly, so the verified archive is stored as four Git
+blobs with a reconstruction and clean-install script.
 
 ```bash
-npm install
+git clone https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux.git
+cd sc-overlay-for-Arch-Linux/releases/r28
+./reconstruct-and-install.sh
 ```
 
-Useful commands:
+The script:
 
-```bash
-npm run build
-npm run typecheck
-npm run overlay-app
-```
+1. Reassembles the exact verified r28 archive.
+2. Checks SHA-256 `f1143274930eb332b3581def5156852780da4a83af5a1d607bb513ef1eeaff43`.
+3. Extracts the developer-ready source tree.
+4. Runs `verify-release.sh`.
+5. Installs with `./install-cachyos.sh --clean-install`.
 
-If you want to run the server-side overlay pieces separately:
+## r28 highlights
 
-```bash
-npm run overlay
-```
+- Exact whitelist containing 26 ship-mineable ores and 155 unique signatures.
+- Invalid cockpit numbers are discarded rather than reported as unknown debris.
+- Focused signature-badge OCR with safe formatting correction and confirmation.
+- Scan Mode detection from the 2°, 5°, 11°, 22°, 45°, and 90° radar icons.
+- Tracked-ore sound and HAL notifications only while Scan Mode is confirmed.
+- Restored Shift+F5, Shift+F6, Escape, and held-F input through evdev fallback.
+- Dynamic StarCitizen.exe/Gamescope PID-session binding on Wayland.
+- Clean install, backup/migration, uninstall, diagnostics, and release verification.
 
-## Project status
+## Repository layout
 
-This repository is public for transparency and to accept contributions.
+- `releases/r28/` — verified Linux release payload and install tooling.
+- The remaining upstream source and history are retained for comparison,
+  attribution, and future Linux-port rebases.
+- `linux/r28-developer-cleanup-scan-gate` — transport/developer staging branch.
 
-If you want to contribute, the best path is to keep the changes aligned with the project's current direction: useful, local-first, and transparent. See [CONTRIBUTING.md](CONTRIBUTING.md).
+## License and attribution
 
-## License
+The upstream copyright notices and the **FSL-1.1-MIT** terms remain in
+[`LICENSE.md`](LICENSE.md). This fork uses separate community branding and does
+not claim to be an official SubliminalsTV build.
 
-SC Overlay is **source-available**, not open source. It is licensed under the [Functional Source License 1.1 with an MIT future licence (FSL-1.1-MIT)](LICENSE.md).
-
-In short: you may read, modify, fork and share the code, run your own build, and publish a **free** port to a platform this project does not support — a community Linux build is expressly fine. What you may not do is ship it inside a commercial product or service that substitutes for SC Overlay. Two years after each release, that version becomes MIT automatically.
-
-**Ports and forks are welcome.** Only Windows is officially supported and tested; if you build for another OS, please give it its own name and say plainly that it is an unofficial community build.
-
-**Names and logos are not licensed.** "SubliminalsTV", "SC Overlay", and the project's artwork are not covered by the licence — a fork needs its own branding. Star Citizen®, Roberts Space Industries® and Cloud Imperium® are registered trademarks of Cloud Imperium Rights LLC; this is an unofficial fan project.
-
-If you want to do something the licence does not allow, ask: <sub@subliminal.gg>.
+Star Citizen®, Roberts Space Industries®, and Cloud Imperium® are trademarks of
+Cloud Imperium Rights LLC. This is an unofficial fan project.

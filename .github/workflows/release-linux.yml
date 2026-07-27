@@ -1,0 +1,53 @@
+name: Verify ArchVerse Linux release
+
+on:
+  push:
+    branches: [main]
+    tags: ['linux-v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct r28 archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd releases/r28
+          cat r28-part-00 r28-part-01 r28-part-02 r28-part-03 \
+            > ArchVerse-Overlay-linux-v0.1.33-r28.tar.gz
+          sha256sum -c SHA256SUMS
+          mkdir -p /tmp/archverse-r28
+          tar -xzf ArchVerse-Overlay-linux-v0.1.33-r28.tar.gz \
+            -C /tmp/archverse-r28 --strip-components=1
+          /tmp/archverse-r28/verify-release.sh
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/linux-v')
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd releases/r28
+          cat r28-part-00 r28-part-01 r28-part-02 r28-part-03 \
+            > ArchVerse-Overlay-linux-v0.1.33-r28.tar.gz
+      - name: Publish tagged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "ArchVerse Overlay $GITHUB_REF_NAME" \
+            --notes-file releases/r28/README.md \
+            releases/r28/ArchVerse-Overlay-linux-v0.1.33-r28.tar.gz \
+            releases/r28/SHA256SUMS
