@@ -9,10 +9,8 @@ companion overlay. The current verified Linux build is **r28**.
 
 ## Current Linux release
 
-The complete developer-ready r28 source/install archive is stored under
-[`releases/r28`](releases/r28/). GitHub's connector cannot attach a binary asset
-to a Release object directly, so the verified archive is stored as four Git
-blobs with a reconstruction and clean-install script.
+The verified r28 archive and checksum are published as normal GitHub Release
+assets under tag `linux-v0.1.33-r28`.
 
 ```bash
 git clone https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux.git
@@ -20,11 +18,12 @@ cd sc-overlay-for-Arch-Linux/releases/r28
 ./reconstruct-and-install.sh
 ```
 
-The script:
+Despite its historical filename, `reconstruct-and-install.sh` no longer joins
+repository chunks. It now:
 
-1. Reassembles the exact verified r28 archive.
-2. Checks SHA-256 `f1143274930eb332b3581def5156852780da4a83af5a1d607bb513ef1eeaff43`.
-3. Extracts the developer-ready source tree.
+1. Downloads the official r28 archive and checksum from the GitHub Release.
+2. Pins and verifies SHA-256 `f1143274930eb332b3581def5156852780da4a83af5a1d607bb513ef1eeaff43`.
+3. Extracts the developer-ready source tree into the user cache.
 4. Runs `verify-release.sh`.
 5. Installs with `./install-cachyos.sh --clean-install`.
 
@@ -41,10 +40,10 @@ The script:
 
 ## Repository layout
 
-- `releases/r28/` — verified Linux release payload and install tooling.
+- `releases/r28/` — downloader, pinned checksum, verification summary, and install documentation.
 - The remaining upstream source and history are retained for comparison,
   attribution, and future Linux-port rebases.
-- `linux/r28-developer-cleanup-scan-gate` — transport/developer staging branch.
+- `release/linux-v0.1.33-r28` — permanent known-good r28 release branch.
 
 ## License and attribution
 
