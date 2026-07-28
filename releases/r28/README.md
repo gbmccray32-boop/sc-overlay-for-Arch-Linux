@@ -1,12 +1,12 @@
-# ArchVerse Overlay r28 release payload
+# ArchVerse Overlay r28
 
-This directory contains the exact verified archive previously packaged as:
+The verified Linux release is published under tag:
 
 ```text
-SC-Overlay-Custom-Linux-0.1.33-r28-developer-cleanup-scan-gate.tar.gz
+linux-v0.1.33-r28
 ```
 
-For the Linux fork it is reconstructed as:
+Release archive:
 
 ```text
 ArchVerse-Overlay-linux-v0.1.33-r28.tar.gz
@@ -14,21 +14,29 @@ ArchVerse-Overlay-linux-v0.1.33-r28.tar.gz
 
 ## Install
 
+From a clone of this repository:
+
 ```bash
+cd releases/r28
 ./reconstruct-and-install.sh
 ```
 
-The script verifies the original archive SHA-256, extracts it into your cache,
-runs the bundled release verifier, and performs a clean install while preserving
-saved widget positions, Mining selections, notes, and configuration backups.
+The script downloads the GitHub Release archive and its checksum, verifies both
+against the pinned r28 SHA-256, extracts the developer-ready source into your
+user cache, runs the bundled release verifier, and performs a clean install.
+Saved widget positions, Mining selections, notes, and configuration backups are
+preserved by the packaged installer.
 
-## Manual reconstruction
+## Direct download and manual verification
 
 ```bash
-cat r28-part-00 r28-part-01 r28-part-02 r28-part-03 \
-  > ArchVerse-Overlay-linux-v0.1.33-r28.tar.gz
+curl -fL -O \
+  https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/releases/download/linux-v0.1.33-r28/ArchVerse-Overlay-linux-v0.1.33-r28.tar.gz
 
-sha256sum -c SHA256SUMS
+curl -fL -O \
+  https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/releases/download/linux-v0.1.33-r28/ArchVerse-Overlay-linux-v0.1.33-r28.tar.gz.sha256
+
+sha256sum -c ArchVerse-Overlay-linux-v0.1.33-r28.tar.gz.sha256
 ```
 
 Expected SHA-256:
