@@ -56,7 +56,7 @@ npm run test:widgets
 
 ## Reporting a bug
 
-Include your Windows version, the app version (bottom-right of the overlay),
+Include your Linux version, the app version (bottom-right of the overlay),
 what you expected, and what happened. If it involves the game, the Star Citizen
 build number helps.
 
