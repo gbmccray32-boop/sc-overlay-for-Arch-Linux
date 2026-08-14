@@ -93,6 +93,24 @@ modules:
     build-commands:
       - mkdir -p /app/archverse/app /app/archverse/bin /app/bin
       - cp -a payload/app/. /app/archverse/app/
+      # Native Alpha 22 spawns its Node-mode sidecar through process.execPath. Under Zypak the GUI
+      # process path is not the contract we want to reuse for a child process; the Flatpak already
+      # ships and verifies a dedicated Node-mode wrapper. Rewrite only the installed Flatpak copy,
+      # leaving the verified native Alpha 22 payload byte-for-byte unchanged before this build step.
+      - |
+        python3 - <<'PY'
+        from pathlib import Path
+        p = Path('/app/archverse/app/electron/main.cjs')
+        s = p.read_text()
+        old = 'server = spawn(process.execPath, [serverJs], {'
+        new = '''const sidecarRuntime = process.env.SC_TRACKER_NODE_BIN || process.execPath;
+            if (process.env.SC_TRACKER_FLATPAK === "1") console.log(`[flatpak] sidecar runtime: ${sidecarRuntime}`);
+            server = spawn(sidecarRuntime, [serverJs], {'''
+        if s.count(old) != 1:
+            raise SystemExit(f'expected exactly one sidecar spawn target, found {s.count(old)}')
+        p.write_text(s.replace(old, new, 1))
+        PY
+      - grep -Fq 'const sidecarRuntime = process.env.SC_TRACKER_NODE_BIN || process.execPath;' /app/archverse/app/electron/main.cjs
       - cp -a payload/bin/. /app/archverse/bin/
       - chmod 0755 /app/archverse/bin/sc-blueprint-tracker
       - install -Dm644 payload/LICENSE.md /app/archverse/LICENSE.md
