@@ -194,9 +194,11 @@ modules:
 
         p.write_text(s)
 
-        # Run #7 proved startup blocks inside hotkeys.cjs. Trace only the installed Flatpak copy
-        # around its two top-level native-facing imports so the next run can distinguish Electron
-        # module access from uiohook-napi's native addon load without changing native Alpha 22.
+        # Run #8 proved Electron's own import succeeds but uiohook-napi's native addon blocks
+        # synchronously during require(). hotkeys.cjs already has a deliberate try/catch fallback
+        # to Electron globalShortcut when the low-level hook is unavailable. Make only the installed
+        # Flatpak copy take that existing fallback path instead of entering the blocking native addon.
+        # Native Alpha 22 remains unchanged and is checksum-verified before this Flatpak rewrite.
         hp = Path('/app/archverse/app/electron/hotkeys.cjs')
         h = hp.read_text()
 
@@ -216,9 +218,11 @@ modules:
 
         hreplace_once(
             '  const m = require("uiohook-napi");',
-            '''  if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-hotkeys] before uiohook require");
-          const m = require("uiohook-napi");
-          if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-hotkeys] after uiohook require");''',
+            '''  if (process.env.SC_TRACKER_FLATPAK === "1") {
+            console.error("[flatpak-hotkeys] skipping blocking uiohook-napi load; using existing fallback backend");
+            throw new Error("uiohook-napi disabled inside Flatpak sandbox");
+          }
+          const m = require("uiohook-napi");''',
             'uiohook require')
 
         hp.write_text(h)
@@ -230,7 +234,7 @@ modules:
       - grep -Fq '[flatpak-main] app ready' /app/archverse/app/electron/main.cjs
       - grep -Fq '[flatpak-main] before startServer' /app/archverse/app/electron/main.cjs
       - grep -Fq '[flatpak-hotkeys] before electron require' /app/archverse/app/electron/hotkeys.cjs
-      - grep -Fq '[flatpak-hotkeys] after uiohook require' /app/archverse/app/electron/hotkeys.cjs
+      - grep -Fq '[flatpak-hotkeys] skipping blocking uiohook-napi load' /app/archverse/app/electron/hotkeys.cjs
       - cp -a payload/bin/. /app/archverse/bin/
       - chmod 0755 /app/archverse/bin/sc-blueprint-tracker
       - install -Dm644 payload/LICENSE.md /app/archverse/LICENSE.md
