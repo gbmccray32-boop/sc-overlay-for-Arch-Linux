@@ -1,0 +1,19 @@
+--- a/app/electron/main.cjs
++++ b/app/electron/main.cjs
+@@ -419,7 +419,15 @@ function startServer() {
+     // either way — but the flag costs nothing and this exact spawn is where the regression
+     // lived, so it does not come off on an argument from subsystem flags.
+     // Inject the authoritative app version — the bundled sidecar can't read package.json.
+-    server = spawn(process.execPath, [serverJs], {
++    // In the Flatpak, the GUI Electron process is launched through Zypak. Do not reuse
++    // process.execPath for the Node-mode sidecar there: route the child through the dedicated
++    // Flatpak Node wrapper that has already been validated inside the sandbox. Native Linux and
++    // Windows keep the established process.execPath path unchanged.
++    const sidecarRuntime = process.env.SC_TRACKER_FLATPAK === "1" && process.env.SC_TRACKER_NODE_BIN
++      ? process.env.SC_TRACKER_NODE_BIN
++      : process.execPath;
++    if (process.env.SC_TRACKER_FLATPAK === "1") console.log(`[flatpak] sidecar runtime: ${sidecarRuntime}`);
++    server = spawn(sidecarRuntime, [serverJs], {
+       cwd: path.dirname(serverJs),
+       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", APP_VERSION, SC_INSTANCE: INSTANCE_ID, SC_TRACKER_CONFIG_DIR: CONFIG_DIR },
+       stdio,
