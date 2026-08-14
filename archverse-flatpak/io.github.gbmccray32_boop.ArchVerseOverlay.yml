@@ -193,6 +193,35 @@ modules:
             'initial sidecar startup block')
 
         p.write_text(s)
+
+        # Run #7 proved startup blocks inside hotkeys.cjs. Trace only the installed Flatpak copy
+        # around its two top-level native-facing imports so the next run can distinguish Electron
+        # module access from uiohook-napi's native addon load without changing native Alpha 22.
+        hp = Path('/app/archverse/app/electron/hotkeys.cjs')
+        h = hp.read_text()
+
+        def hreplace_once(old, new, label):
+            global h
+            count = h.count(old)
+            if count != 1:
+                raise SystemExit(f'expected exactly one hotkeys {label}, found {count}')
+            h = h.replace(old, new, 1)
+
+        hreplace_once(
+            'const { globalShortcut } = require("electron");',
+            '''if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-hotkeys] before electron require");
+        const { globalShortcut } = require("electron");
+        if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-hotkeys] after electron require");''',
+            'electron require')
+
+        hreplace_once(
+            '  const m = require("uiohook-napi");',
+            '''  if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-hotkeys] before uiohook require");
+          const m = require("uiohook-napi");
+          if (process.env.SC_TRACKER_FLATPAK === "1") console.error("[flatpak-hotkeys] after uiohook require");''',
+            'uiohook require')
+
+        hp.write_text(h)
         PY
       - grep -Fq 'const sidecarRuntime = process.env.SC_TRACKER_NODE_BIN || process.execPath;' /app/archverse/app/electron/main.cjs
       - grep -Fq '[flatpak-main] main.cjs entered' /app/archverse/app/electron/main.cjs
@@ -200,6 +229,8 @@ modules:
       - grep -Fq '[flatpak-main] after OverlayWindowManager constructor' /app/archverse/app/electron/main.cjs
       - grep -Fq '[flatpak-main] app ready' /app/archverse/app/electron/main.cjs
       - grep -Fq '[flatpak-main] before startServer' /app/archverse/app/electron/main.cjs
+      - grep -Fq '[flatpak-hotkeys] before electron require' /app/archverse/app/electron/hotkeys.cjs
+      - grep -Fq '[flatpak-hotkeys] after uiohook require' /app/archverse/app/electron/hotkeys.cjs
       - cp -a payload/bin/. /app/archverse/bin/
       - chmod 0755 /app/archverse/bin/sc-blueprint-tracker
       - install -Dm644 payload/LICENSE.md /app/archverse/LICENSE.md
