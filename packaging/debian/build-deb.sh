@@ -5,7 +5,7 @@ PAYLOAD_TAR="${1:?usage: build-deb.sh PAYLOAD_TAR ELECTRON_DIST OUTPUT_DIR}"
 ELECTRON_DIST="${2:?usage: build-deb.sh PAYLOAD_TAR ELECTRON_DIST OUTPUT_DIR}"
 OUTPUT_DIR="${3:?usage: build-deb.sh PAYLOAD_TAR ELECTRON_DIST OUTPUT_DIR}"
 VERSION="0.1.42-r31-alpha.21"
-PKGVER="0.1.42~r31~alpha21-5"
+PKGVER="0.1.42~r31~alpha21-6"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -29,7 +29,7 @@ Section: games
 Priority: optional
 Architecture: amd64
 Maintainer: ArchVerse Linux Community <gbmccray32@gmail.com>
-Depends: nodejs, tesseract-ocr, xdotool, x11-xserver-utils, imagemagick, ffmpeg, spectacle, libnss3, libxss1, libgbm1, libx11-6, libxtst6, libxrandr2
+Depends: nodejs, tesseract-ocr, tesseract-ocr-eng, xdotool, x11-xserver-utils, imagemagick, ffmpeg, spectacle, libnss3, libxss1, libgbm1, libx11-6, libxtst6, libxrandr2
 Recommends: kscreen
 Conflicts: sc-blueprint-tracker
 Provides: sc-blueprint-tracker
