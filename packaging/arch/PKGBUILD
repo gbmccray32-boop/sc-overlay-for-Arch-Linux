@@ -1,6 +1,6 @@
 pkgname=archverse-overlay
 pkgver=0.1.42.r31.alpha21
-pkgrel=1
+pkgrel=2
 pkgdesc='Community Linux port of the ArchVerse Star Citizen overlay'
 arch=('x86_64')
 url='https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux'
