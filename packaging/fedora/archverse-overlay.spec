@@ -53,14 +53,13 @@ Linux behavior policies are identical to the Arch and Debian package targets.
 rm -rf %{buildroot}
 mkdir -p %{buildroot}/opt/archverse-overlay
 
-# Source1 is unpacked by %setup beneath the application source directory only as an RPM staging
-# convenience. Do not copy that temporary directory into /opt; install the runtime once, at the
-# path selected by the common launcher.
-rm -rf electron-runtime
+# Source1 is unpacked beneath the application source directory as an RPM staging convenience.
+# Copy the application tree, remove only the duplicate buildroot copy, then install that staging
+# runtime once at the path selected by the common launcher.
 cp -a . %{buildroot}/opt/archverse-overlay/
+rm -rf %{buildroot}/opt/archverse-overlay/electron-runtime
 mkdir -p %{buildroot}/opt/archverse-overlay/runtime/electron
-cp -a %{_builddir}/archverse-overlay-0.1.42-build/ArchVerse-Overlay-0.1.42-r31-alpha.21/electron-runtime/. \
-  %{buildroot}/opt/archverse-overlay/runtime/electron/
+cp -a electron-runtime/. %{buildroot}/opt/archverse-overlay/runtime/electron/
 
 install -Dm0755 %{SOURCE2} %{buildroot}%{_bindir}/archverse-overlay
 ln -s archverse-overlay %{buildroot}%{_bindir}/sc-blueprint-tracker
