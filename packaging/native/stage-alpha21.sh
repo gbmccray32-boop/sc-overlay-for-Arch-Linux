@@ -48,6 +48,7 @@ entry={
     {'kind':'fixed','label':'KDE Spectacle screenshot race','text':'Wayland screenshot capture waits longer for a stable, decodable PNG before declaring the Spectacle backend unavailable.'},
     {'kind':'improved','label':'Linux widget focus handoff','text':'After a widget click and interaction-key release, the widget stays interactive only while the pointer remains inside a classified widget. Leaving all widgets restores click-through and the pre-overlay native window.'},
     {'kind':'improved','label':'Native package portability','text':'The Arch, Fedora and Debian package targets share one application payload and one pinned Electron runtime rather than carrying distro-specific application forks.'},
+    {'kind':'improved','label':'CPU OCR package hygiene','text':'Native packages omit unused CUDA/TensorRT ONNX providers and musl-only Koffi binaries while retaining and startup-testing the CPU RapidOCR runtime used by ArchVerse.'},
   ]
 }
 out={'0.1.42-r31-alpha.21':entry}
@@ -77,6 +78,31 @@ unzip -q "$ELECTRON_ARCHIVE" -d "$OUT/runtime/electron"
 if [[ -f "$OUT/runtime/electron/chrome-sandbox" ]]; then
   chmod 4755 "$OUT/runtime/electron/chrome-sandbox"
 fi
+
+# All three native targets are glibc distributions and ArchVerse uses ONNX Runtime CPU execution.
+# Do not let package scanners turn vendor-only CUDA/TensorRT or musl fallback binaries into host
+# dependencies. Keep libonnxruntime.so, providers_shared and the N-API binding intact.
+ONNX_LINUX_DIR="$OUT/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64"
+for optional_provider in \
+  libonnxruntime_providers_cuda.so \
+  libonnxruntime_providers_tensorrt.so; do
+  if [[ -f "$ONNX_LINUX_DIR/$optional_provider" ]]; then
+    echo "[native-stage] pruning unused ONNX provider: $optional_provider"
+    rm -f "$ONNX_LINUX_DIR/$optional_provider"
+  fi
+done
+KOFFI_MUSL_DIR="$OUT/app/node_modules/@koromix/koffi-linux-x64/musl_x64"
+if [[ -d "$KOFFI_MUSL_DIR" ]]; then
+  echo "[native-stage] pruning unused Koffi musl_x64 prebuild"
+  rm -rf "$KOFFI_MUSL_DIR"
+fi
+
+[[ -s "$ONNX_LINUX_DIR/libonnxruntime.so.1" ]] || { echo "CPU ONNX runtime missing after prune" >&2; exit 4; }
+[[ -s "$ONNX_LINUX_DIR/libonnxruntime_providers_shared.so" ]] || { echo "ONNX shared provider missing after prune" >&2; exit 4; }
+[[ -s "$ONNX_LINUX_DIR/onnxruntime_binding.node" ]] || { echo "ONNX native binding missing after prune" >&2; exit 4; }
+[[ ! -e "$ONNX_LINUX_DIR/libonnxruntime_providers_cuda.so" ]] || { echo "CUDA provider unexpectedly remains" >&2; exit 4; }
+[[ ! -e "$ONNX_LINUX_DIR/libonnxruntime_providers_tensorrt.so" ]] || { echo "TensorRT provider unexpectedly remains" >&2; exit 4; }
+[[ ! -e "$KOFFI_MUSL_DIR" ]] || { echo "musl Koffi prebuild unexpectedly remains" >&2; exit 4; }
 
 # The proven launcher is self-relative. Only replace its distro-specific /usr/bin/electron42
 # default with the bundled runtime; all X11/XWayland, Gamescope, renderer, OCR and focus flags
@@ -136,9 +162,23 @@ if [[ -f "$OUT/runtime/electron/chrome-sandbox" ]]; then
   [[ "$mode" == "4755" ]] || { echo "chrome-sandbox mode is $mode, expected 4755" >&2; exit 5; }
 fi
 
+# Stronger than a package import: initialize the exact CPU OCR engine and bundled model set that
+# ArchVerse will use at runtime. This must continue to pass after optional provider pruning.
 (
   cd "$OUT/app"
-  node -e "import('@gutenye/ocr-node').then(()=>console.log('[native-stage] RapidOCR module import OK')).catch(e=>{console.error(e);process.exit(1)})"
+  node --input-type=module <<'NODE'
+import fs from 'node:fs';
+const [{ default: Ocr }, { default: models }] = await Promise.all([
+  import('@gutenye/ocr-node'),
+  import('@gutenye/ocr-models/node'),
+]);
+for (const modelPath of [models.detectionPath, models.recognitionPath, models.dictionaryPath]) {
+  if (!fs.existsSync(modelPath)) throw new Error(`missing OCR model ${modelPath}`);
+}
+const engine = await Ocr.create({ models });
+if (!engine) throw new Error('RapidOCR engine did not initialize');
+console.log('[native-stage] RapidOCR CPU engine startup OK');
+NODE
 )
 
 echo "[native-stage] shared Alpha21 native payload verified: $OUT"
