@@ -61,6 +61,9 @@ jobs:
           grep -q 'SC_TRACKER_RENDER_MODE' "$STAGE_ROOT/bin/sc-blueprint-tracker"
           grep -q -- '--ozone-platform=x11' "$STAGE_ROOT/bin/sc-blueprint-tracker"
           grep -q 'SC_TRACKER_HOST_WAYLAND_DISPLAY' "$STAGE_ROOT/bin/sc-blueprint-tracker"
+          test ! -e "$STAGE_ROOT/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_cuda.so"
+          test ! -e "$STAGE_ROOT/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_tensorrt.so"
+          test ! -e "$STAGE_ROOT/app/node_modules/@koromix/koffi-linux-x64/musl_x64"
 
           mkdir -p dist
           tar -C "$RUNNER_TEMP/native" -czf "dist/ArchVerse-Native-$APP_VERSION.tar.gz" \
@@ -77,6 +80,11 @@ jobs:
           strings "$ROOT/app/node_modules/uiohook-napi/prebuilds/linux-x64/uiohook-napi.node" | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -20 || true
           echo '--- ONNX binding GLIBC requirements ---'
           strings "$ROOT/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node" | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -20 || true
+          if grep -RIlUa --binary-files=text 'libc\.musl-x86_64\.so\.1' "$ROOT" | grep -q .; then
+            echo 'Unexpected musl-linked payload remains:' >&2
+            grep -RIlUa --binary-files=text 'libc\.musl-x86_64\.so\.1' "$ROOT" >&2
+            exit 1
+          fi
 
       - name: Upload shared native payload
         uses: actions/upload-artifact@v4
@@ -145,7 +153,7 @@ jobs:
           name: ArchVerse-Native-Alpha21-Shared
           path: dist/shared
 
-      - name: Build RPM in Fedora 43 container
+      - name: Build and dependency-test RPM in Fedora 43 container
         run: |
           set -euo pipefail
           rm -rf rpmbuild
@@ -166,10 +174,19 @@ jobs:
               test -n "$rpmfile"
               rpm -qpi "$rpmfile"
               echo "--- generated RPM requirements ---"
-              rpm -qpR "$rpmfile" | sort
+              rpm -qpR "$rpmfile" | sort | tee /tmp/archverse-rpm-requires.txt
+              if grep -Ei "lib(cublas|cublasLt|cuda|cudart|cudnn|cufft|curand|nvinfer|nvonnxparser|nvrtc).*|libc\.musl-x86_64" /tmp/archverse-rpm-requires.txt; then
+                echo "RPM incorrectly requires an optional CUDA/TensorRT or musl runtime" >&2
+                exit 1
+              fi
               echo "--- chrome-sandbox package mode ---"
               rpm -qplv "$rpmfile" | grep "runtime/electron/chrome-sandbox"
               rpm -qpl "$rpmfile" | grep -q "/usr/bin/archverse-overlay"
+              echo "--- clean Fedora 43 dependency installation test ---"
+              dnf -y --setopt=install_weak_deps=False install "$rpmfile"
+              test -x /opt/archverse-overlay/bin/sc-blueprint-tracker
+              test -x /opt/archverse-overlay/runtime/electron/electron
+              test "$(stat -c "%a" /opt/archverse-overlay/runtime/electron/chrome-sandbox)" = 4755
               chmod -R a+rX /work/rpmbuild
             '
 
