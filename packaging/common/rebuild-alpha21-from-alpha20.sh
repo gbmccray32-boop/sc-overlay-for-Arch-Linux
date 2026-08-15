@@ -28,14 +28,22 @@ node "$ROOT/packaging/common/enforce-native-linux-interaction-policy.cjs" \
   "$OUT/app/electron/main.cjs"
 node "$ROOT/packaging/common/enforce-native-linux-runtime-policy.cjs" "$OUT"
 
-# RapidOCR uses the CPU execution provider in ArchVerse. The npm package also ships optional
-# CUDA/TensorRT provider libraries; leaving those in an RPM makes Fedora's automatic ELF scanner
-# turn an unused NVIDIA stack into mandatory dependencies. Remove only the optional providers and
-# prove the real OCR engine still initializes immediately afterward.
+# The native package families supported here are all glibc distributions. Keep only native
+# binaries that can actually be selected on those hosts. Fedora's automatic ELF dependency scan
+# otherwise turns dormant provider/prebuild files into mandatory runtime dependencies even though
+# ArchVerse never loads them on these systems.
+#
+# RapidOCR uses the CPU ONNX execution provider, so CUDA/TensorRT providers are unnecessary.
 ORT_LINUX="$OUT/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64"
 rm -f \
   "$ORT_LINUX/libonnxruntime_providers_cuda.so" \
   "$ORT_LINUX/libonnxruntime_providers_tensorrt.so"
+
+# Koffi ships both glibc and musl x86_64 prebuilds. Arch, CachyOS, Fedora, Nobara, Debian and
+# Ubuntu use glibc, so the musl binary can never be selected by our native targets. Keeping it in
+# the RPM creates a false libc.musl-x86_64.so.1 dependency. Remove only that unused prebuild.
+KOFFI_MUSL_DIR="$OUT/app/node_modules/@koromix/koffi-linux-x64/musl_x64"
+rm -rf "$KOFFI_MUSL_DIR"
 
 python3 - "$OUT/app/package.json" <<'PY'
 from pathlib import Path
@@ -63,6 +71,7 @@ entry={
     {'kind':'fixed','label':'Exact Star Citizen session binding','text':'Linux screen reading remains bound to the detected StarCitizen process tree/Gamescope session rather than accepting unrelated foreground windows.'},
     {'kind':'fixed','label':'Contiguous game.log handoff','text':'The startup seed read hands its exact byte offset to the live watcher, so mission accepts written during startup are neither skipped nor replayed; a rotated shorter log safely starts from byte zero.'},
     {'kind':'fixed','label':'Mission completion isolation','text':'Completion cards apply to the mission that actually ended, and overlapping mission receipt windows are fenced so one contract cannot borrow another contract’s blueprint receipt.'},
+    {'kind':'improved','label':'Native dependency hygiene','text':'The three glibc package targets omit unused CUDA/TensorRT ONNX providers and Koffi’s musl-only prebuild, preventing Fedora from inventing NVIDIA or musl runtime dependencies.'},
   ]
 }
 out={'0.1.42-r31-alpha.21':entry}; out.update(d)
@@ -123,7 +132,8 @@ grep -q 'ARCHVERSE_LINUX_MISSION_COMPLETION' "$OUT/app/server/server.mjs"
 grep -q 'completedAtByMission.clear' "$OUT/app/server/server.mjs"
 
 # Packaged engine check: model files + native ONNX binding + CPU provider must initialize here,
-# before a distro package is allowed to be built from this payload.
+# before a distro package is allowed to be built from this payload. This also proves deleting the
+# unused provider/prebuild variants did not remove anything needed by RapidOCR.
 (
   cd "$OUT/app"
   node "$ROOT/packaging/common/rapidocr-native-selftest.mjs"
@@ -133,6 +143,13 @@ test -s "$ORT_LINUX/libonnxruntime.so.1"
 test -s "$ORT_LINUX/libonnxruntime_providers_shared.so"
 test ! -e "$ORT_LINUX/libonnxruntime_providers_cuda.so"
 test ! -e "$ORT_LINUX/libonnxruntime_providers_tensorrt.so"
+test ! -e "$KOFFI_MUSL_DIR"
+# Fail if any remaining packaged native file still advertises the musl loader/runtime dependency.
+if find "$OUT/app/node_modules/@koromix/koffi-linux-x64" -type f -print0 | \
+    xargs -0 -r strings 2>/dev/null | grep -q 'libc\.musl-x86_64\.so\.1'; then
+  echo 'unused musl Koffi dependency remains in native glibc payload' >&2
+  exit 1
+fi
 
 bash -n "$OUT/bin/sc-blueprint-tracker" "$OUT/doctor.sh"
 
