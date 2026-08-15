@@ -1,6 +1,6 @@
 Name:           archverse-overlay
 Version:        0.1.42
-Release:        4.r31.alpha21%{?dist}
+Release:        5.r31.alpha21%{?dist}
 Summary:        ArchVerse Star Citizen companion overlay
 License:        LicenseRef-FSL-1.1-MIT
 URL:            https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux
@@ -84,6 +84,10 @@ fi
 /opt/archverse-overlay
 
 %changelog
+* Sat Aug 15 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-5.r31.alpha21
+- Remove the unavailable Windows PowerShell OCR path from native Linux mining ticks.
+- Make post-signature glyph/outline telemetry asynchronous so it cannot stall the next resource frame.
+
 * Fri Aug 15 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-4.r31.alpha21
 - Keep the Resource Scanner overlay renderer live while Star Citizen retains focus.
 - Prevent hover, F-key interaction, or Alt-Tab from acting as an accidental scanner wake-up trigger.
