@@ -204,7 +204,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/electron-runtime"
           unzip -q "$RUNNER_TEMP/$ELECTRON_ASSET" -d "$RUNNER_TEMP/electron-runtime"
           test -x "$RUNNER_TEMP/electron-runtime/electron"
-          tar -C "$RUNNER_TEMP/electron-runtime" -czf "$RUNNER_TEMP/electron-runtime.tar.gz" .
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/electron-runtime.tar.gz" electron-runtime
 
       - name: Build, inspect and dependency-check RPM
         shell: bash
