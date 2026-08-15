@@ -1,0 +1,66 @@
+pkgname=archverse-overlay
+pkgver=0.1.42.r31.alpha21
+pkgrel=1
+pkgdesc='Community Linux companion overlay for Star Citizen'
+arch=('x86_64')
+url='https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux'
+license=('custom:FSL-1.1-MIT')
+provides=('sc-blueprint-tracker')
+options=('!strip' '!debug')
+
+depends=(
+  'nodejs'
+  'tesseract'
+  'tesseract-data-eng'
+  'xdotool'
+  'xorg-xprop'
+  'xorg-xrandr'
+  'spectacle'
+  'imagemagick'
+  'ffmpeg'
+  'gtk3'
+  'nss'
+  'alsa-lib'
+  'libxss'
+  'libxtst'
+  'libxrandr'
+  'libxkbcommon'
+  'at-spi2-core'
+  'libdrm'
+  'mesa'
+  'libcups'
+  'libnotify'
+  'libsecret'
+  'xdg-utils'
+)
+
+_appver='0.1.42-r31-alpha.21'
+source=("ArchVerse-Native-${_appver}.tar.gz")
+# The CI staging job derives this archive from two separately SHA-pinned upstream assets and
+# verifies the staged tree before makepkg. Replace SKIP with the published payload checksum when
+# this field-test packaging branch is promoted to a release.
+sha256sums=('SKIP')
+
+package() {
+  local root="$srcdir/ArchVerse-Native-${_appver}"
+  [[ -d "$root/app" && -x "$root/bin/sc-blueprint-tracker" ]] || return 1
+
+  install -d "$pkgdir/opt/archverse-overlay"
+  cp -a "$root/." "$pkgdir/opt/archverse-overlay/"
+
+  install -d "$pkgdir/usr/bin"
+  ln -s /opt/archverse-overlay/bin/sc-blueprint-tracker "$pkgdir/usr/bin/archverse-overlay"
+  ln -s /opt/archverse-overlay/bin/sc-blueprint-tracker "$pkgdir/usr/bin/sc-blueprint-tracker"
+
+  install -Dm644 "$startdir/../native/archverse-overlay.desktop" \
+    "$pkgdir/usr/share/applications/archverse-overlay.desktop"
+  install -Dm644 "$root/app/build/icon.png" \
+    "$pkgdir/usr/share/icons/hicolor/256x256/apps/archverse-overlay.png"
+  install -Dm644 "$root/LICENSE.md" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE.md"
+
+  chmod 0755 "$pkgdir/opt/archverse-overlay/bin/sc-blueprint-tracker"
+  if [[ -f "$pkgdir/opt/archverse-overlay/runtime/electron/chrome-sandbox" ]]; then
+    chmod 4755 "$pkgdir/opt/archverse-overlay/runtime/electron/chrome-sandbox"
+  fi
+}
