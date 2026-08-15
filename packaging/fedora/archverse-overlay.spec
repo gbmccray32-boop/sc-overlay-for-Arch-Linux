@@ -1,6 +1,6 @@
 Name:           archverse-overlay
 Version:        0.1.42
-Release:        5.r31.alpha21%{?dist}
+Release:        6.r31.alpha21%{?dist}
 Summary:        ArchVerse Star Citizen companion overlay
 License:        LicenseRef-FSL-1.1-MIT
 URL:            https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux
@@ -13,6 +13,7 @@ Source3:        archverse-overlay.desktop
 
 Requires:       nodejs
 Requires:       tesseract
+Requires:       tesseract-langpack-eng
 Requires:       xdotool
 Requires:       xrandr
 Requires:       xprop
@@ -84,6 +85,12 @@ fi
 /opt/archverse-overlay
 
 %changelog
+* Sat Aug 15 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-6.r31.alpha21
+- Make RapidOCR the permanent primary native Linux OCR backend, with Tesseract as failure-only fallback.
+- Keep Windows.Media.Ocr/PowerShell behind a Windows-only runtime gate.
+- Replace Linux full-frame OCR with independent Resource, Fabricator, Mission, Claim/context and Refinery crop regions.
+- Add per-widget movable/resizable calibration regions normalized to the bound Star Citizen display.
+
 * Sat Aug 15 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-5.r31.alpha21
 - Remove the unavailable Windows PowerShell OCR path from native Linux mining ticks.
 - Make post-signature glyph/outline telemetry asynchronous so it cannot stall the next resource frame.
