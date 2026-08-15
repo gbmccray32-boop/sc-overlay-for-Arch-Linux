@@ -1,0 +1,44 @@
+name: Native Packages Bootstrap
+
+on:
+  push:
+    branches:
+      - integration/native-packages-r31-alpha21
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-native-payload:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download released Alpha20 native payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download v0.1.42-r31-alpha.20 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz' \
+            --dir "$RUNNER_TEMP"
+          echo 'f4256aeac8c13fb0a64fc6065a8869bf58015dbe694200a550aaf9e99e3dd0a6  '"$RUNNER_TEMP"'/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz' | sha256sum -c -
+
+      - name: Inspect launcher and native payload layout
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/alpha20"
+          tar --no-same-owner -xzf "$RUNNER_TEMP/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz" -C "$RUNNER_TEMP/alpha20"
+          ROOT="$(find "$RUNNER_TEMP/alpha20" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+          test -n "$ROOT"
+          echo "PAYLOAD_ROOT=$ROOT"
+          echo '--- top-level ---'
+          find "$ROOT" -maxdepth 2 -mindepth 1 -printf '%P\n' | sort | head -200
+          echo '--- bin/sc-blueprint-tracker ---'
+          sed -n '1,280p' "$ROOT/bin/sc-blueprint-tracker"
+          echo '--- installer dependency / path anchors ---'
+          grep -nE 'INSTALL_DIR|electron42|packages=|pacman|xdotool|xrandr|tesseract|spectacle|imagemagick|SC_TRACKER_CONFIG_DIR' "$ROOT/install-cachyos.sh" || true
+          echo '--- launcher anchors ---'
+          grep -nE 'APP_DIR|INSTALL_DIR|ELECTRON_BIN|electron42|SC_TRACKER_CONFIG_DIR|SC_TRACKER_NODE_BIN|ozone|x11|gpu|software|opengl' "$ROOT/bin/sc-blueprint-tracker" || true
