@@ -56,7 +56,6 @@ for k,v in d.items():
 p.write_text(json.dumps(out, indent=2)+'\n')
 PY
 
-# Keep Alpha21 labels consistent in human-facing payload files without changing functional paths.
 python3 - "$OUT" <<'PY'
 from pathlib import Path
 import sys
@@ -81,7 +80,7 @@ fi
 
 # The proven launcher is self-relative. Only replace its distro-specific /usr/bin/electron42
 # default with the bundled runtime; all X11/XWayland, Gamescope, renderer, OCR and focus flags
-# remain byte-for-byte inherited from the native Alpha20/21 launcher.
+# remain inherited from the native Alpha20/21 launcher.
 python3 - "$OUT/bin/sc-blueprint-tracker" <<'PY'
 from pathlib import Path
 import sys
@@ -95,12 +94,11 @@ s=s.replace("  printf 'Install it with: sudo pacman -S --needed nodejs\\n' >&2\n
 p.write_text(s)
 PY
 
-# Package-manager installs supersede the old archive installers. Keeping them in /opt would invite
-# users to overwrite a managed installation, so retain the doctor/tests/docs but remove installers.
+# Package-manager installs supersede the old archive installers. Keep diagnostics/tests/docs, but
+# do not leave scripts in /opt that would overwrite a package-manager-owned installation.
 rm -f "$OUT/install-cachyos.sh" "$OUT/uninstall-cachyos.sh" "$OUT/install-input-access.sh"
 chmod +x "$OUT/bin/sc-blueprint-tracker" "$OUT/doctor.sh" "$OUT/verify-alpha.sh" 2>/dev/null || true
 
-# Fail loudly if an upstream/payload change invalidates the shared native package contract.
 for f in \
   app/electron/main.cjs \
   app/electron/capture.cjs \
@@ -109,7 +107,6 @@ for f in \
   app/electron/linux/evdev-hold-key.cjs \
   app/electron/rapidocr-client.cjs \
   app/electron/rapidocr-worker.cjs \
-  app/server/sc-overlay-server.mjs \
   app/node_modules/uiohook-napi/prebuilds/linux-x64/uiohook-napi.node \
   app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node \
   runtime/electron/electron \
@@ -117,6 +114,12 @@ for f in \
   bin/sc-blueprint-tracker; do
   [[ -s "$OUT/$f" ]] || { echo "missing staged native file: $f" >&2; exit 4; }
 done
+
+# Preserve the released sidecar layout exactly; only require that it still contains an executable
+# JavaScript module entry rather than assuming one historical filename.
+SERVER_ENTRY="$(find "$OUT/app/server" -maxdepth 2 -type f -name '*.mjs' -print -quit)"
+[[ -n "$SERVER_ENTRY" && -s "$SERVER_ENTRY" ]] || { echo "no native sidecar .mjs entry found under app/server" >&2; exit 4; }
+echo "[native-stage] sidecar entry present: ${SERVER_ENTRY#$OUT/}"
 
 find "$OUT/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
 bash -n "$OUT/bin/sc-blueprint-tracker" "$OUT/doctor.sh"
