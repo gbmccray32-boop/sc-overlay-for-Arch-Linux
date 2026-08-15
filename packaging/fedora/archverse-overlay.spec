@@ -31,22 +31,35 @@ Recommends:     kscreen
 Provides:       sc-blueprint-tracker
 Conflicts:      sc-blueprint-tracker
 
+# Electron, ONNX Runtime and uiohook are upstream/prebuilt binaries. Fedora's normal debuginfo
+# pipeline tries to rewrite/index Electron's split-DWARF libvulkan and corrupts/fails on that
+# layout. Preserve the verified runtime byte-for-byte instead of generating distro debuginfo.
+%global debug_package %{nil}
+%global __strip /bin/true
+
 %description
 Community Linux package of the tested ArchVerse Alpha 21 native payload.
-The Fedora-family package bundles Electron 42 while using the host Node.js,
-OCR, X11 integration and desktop capture utilities.
+The Fedora-family package bundles the verified Electron 42.7.1 runtime while using the host
+Node.js, OCR, X11 integration and desktop capture utilities. The application payload and durable
+Linux behavior policies are identical to the Arch and Debian package targets.
 
 %prep
 %setup -q -n ArchVerse-Overlay-0.1.42-r31-alpha.21 -a 1
 
 %build
-# Prebuilt application payload; no compile step is required here.
+# Prebuilt, policy-verified application payload; no compile step is required here.
 
 %install
+rm -rf %{buildroot}
 mkdir -p %{buildroot}/opt/archverse-overlay
+
+# Source1 is unpacked by %setup beneath the application source directory only as an RPM staging
+# convenience. Do not copy that temporary directory into /opt; install the runtime once, at the
+# path selected by the common launcher.
+rm -rf electron-runtime
 cp -a . %{buildroot}/opt/archverse-overlay/
 mkdir -p %{buildroot}/opt/archverse-overlay/runtime/electron
-cp -a %{_builddir}/ArchVerse-Overlay-0.1.42-r31-alpha.21/electron-runtime/. \
+cp -a %{_builddir}/archverse-overlay-0.1.42-build/ArchVerse-Overlay-0.1.42-r31-alpha.21/electron-runtime/. \
   %{buildroot}/opt/archverse-overlay/runtime/electron/
 
 install -Dm0755 %{SOURCE2} %{buildroot}%{_bindir}/archverse-overlay
@@ -56,6 +69,12 @@ install -Dm0644 app/build/icon.png \
   %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/archverse-overlay.png
 install -Dm0644 LICENSE.md \
   %{buildroot}%{_licensedir}/%{name}/LICENSE.md
+
+# Chromium's sandbox helper must retain its upstream setuid mode in a native package.
+chmod 0755 %{buildroot}/opt/archverse-overlay/bin/sc-blueprint-tracker
+if [ -f %{buildroot}/opt/archverse-overlay/runtime/electron/chrome-sandbox ]; then
+  chmod 4755 %{buildroot}/opt/archverse-overlay/runtime/electron/chrome-sandbox
+fi
 
 %files
 %license %{_licensedir}/%{name}/LICENSE.md
@@ -67,4 +86,6 @@ install -Dm0644 LICENSE.md \
 
 %changelog
 * Fri Aug 14 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-1.r31.alpha21
-- Initial Fedora/Nobara native package from the tested Alpha 21 Arch payload.
+- Preserve prebuilt Electron/native modules without Fedora debuginfo rewriting.
+- Install the verified Electron runtime only once under /opt/archverse-overlay/runtime/electron.
+- Carry the shared native Linux interaction, mining, OCR, session, watcher and mission policies.
