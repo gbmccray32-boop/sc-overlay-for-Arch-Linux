@@ -29,6 +29,9 @@ node "$ROOT/packaging/common/enforce-native-linux-interaction-policy.cjs" \
 node "$ROOT/packaging/common/enforce-native-linux-runtime-policy.cjs" "$OUT"
 node "$ROOT/packaging/common/enforce-native-mining-pipeline-policy.cjs" "$OUT"
 node "$ROOT/packaging/common/enforce-native-mining-liveness-policy.cjs" "$OUT"
+node "$ROOT/packaging/common/enforce-native-linux-ocr-architecture.cjs" "$OUT"
+node "$ROOT/packaging/common/enforce-native-mining-nonblocking-policy.cjs" "$OUT"
+node "$ROOT/packaging/common/enforce-native-linux-ocr-regions-ui.cjs" "$OUT"
 node "$ROOT/packaging/common/enforce-native-overlay-realtime-policy.cjs" "$OUT"
 
 # The native package families supported here are all glibc distributions. Keep only native
@@ -53,7 +56,7 @@ from pathlib import Path
 import json, sys
 p=Path(sys.argv[1]); d=json.loads(p.read_text())
 d['version']='0.1.42-r31-alpha.21'
-d['description']='Community Linux port of SubliminalsTV SC Overlay 0.1.42 — Alpha 21 Resource Scanner with durable native Linux interaction, mining, OCR, session and watcher policies'
+d['description']='Community Linux port of SubliminalsTV SC Overlay 0.1.42 — Alpha 21 with crop-only RapidOCR/Tesseract Linux OCR, independent feature ROIs, and durable native interaction/runtime policies'
 p.write_text(json.dumps(d, indent=2)+'\n')
 PY
 
@@ -74,7 +77,10 @@ entry={
     {'kind':'fixed','label':'RS 3,000 resource class','text':'The server now accepts RS 3,000 as the hand-mineable gemstone resource class, matching the Resource Scanner UI instead of rejecting it as an unknown signature.'},
     {'kind':'fixed','label':'Mining liveness','text':'Mining polling is bounded to 900-3000 ms and continues against the already-bound Star Citizen source while ArchVerse briefly owns focus.'},
     {'kind':'fixed','label':'Focus-independent Resource Scanner','text':'The main overlay renderer is not background-throttled, so Resource Scanner SSE updates, scan-read diagnostics, flashes, chimes and voice announcements do not depend on hovering the widget, pressing F, or Alt-Tabbing.'},
-    {'kind':'fixed','label':'RapidOCR health reporting','text':'RapidOCR worker failures are surfaced immediately and persisted to rapidocr-health.json before any optional fallback behavior can make the capture loop look healthy.'},
+    {'kind':'fixed','label':'Native Linux OCR contract','text':'Linux screen reading is now RapidOCR/ONNX first with Tesseract used only when RapidOCR itself fails. Windows.Media.Ocr and PowerShell OCR remain Windows-only and cannot execute in a native Linux package.'},
+    {'kind':'improved','label':'Crop-only OCR','text':'Linux no longer OCRs a full game or desktop frame. Resource, Fabricator, Mission, Claim/context and Refinery each read only their own configured crop from the already-bound Star Citizen display.'},
+    {'kind':'improved','label':'Independent OCR calibration regions','text':'Every OCR-driven feature has its own movable, resizable, resettable and hideable capture region. The rectangles persist independently as normalized game-frame geometry; moving one cannot move another.'},
+    {'kind':'fixed','label':'RapidOCR health reporting','text':'RapidOCR worker failures are surfaced immediately and persisted to rapidocr-health.json before the Tesseract failure-only fallback is attempted.'},
     {'kind':'fixed','label':'Exact Star Citizen session binding','text':'Linux screen reading remains bound to the detected StarCitizen process tree/Gamescope session rather than accepting unrelated foreground windows.'},
     {'kind':'fixed','label':'Contiguous game.log handoff','text':'The startup seed read hands its exact byte offset to the live watcher, so mission accepts written during startup are neither skipped nor replayed; a rotated shorter log safely starts from byte zero.'},
     {'kind':'fixed','label':'Mission completion isolation','text':'Completion cards apply to the mission that actually ended, and overlapping mission receipt windows are fenced so one contract cannot borrow another contract’s blueprint receipt.'},
@@ -102,7 +108,10 @@ PY
 # Syntax + original Alpha21 invariants.
 node --check "$OUT/app/electron/capture.cjs"
 node --check "$OUT/app/electron/main.cjs"
+node --check "$OUT/app/electron/preload.cjs"
+node --check "$OUT/app/electron/native-linux-ocr.cjs"
 node --check "$OUT/app/server/server.mjs"
+node --check "$OUT/app/server/overlay/linux-ocr-region-manager.js"
 find "$OUT/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
 grep -q '0.1.42-r31-alpha.21' "$OUT/app/package.json"
 grep -q 'Resource Scanner' "$OUT/app/server/overlay/mining.html"
@@ -126,7 +135,7 @@ grep -q '\[linux-interaction\] pointer left all widgets; overlay released and pr
 
 # Permanent Linux mining/OCR/session/watcher/mission invariants.
 grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY' "$OUT/app/electron/capture.cjs"
-grep -q 'if (mining && cfg.rapidOcr !== false)' "$OUT/app/electron/capture.cjs"
+grep -q 'if (mining && (process.platform === "linux" || cfg.rapidOcr !== false))' "$OUT/app/electron/capture.cjs"
 grep -q 'ARCHVERSE_LINUX_BOUND_MINING_CADENCE' "$OUT/app/electron/capture.cjs"
 grep -q 'Math.min(POLL_MS, floor)' "$OUT/app/electron/capture.cjs"
 ! grep -q 'mining && archScanModeRead.active && cfg.rapidOcr' "$OUT/app/electron/capture.cjs"
@@ -135,12 +144,27 @@ grep -q 'rapidocr-health.json' "$OUT/app/electron/capture.cjs"
 grep -q 'ARCHVERSE_LINUX_EXACT_SC_SESSION_BINDING' "$OUT/app/electron/capture.cjs"
 grep -q 'pid-bound-active-window' "$OUT/app/electron/capture.cjs"
 grep -q 'ARCHVERSE_LINUX_MINING_OCR_DIAGNOSTICS' "$OUT/app/electron/capture.cjs"
+grep -q 'ARCHVERSE_LINUX_ASYNC_MINING_TELEMETRY' "$OUT/app/electron/capture.cjs"
 grep -q 'ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER' "$OUT/app/electron/main.cjs"
 grep -q 'backgroundThrottling: false' "$OUT/app/electron/main.cjs"
 grep -q 'ARCHVERSE_LINUX_WATCHER_HANDOFF' "$OUT/app/server/server.mjs"
 grep -q 'startPosition: seedEndsAt' "$OUT/app/server/server.mjs"
 grep -q 'ARCHVERSE_LINUX_MISSION_COMPLETION' "$OUT/app/server/server.mjs"
 grep -q 'completedAtByMission.clear' "$OUT/app/server/server.mjs"
+
+# Permanent crop-only native Linux OCR contract.
+grep -q 'ARCHVERSE_LINUX_OCR_CONTRACT_V1' "$OUT/app/electron/native-linux-ocr.cjs"
+grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGIONS' "$OUT/app/electron/capture.cjs"
+grep -q 'ARCHVERSE_LINUX_NO_FULL_FRAME_OCR_ARCHIVE' "$OUT/app/electron/capture.cjs"
+grep -q 'ARCHVERSE_LINUX_NO_WINDOWS_MEDIA_OCR' "$OUT/app/server/server.mjs"
+grep -q 'process.platform === "win32" && typeof body.path === "string"' "$OUT/app/server/server.mjs"
+grep -q 'ARCHVERSE_LINUX_OCR_REGION_CONFIG' "$OUT/app/server/server.mjs"
+grep -q 'ARCHVERSE_LINUX_OCR_CAPTURE_INFO' "$OUT/app/electron/main.cjs"
+grep -q 'getOcrCaptureInfo' "$OUT/app/electron/preload.cjs"
+grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI' "$OUT/app/server/overlay/linux-ocr-region-manager.js"
+grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI_LOADER' "$OUT/app/server/overlay/missions.html"
+grep -q 'tesseractLines' "$OUT/app/electron/native-linux-ocr.cjs"
+! grep -q 'ARCHVERSE_LINUX_NO_WINDOWS_OCR_IN_MINING_PATH' "$OUT/app/electron/capture.cjs"
 
 # Resource Scanner signature pipeline invariants. A parsed legal signature is itself authoritative;
 # no second HTTP hop or radar/pin state may be required for lookup/UI notification state.
@@ -149,9 +173,9 @@ grep -q 'ARCHVERSE_LINUX_SIGNATURE_PARSE_ROBUSTNESS' "$OUT/app/server/server.mjs
 grep -q 'ARCHVERSE_LINUX_PARSED_SIGNATURE_COMMIT' "$OUT/app/server/server.mjs"
 grep -q 'result.outcome = mining.applyMineableRead(result.signature, false)' "$OUT/app/server/server.mjs"
 
-# Exercise the actual sidecar parser -> MiningTracker -> SSE state path before any distro package
-# is allowed to be produced. This also reapplies the liveness/realtime policies idempotently and
-# syntax-checks their outputs, preventing focus/hover/F-dependent scanner behavior from regressing.
+# Exercise the complete native Linux OCR contract and the Resource Scanner state path before any
+# distro package is allowed to be produced.
+node "$ROOT/packaging/common/native-linux-ocr-selftest.mjs" "$OUT"
 node "$ROOT/packaging/common/native-mining-pipeline-selftest.mjs" "$OUT"
 
 # Packaged engine check: model files + native ONNX binding + CPU provider must initialize here,
