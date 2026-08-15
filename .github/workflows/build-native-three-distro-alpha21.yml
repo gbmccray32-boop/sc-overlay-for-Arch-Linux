@@ -58,6 +58,10 @@ jobs:
             > "$RUNNER_TEMP/alpha21-payload-files.txt"
           grep -q 'ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/main.cjs' \
             "$RUNNER_TEMP/alpha21-payload-files.txt"
+          grep -q 'ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/native-linux-ocr.cjs' \
+            "$RUNNER_TEMP/alpha21-payload-files.txt"
+          grep -q 'ArchVerse-Overlay-0.1.42-r31-alpha.21/app/server/overlay/linux-ocr-region-manager.js' \
+            "$RUNNER_TEMP/alpha21-payload-files.txt"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -101,17 +105,28 @@ jobs:
           pkg="$(find "$GITHUB_WORKSPACE/dist-arch" -type f -name '*.pkg.tar.*' -print -quit)"
           test -n "$pkg"
           pacman -Qip "$pkg"
-          pacman -Qlp "$pkg" | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$'
+          pacman -Qlp "$pkg" | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$|/opt/archverse-overlay/app/electron/native-linux-ocr.cjs$'
+          bsdtar -xOf "$pkg" .PKGINFO | grep -q '^depend = tesseract-data-eng$'
           pkgroot="$(mktemp -d)"
           bsdtar -xf "$pkg" -C "$pkgroot" \
             opt/archverse-overlay/app/electron/main.cjs \
             opt/archverse-overlay/app/electron/capture.cjs \
-            opt/archverse-overlay/app/server/server.mjs
+            opt/archverse-overlay/app/electron/native-linux-ocr.cjs \
+            opt/archverse-overlay/app/server/server.mjs \
+            opt/archverse-overlay/app/server/overlay/missions.html \
+            opt/archverse-overlay/app/server/overlay/linux-ocr-region-manager.js
           grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$pkgroot/opt/archverse-overlay/app/electron/main.cjs"
           grep -q 'ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER' "$pkgroot/opt/archverse-overlay/app/electron/main.cjs"
           grep -q 'backgroundThrottling: false' "$pkgroot/opt/archverse-overlay/app/electron/main.cjs"
           grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY' "$pkgroot/opt/archverse-overlay/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_BOUND_MINING_CADENCE' "$pkgroot/opt/archverse-overlay/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGIONS' "$pkgroot/opt/archverse-overlay/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_OCR_CONTRACT_V1' "$pkgroot/opt/archverse-overlay/app/electron/native-linux-ocr.cjs"
+          grep -q 'tesseractLines' "$pkgroot/opt/archverse-overlay/app/electron/native-linux-ocr.cjs"
+          grep -q 'ARCHVERSE_LINUX_NO_WINDOWS_MEDIA_OCR' "$pkgroot/opt/archverse-overlay/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LINUX_OCR_REGION_CONFIG' "$pkgroot/opt/archverse-overlay/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI_LOADER' "$pkgroot/opt/archverse-overlay/app/server/overlay/missions.html"
+          grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI' "$pkgroot/opt/archverse-overlay/app/server/overlay/linux-ocr-region-manager.js"
           grep -q 'ARCHVERSE_LINUX_WATCHER_HANDOFF' "$pkgroot/opt/archverse-overlay/app/server/server.mjs"
           sha256sum "$pkg"
 
@@ -159,11 +174,16 @@ jobs:
           deb="$(find "$GITHUB_WORKSPACE/dist-deb" -type f -name '*.deb' -print -quit)"
           test -n "$deb"
           dpkg-deb --info "$deb"
-          dpkg-deb --contents "$deb" | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$'
+          dpkg-deb --info "$deb" | grep -q 'tesseract-ocr-eng'
+          dpkg-deb --contents "$deb" | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$|/opt/archverse-overlay/app/electron/native-linux-ocr.cjs$'
           root="$(mktemp -d)"
           dpkg-deb -x "$deb" "$root"
           grep -q 'ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER' "$root/opt/archverse-overlay/app/electron/main.cjs"
           grep -q 'backgroundThrottling: false' "$root/opt/archverse-overlay/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGIONS' "$root/opt/archverse-overlay/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_OCR_CONTRACT_V1' "$root/opt/archverse-overlay/app/electron/native-linux-ocr.cjs"
+          grep -q 'ARCHVERSE_LINUX_NO_WINDOWS_MEDIA_OCR' "$root/opt/archverse-overlay/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI' "$root/opt/archverse-overlay/app/server/overlay/linux-ocr-region-manager.js"
           sha256sum "$deb"
 
       - uses: actions/upload-artifact@v4
@@ -221,13 +241,18 @@ jobs:
           rpm="$(find "$GITHUB_WORKSPACE/dist-rpm" -type f -name '*.rpm' -print -quit)"
           test -n "$rpm"
           rpm -qip "$rpm"
-          rpm -qlp "$rpm" | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$'
+          rpm -qlp "$rpm" | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$|/opt/archverse-overlay/app/electron/native-linux-ocr.cjs$'
           root="$(mktemp -d)"
           rpm2cpio "$rpm" | (cd "$root" && cpio -idm --quiet)
           grep -q 'ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER' "$root/opt/archverse-overlay/app/electron/main.cjs"
           grep -q 'backgroundThrottling: false' "$root/opt/archverse-overlay/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGIONS' "$root/opt/archverse-overlay/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_OCR_CONTRACT_V1' "$root/opt/archverse-overlay/app/electron/native-linux-ocr.cjs"
+          grep -q 'ARCHVERSE_LINUX_NO_WINDOWS_MEDIA_OCR' "$root/opt/archverse-overlay/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI' "$root/opt/archverse-overlay/app/server/overlay/linux-ocr-region-manager.js"
           req="$RUNNER_TEMP/rpm-requires.txt"
           rpm -qpR "$rpm" | tee "$req"
+          grep -q '^tesseract-langpack-eng' "$req"
           ! grep -Eiq 'cuda|tensorrt|libc\.musl' "$req"
           sha256sum "$rpm"
 
