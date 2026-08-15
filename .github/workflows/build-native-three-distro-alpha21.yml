@@ -1,0 +1,241 @@
+name: Build ArchVerse Alpha 21 native packages
+
+on:
+  push:
+    branches:
+      - packaging/native-three-distro-alpha21
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-alpha21-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  payload:
+    name: Rebuild tested Alpha 21 payload
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Download Alpha 18 reconstruction baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/alpha18"
+          gh release download v0.1.41-r31-alpha.18 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz' \
+            --dir "$RUNNER_TEMP/alpha18"
+
+      - name: Rebuild and verify Alpha 21
+        shell: bash
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
+        run: |
+          set -euo pipefail
+          bash linux-port/build-r31-alpha21-incremental.sh \
+            "$RUNNER_TEMP/alpha18/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz"
+          PAYLOAD="$RUNNER_TEMP/r31-alpha21-build/ArchVerse-Overlay-0.1.42-r31-alpha.21"
+          test -x "$PAYLOAD/bin/sc-blueprint-tracker"
+          test -s "$PAYLOAD/app/electron/main.cjs"
+          test -s "$PAYLOAD/app/electron/capture.cjs"
+          "$PAYLOAD/verify-alpha.sh"
+          tar -C "$RUNNER_TEMP/r31-alpha21-build" -czf \
+            "$RUNNER_TEMP/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz" \
+            ArchVerse-Overlay-0.1.42-r31-alpha.21
+          sha256sum "$RUNNER_TEMP/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha21-native-payload
+          path: ${{ runner.temp }}/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  arch:
+    name: Arch / CachyOS package
+    needs: payload
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 35
+    steps:
+      - name: Prepare Arch build container
+        shell: bash
+        run: |
+          set -euo pipefail
+          pacman -Syu --noconfirm --needed git sudo
+          useradd -m builder
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Alpha21-native-payload
+          path: packaging/arch
+
+      - name: Build pacman package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp packaging/common/archverse-overlay packaging/arch/
+          cp packaging/common/archverse-overlay.desktop packaging/arch/
+          chmod 0755 packaging/arch/archverse-overlay
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          su builder -c 'cd "$GITHUB_WORKSPACE/packaging/arch" && makepkg --nodeps --noconfirm --cleanbuild'
+          mkdir -p "$GITHUB_WORKSPACE/dist-arch"
+          cp packaging/arch/*.pkg.tar.* "$GITHUB_WORKSPACE/dist-arch/"
+          pacman -Qip "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.*
+          pacman -Qlp "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.* | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$'
+          sha256sum "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha21-Arch
+          path: dist-arch/*.pkg.tar.*
+          if-no-files-found: error
+          retention-days: 30
+
+  debian:
+    name: Debian / Ubuntu package
+    needs: payload
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Alpha21-native-payload
+          path: dist-payload
+
+      - name: Prepare pinned Electron 42 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/electron42" --omit=dev electron@42.7.1
+          test -x "$RUNNER_TEMP/electron42/node_modules/electron/dist/electron"
+          "$RUNNER_TEMP/electron42/node_modules/electron/dist/electron" --version || true
+
+      - name: Build and inspect DEB
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x packaging/debian/build-deb.sh packaging/common/archverse-overlay
+          mkdir -p dist-debian
+          packaging/debian/build-deb.sh \
+            dist-payload/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz \
+            "$RUNNER_TEMP/electron42/node_modules/electron/dist" \
+            dist-debian
+          dpkg-deb --info dist-debian/*.deb
+          dpkg-deb --contents dist-debian/*.deb | grep -E 'usr/bin/archverse-overlay|opt/archverse-overlay/runtime/electron/electron|opt/archverse-overlay/app/electron/main.cjs'
+          sha256sum dist-debian/*.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha21-Debian
+          path: dist-debian/*.deb
+          if-no-files-found: error
+          retention-days: 30
+
+  fedora:
+    name: Fedora / Nobara package
+    needs: payload
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    timeout-minutes: 40
+    steps:
+      - name: Prepare Fedora build container
+        shell: bash
+        run: |
+          set -euo pipefail
+          dnf -y install git nodejs npm rpm-build tar gzip findutils
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Alpha21-native-payload
+          path: dist-payload
+
+      - name: Prepare pinned Electron 42 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/electron42" --omit=dev electron@42.7.1
+          test -x "$RUNNER_TEMP/electron42/node_modules/electron/dist/electron"
+          mkdir -p "$RUNNER_TEMP/electron-stage/electron-runtime"
+          cp -a "$RUNNER_TEMP/electron42/node_modules/electron/dist/." \
+            "$RUNNER_TEMP/electron-stage/electron-runtime/"
+          tar -C "$RUNNER_TEMP/electron-stage" -czf "$RUNNER_TEMP/electron-runtime.tar.gz" electron-runtime
+
+      - name: Build and inspect RPM
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOP="$RUNNER_TEMP/rpmbuild"
+          mkdir -p "$TOP"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+          cp dist-payload/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz "$TOP/SOURCES/"
+          cp "$RUNNER_TEMP/electron-runtime.tar.gz" "$TOP/SOURCES/"
+          cp packaging/common/archverse-overlay "$TOP/SOURCES/"
+          cp packaging/common/archverse-overlay.desktop "$TOP/SOURCES/"
+          cp packaging/fedora/archverse-overlay.spec "$TOP/SPECS/"
+          rpmbuild --define "_topdir $TOP" -bb "$TOP/SPECS/archverse-overlay.spec"
+          mkdir -p "$GITHUB_WORKSPACE/dist-fedora"
+          find "$TOP/RPMS" -type f -name '*.rpm' -exec cp -v {} "$GITHUB_WORKSPACE/dist-fedora/" \;
+          rpm -qip "$GITHUB_WORKSPACE"/dist-fedora/*.rpm
+          rpm -qlp "$GITHUB_WORKSPACE"/dist-fedora/*.rpm | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/runtime/electron/electron$|/opt/archverse-overlay/app/electron/main.cjs$'
+          sha256sum "$GITHUB_WORKSPACE"/dist-fedora/*.rpm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha21-Fedora
+          path: dist-fedora/*.rpm
+          if-no-files-found: error
+          retention-days: 30
+
+  package-set:
+    name: Publish CI package set
+    needs: [arch, debian, fedora]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ArchVerse-Alpha21-*
+          path: native-packages
+          merge-multiple: true
+
+      - name: Generate package checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd native-packages
+          sha256sum *.pkg.tar.* *.deb *.rpm | tee SHA256SUMS
+          ls -lh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha21-Native-Three-Distro
+          path: |
+            native-packages/*.pkg.tar.*
+            native-packages/*.deb
+            native-packages/*.rpm
+            native-packages/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
