@@ -17,7 +17,7 @@ jobs:
   payload:
     name: Rebuild tested Alpha 21 payload
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,35 +28,29 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Download Alpha 18 reconstruction baseline
+      - name: Download durable Alpha 20 baseline
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/alpha18"
-          gh release download v0.1.41-r31-alpha.18 \
+          mkdir -p "$RUNNER_TEMP/alpha20"
+          gh release download v0.1.42-r31-alpha.20 \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern 'ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz' \
-            --dir "$RUNNER_TEMP/alpha18"
+            --pattern 'ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz' \
+            --dir "$RUNNER_TEMP/alpha20"
+          sha256sum "$RUNNER_TEMP/alpha20/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz"
 
-      - name: Rebuild and verify Alpha 21
+      - name: Reconstruct and verify Alpha 21
         shell: bash
-        env:
-          NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
           set -euo pipefail
-          bash linux-port/build-r31-alpha21-incremental.sh \
-            "$RUNNER_TEMP/alpha18/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz"
-          PAYLOAD="$RUNNER_TEMP/r31-alpha21-build/ArchVerse-Overlay-0.1.42-r31-alpha.21"
-          test -x "$PAYLOAD/bin/sc-blueprint-tracker"
-          test -s "$PAYLOAD/app/electron/main.cjs"
-          test -s "$PAYLOAD/app/electron/capture.cjs"
-          "$PAYLOAD/verify-alpha.sh"
-          tar -C "$RUNNER_TEMP/r31-alpha21-build" -czf \
-            "$RUNNER_TEMP/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz" \
-            ArchVerse-Overlay-0.1.42-r31-alpha.21
-          sha256sum "$RUNNER_TEMP/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz"
+          chmod +x packaging/common/rebuild-alpha21-from-alpha20.sh
+          packaging/common/rebuild-alpha21-from-alpha20.sh \
+            "$RUNNER_TEMP/alpha20/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz" \
+            "$RUNNER_TEMP/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz"
+          tar -tzf "$RUNNER_TEMP/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz" | \
+            grep -q 'ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/main.cjs'
 
       - uses: actions/upload-artifact@v4
         with:
@@ -94,7 +88,7 @@ jobs:
           cp packaging/common/archverse-overlay.desktop packaging/arch/
           chmod 0755 packaging/arch/archverse-overlay
           chown -R builder:builder "$GITHUB_WORKSPACE"
-          su builder -c 'cd "$GITHUB_WORKSPACE/packaging/arch" && makepkg --nodeps --noconfirm --cleanbuild'
+          su builder -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg --nodeps --noconfirm --cleanbuild"
           mkdir -p "$GITHUB_WORKSPACE/dist-arch"
           cp packaging/arch/*.pkg.tar.* "$GITHUB_WORKSPACE/dist-arch/"
           pacman -Qip "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.*
@@ -131,7 +125,6 @@ jobs:
           set -euo pipefail
           npm install --prefix "$RUNNER_TEMP/electron42" --omit=dev electron@42.7.1
           test -x "$RUNNER_TEMP/electron42/node_modules/electron/dist/electron"
-          "$RUNNER_TEMP/electron42/node_modules/electron/dist/electron" --version || true
 
       - name: Build and inspect DEB
         shell: bash
