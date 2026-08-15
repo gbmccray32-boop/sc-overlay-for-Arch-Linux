@@ -1,6 +1,6 @@
 Name:           archverse-overlay
 Version:        0.1.42
-Release:        1.r31.alpha21%{?dist}
+Release:        2.r31.alpha21%{?dist}
 Summary:        ArchVerse Star Citizen companion overlay
 License:        LicenseRef-FSL-1.1-MIT
 URL:            https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux
@@ -84,6 +84,10 @@ fi
 /opt/archverse-overlay
 
 %changelog
+* Fri Aug 15 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-2.r31.alpha21
+- Make parsed Resource Scanner signatures authoritative and robust to grouped/split OCR tokens.
+- Accept RS 3,000 as the hand-mineable gemstone resource class.
+
 * Fri Aug 14 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-1.r31.alpha21
 - Preserve prebuilt Electron/native modules without Fedora debuginfo rewriting.
 - Install the verified Electron runtime only once under /opt/archverse-overlay/runtime/electron.
