@@ -133,6 +133,9 @@ if [[ -f "$OUT/runtime/electron/chrome-sandbox" ]]; then
   [[ "$mode" == "4755" ]] || { echo "chrome-sandbox mode is $mode, expected 4755" >&2; exit 5; }
 fi
 
-node -e "import('$OUT/app/node_modules/@gutenye/ocr-node/index.js').then(()=>console.log('[native-stage] RapidOCR module import OK')).catch(e=>{console.error(e);process.exit(1)})"
+(
+  cd "$OUT/app"
+  node -e "import('@gutenye/ocr-node').then(()=>console.log('[native-stage] RapidOCR module import OK')).catch(e=>{console.error(e);process.exit(1)})"
+)
 
 echo "[native-stage] shared Alpha21 native payload verified: $OUT"
