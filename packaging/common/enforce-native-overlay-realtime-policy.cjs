@@ -25,12 +25,12 @@ const mainPath = path.join(root, 'app/electron/main.cjs');
 must(fs.existsSync(mainPath), 'missing app/electron/main.cjs');
 let main = fs.readFileSync(mainPath, 'utf8');
 
-// Resource scanning is autonomous. The OCR/capture loop lives in Electron's main process, while
-// mining SSE state, scan-read diagnostics, flash/chime and speech live in the transparent overlay
-// renderer. Electron defaults backgroundThrottling to true, so leaving Star Citizen focused can
-// throttle that renderer and make mouse hover/F-focus appear to "wake" scanner results. Keep the
-// overlay renderer live at all times; interaction remains click-through and F-gated exactly as
-// before. Browser/chat child WebContentsViews keep their own existing throttling preferences.
+// Resource scanning is autonomous. Capture/OCR is performed in Electron's main process, while the
+// Resource Scanner receives state through SSE and performs scan-read drawing, flash/chime and speech
+// in the main transparent overlay renderer. Electron normally throttles background renderer timers
+// and visibility. That can make hover/F-focus/Alt-Tab appear to wake results even though those inputs
+// must never be scan controls. Keep only the main overlay renderer live; click-through/F interaction
+// policy is unchanged and embedded browser/chat views retain their own existing throttling settings.
 if (!main.includes('ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER')) {
   main = replaceOnce(main,
     '    webPreferences: { contextIsolation: true, preload: path.join(__dirname, "preload.cjs"), autoplayPolicy: "no-user-gesture-required" },',
@@ -40,10 +40,6 @@ if (!main.includes('ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER')) {
 
 must(main.includes('ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER'), 'realtime overlay marker missing');
 must(main.includes('autoplayPolicy: "no-user-gesture-required", backgroundThrottling: false'), 'main overlay renderer can still be background-throttled');
-
-// Do not globally disable throttling for embedded browser/chat views. They are unrelated to mining
-// liveness and may legitimately save CPU/GPU when hidden.
-must(main.includes('backgroundThrottling: false'), 'no unthrottled overlay renderer found');
 
 fs.writeFileSync(mainPath, main);
 console.log('Native Linux realtime overlay policy enforced:', mainPath);
