@@ -28,6 +28,8 @@ node "$ROOT/packaging/common/enforce-native-linux-interaction-policy.cjs" \
   "$OUT/app/electron/main.cjs"
 node "$ROOT/packaging/common/enforce-native-linux-runtime-policy.cjs" "$OUT"
 node "$ROOT/packaging/common/enforce-native-mining-pipeline-policy.cjs" "$OUT"
+node "$ROOT/packaging/common/enforce-native-mining-liveness-policy.cjs" "$OUT"
+node "$ROOT/packaging/common/enforce-native-overlay-realtime-policy.cjs" "$OUT"
 
 # The native package families supported here are all glibc distributions. Keep only native
 # binaries that can actually be selected on those hosts. Fedora's automatic ELF dependency scan
@@ -70,7 +72,8 @@ entry={
     {'kind':'fixed','label':'Authoritative Resource Scanner handoff','text':'A legal signature parsed by /api/screen-read now updates the Resource Scanner immediately instead of depending on a second Electron-to-sidecar POST before resource lookup and notifications can occur.'},
     {'kind':'fixed','label':'Signature OCR token recovery','text':'Resource signatures remain readable when OCR returns a space instead of the thousands separator or splits values such as 18 and 000 into adjacent same-row tokens.'},
     {'kind':'fixed','label':'RS 3,000 resource class','text':'The server now accepts RS 3,000 as the hand-mineable gemstone resource class, matching the Resource Scanner UI instead of rejecting it as an unknown signature.'},
-    {'kind':'improved','label':'Adaptive mining polling','text':'Scan HUD text or a valid signature opens the fast polling window, while the loop still backs off from measured OCR cost using the self-tuning 1.5x cadence.'},
+    {'kind':'fixed','label':'Mining liveness','text':'Mining polling is bounded to 900-3000 ms and continues against the already-bound Star Citizen source while ArchVerse briefly owns focus.'},
+    {'kind':'fixed','label':'Focus-independent Resource Scanner','text':'The main overlay renderer is not background-throttled, so Resource Scanner SSE updates, scan-read diagnostics, flashes, chimes and voice announcements do not depend on hovering the widget, pressing F, or Alt-Tabbing.'},
     {'kind':'fixed','label':'RapidOCR health reporting','text':'RapidOCR worker failures are surfaced immediately and persisted to rapidocr-health.json before any optional fallback behavior can make the capture loop look healthy.'},
     {'kind':'fixed','label':'Exact Star Citizen session binding','text':'Linux screen reading remains bound to the detected StarCitizen process tree/Gamescope session rather than accepting unrelated foreground windows.'},
     {'kind':'fixed','label':'Contiguous game.log handoff','text':'The startup seed read hands its exact byte offset to the live watcher, so mission accepts written during startup are neither skipped nor replayed; a rotated shorter log safely starts from byte zero.'},
@@ -124,12 +127,16 @@ grep -q '\[linux-interaction\] pointer left all widgets; overlay released and pr
 # Permanent Linux mining/OCR/session/watcher/mission invariants.
 grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY' "$OUT/app/electron/capture.cjs"
 grep -q 'if (mining && cfg.rapidOcr !== false)' "$OUT/app/electron/capture.cjs"
-grep -q 'Math.round(lastTickMs \* 1.5)' "$OUT/app/electron/capture.cjs"
+grep -q 'ARCHVERSE_LINUX_BOUND_MINING_CADENCE' "$OUT/app/electron/capture.cjs"
+grep -q 'Math.min(POLL_MS, floor)' "$OUT/app/electron/capture.cjs"
 ! grep -q 'mining && archScanModeRead.active && cfg.rapidOcr' "$OUT/app/electron/capture.cjs"
 grep -q 'ARCHVERSE_LINUX_RAPIDOCR_FAILURE_REPORT' "$OUT/app/electron/capture.cjs"
 grep -q 'rapidocr-health.json' "$OUT/app/electron/capture.cjs"
 grep -q 'ARCHVERSE_LINUX_EXACT_SC_SESSION_BINDING' "$OUT/app/electron/capture.cjs"
 grep -q 'pid-bound-active-window' "$OUT/app/electron/capture.cjs"
+grep -q 'ARCHVERSE_LINUX_MINING_OCR_DIAGNOSTICS' "$OUT/app/electron/capture.cjs"
+grep -q 'ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER' "$OUT/app/electron/main.cjs"
+grep -q 'backgroundThrottling: false' "$OUT/app/electron/main.cjs"
 grep -q 'ARCHVERSE_LINUX_WATCHER_HANDOFF' "$OUT/app/server/server.mjs"
 grep -q 'startPosition: seedEndsAt' "$OUT/app/server/server.mjs"
 grep -q 'ARCHVERSE_LINUX_MISSION_COMPLETION' "$OUT/app/server/server.mjs"
@@ -143,8 +150,8 @@ grep -q 'ARCHVERSE_LINUX_PARSED_SIGNATURE_COMMIT' "$OUT/app/server/server.mjs"
 grep -q 'result.outcome = mining.applyMineableRead(result.signature, false)' "$OUT/app/server/server.mjs"
 
 # Exercise the actual sidecar parser -> MiningTracker -> SSE state path before any distro package
-# is allowed to be produced. This catches the exact regression where OCR could parse a value but
-# the Resource Scanner never received its resource classification or notification state.
+# is allowed to be produced. This also reapplies the liveness/realtime policies idempotently and
+# syntax-checks their outputs, preventing focus/hover/F-dependent scanner behavior from regressing.
 node "$ROOT/packaging/common/native-mining-pipeline-selftest.mjs" "$OUT"
 
 # Packaged engine check: model files + native ONNX binding + CPU provider must initialize here,
@@ -160,7 +167,6 @@ test -s "$ORT_LINUX/libonnxruntime_providers_shared.so"
 test ! -e "$ORT_LINUX/libonnxruntime_providers_cuda.so"
 test ! -e "$ORT_LINUX/libonnxruntime_providers_tensorrt.so"
 test ! -e "$KOFFI_MUSL_DIR"
-# Fail if any remaining packaged native file still advertises the musl loader/runtime dependency.
 if find "$OUT/app/node_modules/@koromix/koffi-linux-x64" -type f -print0 | \
     xargs -0 -r strings 2>/dev/null | grep -q 'libc\.musl-x86_64\.so\.1'; then
   echo 'unused musl Koffi dependency remains in native glibc payload' >&2
