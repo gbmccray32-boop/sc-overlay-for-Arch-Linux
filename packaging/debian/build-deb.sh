@@ -5,7 +5,7 @@ PAYLOAD_TAR="${1:?usage: build-deb.sh PAYLOAD_TAR ELECTRON_DIST OUTPUT_DIR}"
 ELECTRON_DIST="${2:?usage: build-deb.sh PAYLOAD_TAR ELECTRON_DIST OUTPUT_DIR}"
 OUTPUT_DIR="${3:?usage: build-deb.sh PAYLOAD_TAR ELECTRON_DIST OUTPUT_DIR}"
 VERSION="0.1.42-r31-alpha.21"
-PKGVER="0.1.42~r31~alpha21-4"
+PKGVER="0.1.42~r31~alpha21-5"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
