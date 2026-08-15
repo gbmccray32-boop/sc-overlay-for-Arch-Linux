@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=ArchVerse Overlay
+Comment=Star Citizen companion overlay with RapidOCR and Resource Scanner
+Exec=archverse-overlay
+Icon=archverse-overlay
+Terminal=false
+Categories=Game;Utility;
+StartupNotify=false
+StartupWMClass=SC Blueprint Tracker
