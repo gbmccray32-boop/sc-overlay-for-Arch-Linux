@@ -39,7 +39,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --pattern 'ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz' \
             --dir "$RUNNER_TEMP/alpha20"
-          sha256sum "$RUNNER_TEMP/alpha20/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz"
+          echo 'f4256aeac8c13fb0a64fc6065a8869bf58015dbe694200a550aaf9e99e3dd0a6  '"$RUNNER_TEMP/alpha20/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz" | sha256sum -c -
 
       - name: Reconstruct and verify Alpha 21
         shell: bash
@@ -49,8 +49,10 @@ jobs:
           packaging/common/rebuild-alpha21-from-alpha20.sh \
             "$RUNNER_TEMP/alpha20/ArchVerse-Overlay-0.1.42-r31-alpha.20-arch.tar.gz" \
             "$RUNNER_TEMP/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz"
-          tar -tzf "$RUNNER_TEMP/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz" | \
-            grep -q 'ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/main.cjs'
+          tar -tzf "$RUNNER_TEMP/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz" \
+            > "$RUNNER_TEMP/alpha21-payload-files.txt"
+          grep -q 'ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/main.cjs' \
+            "$RUNNER_TEMP/alpha21-payload-files.txt"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -93,6 +95,8 @@ jobs:
           cp packaging/arch/*.pkg.tar.* "$GITHUB_WORKSPACE/dist-arch/"
           pacman -Qip "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.*
           pacman -Qlp "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.* | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$'
+          bsdtar -xOf "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.* opt/archverse-overlay/app/electron/main.cjs | grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH'
+          bsdtar -xOf "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.* opt/archverse-overlay/app/electron/capture.cjs | grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY'
           sha256sum "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.*
 
       - uses: actions/upload-artifact@v4
@@ -138,6 +142,13 @@ jobs:
             dist-debian
           dpkg-deb --info dist-debian/*.deb
           dpkg-deb --contents dist-debian/*.deb | grep -E 'usr/bin/archverse-overlay|opt/archverse-overlay/runtime/electron/electron|opt/archverse-overlay/app/electron/main.cjs'
+          tmpdeb="$(mktemp -d)"
+          dpkg-deb -x dist-debian/*.deb "$tmpdeb"
+          grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$tmpdeb/opt/archverse-overlay/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY' "$tmpdeb/opt/archverse-overlay/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_WATCHER_HANDOFF' "$tmpdeb/opt/archverse-overlay/app/server/server.mjs"
+          test ! -e "$tmpdeb/opt/archverse-overlay/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_cuda.so"
+          test ! -e "$tmpdeb/opt/archverse-overlay/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_tensorrt.so"
           sha256sum dist-debian/*.deb
 
       - uses: actions/upload-artifact@v4
@@ -148,11 +159,11 @@ jobs:
           retention-days: 30
 
   fedora:
-    name: Fedora / Nobara package
+    name: Fedora 43 / Nobara package
     needs: payload
     runs-on: ubuntu-latest
-    container: fedora:latest
-    timeout-minutes: 40
+    container: fedora:43
+    timeout-minutes: 45
     steps:
       - name: Prepare Fedora build container
         shell: bash
@@ -178,7 +189,7 @@ jobs:
             "$RUNNER_TEMP/electron-stage/electron-runtime/"
           tar -C "$RUNNER_TEMP/electron-stage" -czf "$RUNNER_TEMP/electron-runtime.tar.gz" electron-runtime
 
-      - name: Build and inspect RPM
+      - name: Build, inspect and dependency-check RPM
         shell: bash
         run: |
           set -euo pipefail
@@ -192,13 +203,24 @@ jobs:
           rpmbuild --define "_topdir $TOP" -bb "$TOP/SPECS/archverse-overlay.spec"
           mkdir -p "$GITHUB_WORKSPACE/dist-fedora"
           find "$TOP/RPMS" -type f -name '*.rpm' -exec cp -v {} "$GITHUB_WORKSPACE/dist-fedora/" \;
-          rpm -qip "$GITHUB_WORKSPACE"/dist-fedora/*.rpm
-          rpm -qlp "$GITHUB_WORKSPACE"/dist-fedora/*.rpm | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/runtime/electron/electron$|/opt/archverse-overlay/app/electron/main.cjs$'
-          sha256sum "$GITHUB_WORKSPACE"/dist-fedora/*.rpm
+          rpmfile="$(find "$GITHUB_WORKSPACE/dist-fedora" -type f -name '*.rpm' -print -quit)"
+          test -n "$rpmfile"
+          rpm -qip "$rpmfile"
+          rpm -qlp "$rpmfile" | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/runtime/electron/electron$|/opt/archverse-overlay/app/electron/main.cjs$'
+          rpm -qpR "$rpmfile" | sort | tee "$RUNNER_TEMP/rpm-requires.txt"
+          if grep -Eiq 'libcuda|libcudart|libcublas|libcudnn|libcufft|libcurand|libnvinfer|libnvonnxparser|tensorrt|libc\.musl' "$RUNNER_TEMP/rpm-requires.txt"; then
+            echo 'ERROR: optional CUDA/TensorRT/musl dependency leaked into Fedora/Nobara RPM' >&2
+            exit 1
+          fi
+          rpm2cpio "$rpmfile" | cpio -idm --quiet -D "$RUNNER_TEMP/rpm-unpack"
+          grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$RUNNER_TEMP/rpm-unpack/opt/archverse-overlay/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY' "$RUNNER_TEMP/rpm-unpack/opt/archverse-overlay/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_WATCHER_HANDOFF' "$RUNNER_TEMP/rpm-unpack/opt/archverse-overlay/app/server/server.mjs"
+          sha256sum "$rpmfile"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ArchVerse-Alpha21-Fedora
+          name: ArchVerse-Alpha21-Fedora-Nobara
           path: dist-fedora/*.rpm
           if-no-files-found: error
           retention-days: 30
@@ -220,6 +242,7 @@ jobs:
           set -euo pipefail
           cd native-packages
           sha256sum *.pkg.tar.* *.deb *.rpm | tee SHA256SUMS
+          sha256sum -c SHA256SUMS
           ls -lh
 
       - uses: actions/upload-artifact@v4
