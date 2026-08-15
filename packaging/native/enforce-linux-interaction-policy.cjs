@@ -48,6 +48,12 @@ if (!main.includes('ARCHVERSE_LINUX_HOVER_SCOPED_LATCH')) {
   const newPoll = `function startFHoverPolling() {\n  stopFHoverPolling();\n  const tick = () => {\n    if (!fHoverHeld && !overlayInteractionLatched) return;\n    try {\n      const p = screen.getCursorScreenPoint();\n      if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) lastGlobalPointer = { x: p.x, y: p.y };\n    } catch {\n      lastGlobalPointer = overlayWindows.pointerLocation() || lastGlobalPointer;\n    }\n\n    // ARCHVERSE_LINUX_HOVER_SCOPED_LATCH: while F is held, preserve the proven native\n    // hover behavior unchanged. After a widget click and F-up, keep that widget usable only\n    // while the pointer remains inside any classified widget. The transparent canvas must stop\n    // owning input as soon as the pointer leaves all widget regions.\n    if (!fHoverHeld && overlayInteractionLatched && !modalOpen && !dragging && !moveMode && !miningMoveMode) {\n      const insideWidget = pointIsInsideOverlayRegion(lastGlobalPointer);\n      if (insideWidget) {\n        linuxHoverLatchMissSince = 0;\n        return;\n      }\n      const now = Date.now();\n      if (!linuxHoverLatchMissSince) {\n        linuxHoverLatchMissSince = now;\n        return;\n      }\n      if (now - linuxHoverLatchMissSince < LINUX_HOVER_LATCH_MISS_MS) return;\n\n      linuxHoverLatchMissSince = 0;\n      endFocusLatchedInteraction("pointer left all widgets after interaction-key release", { suppressHeldKey: false });\n      stopFHoverPolling();\n      // Input shape is restored before native focus. No click is synthesized into Star Citizen\n      // or any other application; the next real click belongs naturally to the window below.\n      setTimeout(() => {\n        if (overlayInteractionLatched || momentaryInteractionActive || unifiedInteractionActive || modalOpen || dragging || moveMode || miningMoveMode) return;\n        restoreLinuxPreviousWindow();\n        console.log("[linux-interaction] pointer left all widgets; overlay released and previous focus restored");\n      }, 35);\n      return;\n    }\n\n    if (fHoverHeld) {\n      linuxHoverLatchMissSince = 0;\n      updateFHoverHit();\n    }\n  };\n  tick();\n  fHoverPollTimer = setInterval(tick, 32);\n}\n`;
   main = replaceFunctionRegion(main, 'function startFHoverPolling() {', 'function applyMouse() {', newPoll, 'held-F polling policy');
 
+  // Alpha21's native F-up path used to stop the sampler immediately after creating the latch.
+  // Re-arm it here; otherwise the new hover-aware tick function would never run after F-up.
+  const releaseLatchAnchor = `      stopFHoverPolling();\n      refreshTray();\n      console.log(\`[focus-latch] \${accel} released via \${source}; \${fHoverTarget.title || fHoverTarget.key || "widget"} remains interactive\`);`;
+  const releaseLatchReplacement = `      linuxHoverLatchMissSince = 0;\n      startFHoverPolling(); // ARCHVERSE_LINUX_HOVER_SCOPED_LATCH_FUP_REARM\n      refreshTray();\n      console.log(\`[focus-latch] \${accel} released via \${source}; \${fHoverTarget.title || fHoverTarget.key || "widget"} remains interactive while hovered\`);`;
+  main = replaceOnce(main, releaseLatchAnchor, releaseLatchReplacement, 'F-up hover sampler re-arm');
+
   main = main.replace(
     '[focus-latch] ${overlayInteractionClaimSource} clicked; overlay owns keyboard/mouse until an external window is clicked',
     '[focus-latch] ${overlayInteractionClaimSource} clicked; overlay remains interactive while pointer stays inside a widget'
@@ -94,10 +100,12 @@ if (!main.includes('ARCHVERSE_LINUX_DRAG_LOCK_WATCHDOG')) {
 
 // Fail loudly: these are Linux runtime requirements for every native package target.
 must(main.includes('ARCHVERSE_LINUX_HOVER_SCOPED_LATCH'), 'hover-scoped latch policy marker missing');
+must(main.includes('ARCHVERSE_LINUX_HOVER_SCOPED_LATCH_FUP_REARM'), 'F-up hover sampler re-arm marker missing');
 must(main.includes('LINUX_HOVER_LATCH_MISS_MS = 90'), '90 ms hover miss debounce missing');
 must(main.includes('if (!fHoverHeld && !overlayInteractionLatched) return;'), 'post-release pointer polling missing');
 must(main.includes('pointIsInsideOverlayRegion(lastGlobalPointer)'), 'classified-widget hit test missing');
 must(main.includes('endFocusLatchedInteraction("pointer left all widgets after interaction-key release"'), 'hover-exit ownership release missing');
+must(main.includes('startFHoverPolling(); // ARCHVERSE_LINUX_HOVER_SCOPED_LATCH_FUP_REARM'), 'F release does not keep hover sampling alive');
 must(main.includes('[linux-interaction] pointer left all widgets; overlay released and previous focus restored'), 'hover-exit release diagnostic missing');
 must(!main.includes('overlay remains focused until Star Citizen is clicked'), 'old Star Citizen click-to-release wording remains');
 
