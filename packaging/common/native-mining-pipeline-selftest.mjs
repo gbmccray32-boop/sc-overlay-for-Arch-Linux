@@ -8,14 +8,16 @@ import { createRequire } from 'node:module';
 const root = process.argv[2];
 if (!root) throw new Error('usage: native-mining-pipeline-selftest.mjs <staged-app-root>');
 
-// The liveness policy is part of the shared native payload contract. Apply it here before the
-// end-to-end sidecar test; this script runs during shared payload reconstruction, before the
-// Arch/Fedora/Debian package split. Then syntax-check the files it changes before starting them.
+// The liveness + realtime-renderer policies are part of the shared native payload contract.
+// Apply them during shared payload reconstruction, before the Arch/Fedora/Debian package split.
+// The Resource Scanner must continue capture, SSE rendering and announcements without mouse hover,
+// F-key focus, or Alt-Tab. Syntax-check every file these policies touch before starting the sidecar.
 const require = createRequire(import.meta.url);
 require('./enforce-native-mining-liveness-policy.cjs');
-for (const rel of ['app/electron/capture.cjs', 'app/server/server.mjs']) {
+require('./enforce-native-overlay-realtime-policy.cjs');
+for (const rel of ['app/electron/capture.cjs', 'app/electron/main.cjs', 'app/server/server.mjs']) {
   const checked = spawnSync(process.execPath, ['--check', path.join(root, rel)], { encoding: 'utf8' });
-  if (checked.status !== 0) throw new Error(`post-liveness syntax check failed for ${rel}:\n${checked.stderr || checked.stdout}`);
+  if (checked.status !== 0) throw new Error(`post-policy syntax check failed for ${rel}:\n${checked.stderr || checked.stdout}`);
 }
 
 const serverDir = path.join(root, 'app', 'server');
@@ -164,7 +166,7 @@ try {
   const confirmedGem = await waitScan(3000);
   if (confirmedGem.confirmed !== true) throw new Error(`same-signature confirmation upgrade failed: ${JSON.stringify(confirmedGem)}`);
 
-  console.log('Native mining pipeline self-test OK: grouped, split-token, authoritative state, RS 3,000, confirmation upgrade, bounded/focus-safe liveness syntax');
+  console.log('Native mining pipeline self-test OK: grouped, split-token, authoritative state, RS 3,000, confirmation upgrade, bounded/focus-safe liveness, focus-independent renderer');
 } catch (error) {
   console.error(error?.stack || error);
   console.error('--- sidecar output ---\n' + log.slice(-8000));
