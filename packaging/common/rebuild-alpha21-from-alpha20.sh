@@ -27,6 +27,7 @@ python3 "$ROOT/linux-port/alpha21-runtime-log-fixes.py" "$OUT"
 node "$ROOT/packaging/common/enforce-native-linux-interaction-policy.cjs" \
   "$OUT/app/electron/main.cjs"
 node "$ROOT/packaging/common/enforce-native-linux-runtime-policy.cjs" "$OUT"
+node "$ROOT/packaging/common/enforce-native-mining-pipeline-policy.cjs" "$OUT"
 
 # The native package families supported here are all glibc distributions. Keep only native
 # binaries that can actually be selected on those hosts. Fedora's automatic ELF dependency scan
@@ -66,6 +67,9 @@ entry={
     {'kind':'improved','label':'Linux hover-scoped interaction latch','text':'After a widget is clicked and the interaction key is released, it stays interactive only while the pointer remains inside a classified widget. Leaving all widgets restores click-through and the exact pre-overlay window focus.'},
     {'kind':'fixed','label':'30-second drag-lock watchdog','text':'A renderer that loses pointer-up can no longer leave the transparent canvas permanently interactive; stale overlay and mining drag locks are released after 30 seconds.'},
     {'kind':'improved','label':'Mining signature authority','text':'When Mining is armed, RapidOCR always reads the configured signature crop. A valid parsed signature is authoritative; radar/scan-mode recognition is diagnostic-only and cannot gate, clear, or discard a signature.'},
+    {'kind':'fixed','label':'Authoritative Resource Scanner handoff','text':'A legal signature parsed by /api/screen-read now updates the Resource Scanner immediately instead of depending on a second Electron-to-sidecar POST before resource lookup and notifications can occur.'},
+    {'kind':'fixed','label':'Signature OCR token recovery','text':'Resource signatures remain readable when OCR returns a space instead of the thousands separator or splits values such as 18 and 000 into adjacent same-row tokens.'},
+    {'kind':'fixed','label':'RS 3,000 resource class','text':'The server now accepts RS 3,000 as the hand-mineable gemstone resource class, matching the Resource Scanner UI instead of rejecting it as an unknown signature.'},
     {'kind':'improved','label':'Adaptive mining polling','text':'Scan HUD text or a valid signature opens the fast polling window, while the loop still backs off from measured OCR cost using the self-tuning 1.5x cadence.'},
     {'kind':'fixed','label':'RapidOCR health reporting','text':'RapidOCR worker failures are surfaced immediately and persisted to rapidocr-health.json before any optional fallback behavior can make the capture loop look healthy.'},
     {'kind':'fixed','label':'Exact Star Citizen session binding','text':'Linux screen reading remains bound to the detected StarCitizen process tree/Gamescope session rather than accepting unrelated foreground windows.'},
@@ -130,6 +134,18 @@ grep -q 'ARCHVERSE_LINUX_WATCHER_HANDOFF' "$OUT/app/server/server.mjs"
 grep -q 'startPosition: seedEndsAt' "$OUT/app/server/server.mjs"
 grep -q 'ARCHVERSE_LINUX_MISSION_COMPLETION' "$OUT/app/server/server.mjs"
 grep -q 'completedAtByMission.clear' "$OUT/app/server/server.mjs"
+
+# Resource Scanner signature pipeline invariants. A parsed legal signature is itself authoritative;
+# no second HTTP hop or radar/pin state may be required for lookup/UI notification state.
+grep -q 'ARCHVERSE_LINUX_RESOURCE_SIGNATURE_VOCABULARY' "$OUT/app/server/server.mjs"
+grep -q 'ARCHVERSE_LINUX_SIGNATURE_PARSE_ROBUSTNESS' "$OUT/app/server/server.mjs"
+grep -q 'ARCHVERSE_LINUX_PARSED_SIGNATURE_COMMIT' "$OUT/app/server/server.mjs"
+grep -q 'result.outcome = mining.applyMineableRead(result.signature, false)' "$OUT/app/server/server.mjs"
+
+# Exercise the actual sidecar parser -> MiningTracker -> SSE state path before any distro package
+# is allowed to be produced. This catches the exact regression where OCR could parse a value but
+# the Resource Scanner never received its resource classification or notification state.
+node "$ROOT/packaging/common/native-mining-pipeline-selftest.mjs" "$OUT"
 
 # Packaged engine check: model files + native ONNX binding + CPU provider must initialize here,
 # before a distro package is allowed to be built from this payload. This also proves deleting the
