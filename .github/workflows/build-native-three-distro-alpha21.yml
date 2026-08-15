@@ -13,6 +13,11 @@ concurrency:
   group: native-alpha21-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ELECTRON_VERSION: 42.7.1
+  ELECTRON_ASSET: electron-v42.7.1-linux-x64.zip
+  ELECTRON_SHA256: e85b28245deaa75c3c4f2cf5da084f4c7fbedd5af1630c59a827c41ac1f5e1af
+
 jobs:
   payload:
     name: Rebuild tested Alpha 21 payload
@@ -93,11 +98,19 @@ jobs:
           su builder -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg --nodeps --noconfirm --cleanbuild"
           mkdir -p "$GITHUB_WORKSPACE/dist-arch"
           cp packaging/arch/*.pkg.tar.* "$GITHUB_WORKSPACE/dist-arch/"
-          pacman -Qip "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.*
-          pacman -Qlp "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.* | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$'
-          bsdtar -xOf "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.* opt/archverse-overlay/app/electron/main.cjs | grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH'
-          bsdtar -xOf "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.* opt/archverse-overlay/app/electron/capture.cjs | grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY'
-          sha256sum "$GITHUB_WORKSPACE"/dist-arch/*.pkg.tar.*
+          pkg="$(find "$GITHUB_WORKSPACE/dist-arch" -type f -name '*.pkg.tar.*' -print -quit)"
+          test -n "$pkg"
+          pacman -Qip "$pkg"
+          pacman -Qlp "$pkg" | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$'
+          pkgroot="$(mktemp -d)"
+          bsdtar -xf "$pkg" -C "$pkgroot" \
+            opt/archverse-overlay/app/electron/main.cjs \
+            opt/archverse-overlay/app/electron/capture.cjs \
+            opt/archverse-overlay/app/server/server.mjs
+          grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$pkgroot/opt/archverse-overlay/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY' "$pkgroot/opt/archverse-overlay/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_WATCHER_HANDOFF' "$pkgroot/opt/archverse-overlay/app/server/server.mjs"
+          sha256sum "$pkg"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -114,21 +127,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - uses: actions/download-artifact@v4
         with:
           name: ArchVerse-Alpha21-native-payload
           path: dist-payload
 
-      - name: Prepare pinned Electron 42 runtime
+      - name: Prepare verified Electron 42 runtime
         shell: bash
         run: |
           set -euo pipefail
-          npm install --prefix "$RUNNER_TEMP/electron42" --omit=dev electron@42.7.1
-          test -x "$RUNNER_TEMP/electron42/node_modules/electron/dist/electron"
+          mkdir -p "$RUNNER_TEMP/electron42"
+          curl --fail --location --retry 4 \
+            "https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/${ELECTRON_ASSET}" \
+            --output "$RUNNER_TEMP/${ELECTRON_ASSET}"
+          echo "$ELECTRON_SHA256  $RUNNER_TEMP/$ELECTRON_ASSET" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/$ELECTRON_ASSET" -d "$RUNNER_TEMP/electron42"
+          test -x "$RUNNER_TEMP/electron42/electron"
 
       - name: Build and inspect DEB
         shell: bash
@@ -138,18 +152,20 @@ jobs:
           mkdir -p dist-debian
           packaging/debian/build-deb.sh \
             dist-payload/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz \
-            "$RUNNER_TEMP/electron42/node_modules/electron/dist" \
+            "$RUNNER_TEMP/electron42" \
             dist-debian
-          dpkg-deb --info dist-debian/*.deb
-          dpkg-deb --contents dist-debian/*.deb | grep -E 'usr/bin/archverse-overlay|opt/archverse-overlay/runtime/electron/electron|opt/archverse-overlay/app/electron/main.cjs'
+          deb="$(find dist-debian -type f -name '*.deb' -print -quit)"
+          test -n "$deb"
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb" | grep -E 'usr/bin/archverse-overlay|opt/archverse-overlay/runtime/electron/electron|opt/archverse-overlay/app/electron/main.cjs'
           tmpdeb="$(mktemp -d)"
-          dpkg-deb -x dist-debian/*.deb "$tmpdeb"
+          dpkg-deb -x "$deb" "$tmpdeb"
           grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$tmpdeb/opt/archverse-overlay/app/electron/main.cjs"
           grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY' "$tmpdeb/opt/archverse-overlay/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_WATCHER_HANDOFF' "$tmpdeb/opt/archverse-overlay/app/server/server.mjs"
           test ! -e "$tmpdeb/opt/archverse-overlay/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_cuda.so"
           test ! -e "$tmpdeb/opt/archverse-overlay/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_tensorrt.so"
-          sha256sum dist-debian/*.deb
+          sha256sum "$deb"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -169,7 +185,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dnf -y install git nodejs npm rpm-build tar gzip findutils
+          dnf -y install git rpm-build tar gzip findutils curl unzip cpio
 
       - uses: actions/checkout@v4
 
@@ -178,15 +194,19 @@ jobs:
           name: ArchVerse-Alpha21-native-payload
           path: dist-payload
 
-      - name: Prepare pinned Electron 42 runtime
+      - name: Prepare verified Electron 42 runtime
         shell: bash
         run: |
           set -euo pipefail
-          npm install --prefix "$RUNNER_TEMP/electron42" --omit=dev electron@42.7.1
-          test -x "$RUNNER_TEMP/electron42/node_modules/electron/dist/electron"
+          mkdir -p "$RUNNER_TEMP/electron42"
+          curl --fail --location --retry 4 \
+            "https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/${ELECTRON_ASSET}" \
+            --output "$RUNNER_TEMP/$ELECTRON_ASSET"
+          echo "$ELECTRON_SHA256  $RUNNER_TEMP/$ELECTRON_ASSET" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/$ELECTRON_ASSET" -d "$RUNNER_TEMP/electron42"
+          test -x "$RUNNER_TEMP/electron42/electron"
           mkdir -p "$RUNNER_TEMP/electron-stage/electron-runtime"
-          cp -a "$RUNNER_TEMP/electron42/node_modules/electron/dist/." \
-            "$RUNNER_TEMP/electron-stage/electron-runtime/"
+          cp -a "$RUNNER_TEMP/electron42/." "$RUNNER_TEMP/electron-stage/electron-runtime/"
           tar -C "$RUNNER_TEMP/electron-stage" -czf "$RUNNER_TEMP/electron-runtime.tar.gz" electron-runtime
 
       - name: Build, inspect and dependency-check RPM
@@ -212,7 +232,8 @@ jobs:
             echo 'ERROR: optional CUDA/TensorRT/musl dependency leaked into Fedora/Nobara RPM' >&2
             exit 1
           fi
-          rpm2cpio "$rpmfile" | cpio -idm --quiet -D "$RUNNER_TEMP/rpm-unpack"
+          mkdir -p "$RUNNER_TEMP/rpm-unpack"
+          (cd "$RUNNER_TEMP/rpm-unpack" && rpm2cpio "$rpmfile" | cpio -idm --quiet)
           grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$RUNNER_TEMP/rpm-unpack/opt/archverse-overlay/app/electron/main.cjs"
           grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY' "$RUNNER_TEMP/rpm-unpack/opt/archverse-overlay/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_WATCHER_HANDOFF' "$RUNNER_TEMP/rpm-unpack/opt/archverse-overlay/app/server/server.mjs"
