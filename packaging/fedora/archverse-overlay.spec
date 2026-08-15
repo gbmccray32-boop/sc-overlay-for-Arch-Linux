@@ -1,6 +1,6 @@
 Name:           archverse-overlay
 Version:        0.1.42
-Release:        2.r31.alpha21%{?dist}
+Release:        3.r31.alpha21%{?dist}
 Summary:        ArchVerse Star Citizen companion overlay
 License:        LicenseRef-FSL-1.1-MIT
 URL:            https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux
@@ -84,6 +84,11 @@ fi
 /opt/archverse-overlay
 
 %changelog
+* Fri Aug 15 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-3.r31.alpha21
+- Bound the mining poll cadence to 900-3000 ms so slow OCR cannot create 10-24 second sleeps.
+- Keep reading the already-bound Star Citizen/Gamescope source while ArchVerse itself briefly owns focus.
+- Add throttled mining OCR evidence/timing diagnostics and same-signature confirmation upgrades.
+
 * Fri Aug 15 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-2.r31.alpha21
 - Make parsed Resource Scanner signatures authoritative and robust to grouped/split OCR tokens.
 - Accept RS 3,000 as the hand-mineable gemstone resource class.
