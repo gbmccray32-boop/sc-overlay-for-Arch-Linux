@@ -1,6 +1,6 @@
 Name:           archverse-overlay
 Version:        0.1.42
-Release:        3.r31.alpha21%{?dist}
+Release:        4.r31.alpha21%{?dist}
 Summary:        ArchVerse Star Citizen companion overlay
 License:        LicenseRef-FSL-1.1-MIT
 URL:            https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux
@@ -84,6 +84,10 @@ fi
 /opt/archverse-overlay
 
 %changelog
+* Fri Aug 15 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-4.r31.alpha21
+- Keep the Resource Scanner overlay renderer live while Star Citizen retains focus.
+- Prevent hover, F-key interaction, or Alt-Tab from acting as an accidental scanner wake-up trigger.
+
 * Fri Aug 15 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-3.r31.alpha21
 - Bound the mining poll cadence to 900-3000 ms so slow OCR cannot create 10-24 second sleeps.
 - Keep reading the already-bound Star Citizen/Gamescope source while ArchVerse itself briefly owns focus.
