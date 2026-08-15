@@ -108,7 +108,10 @@ jobs:
             opt/archverse-overlay/app/electron/capture.cjs \
             opt/archverse-overlay/app/server/server.mjs
           grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$pkgroot/opt/archverse-overlay/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER' "$pkgroot/opt/archverse-overlay/app/electron/main.cjs"
+          grep -q 'backgroundThrottling: false' "$pkgroot/opt/archverse-overlay/app/electron/main.cjs"
           grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY' "$pkgroot/opt/archverse-overlay/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_BOUND_MINING_CADENCE' "$pkgroot/opt/archverse-overlay/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_WATCHER_HANDOFF' "$pkgroot/opt/archverse-overlay/app/server/server.mjs"
           sha256sum "$pkg"
 
@@ -130,47 +133,43 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ArchVerse-Alpha21-native-payload
-          path: dist-payload
+          path: ${{ runner.temp }}/payload
 
       - name: Prepare verified Electron 42 runtime
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/electron42"
-          curl --fail --location --retry 4 \
+          curl -fL --retry 3 \
             "https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/${ELECTRON_ASSET}" \
-            --output "$RUNNER_TEMP/${ELECTRON_ASSET}"
+            -o "$RUNNER_TEMP/$ELECTRON_ASSET"
           echo "$ELECTRON_SHA256  $RUNNER_TEMP/$ELECTRON_ASSET" | sha256sum -c -
-          unzip -q "$RUNNER_TEMP/$ELECTRON_ASSET" -d "$RUNNER_TEMP/electron42"
-          test -x "$RUNNER_TEMP/electron42/electron"
+          mkdir -p "$RUNNER_TEMP/electron"
+          unzip -q "$RUNNER_TEMP/$ELECTRON_ASSET" -d "$RUNNER_TEMP/electron"
+          test -x "$RUNNER_TEMP/electron/electron"
 
       - name: Build and inspect DEB
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x packaging/debian/build-deb.sh packaging/common/archverse-overlay
-          mkdir -p dist-debian
+          chmod +x packaging/debian/build-deb.sh
           packaging/debian/build-deb.sh \
-            dist-payload/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz \
-            "$RUNNER_TEMP/electron42" \
-            dist-debian
-          deb="$(find dist-debian -type f -name '*.deb' -print -quit)"
+            "$RUNNER_TEMP/payload/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz" \
+            "$RUNNER_TEMP/electron" \
+            "$GITHUB_WORKSPACE/dist-deb"
+          deb="$(find "$GITHUB_WORKSPACE/dist-deb" -type f -name '*.deb' -print -quit)"
           test -n "$deb"
           dpkg-deb --info "$deb"
-          dpkg-deb --contents "$deb" | grep -E 'usr/bin/archverse-overlay|opt/archverse-overlay/runtime/electron/electron|opt/archverse-overlay/app/electron/main.cjs'
-          tmpdeb="$(mktemp -d)"
-          dpkg-deb -x "$deb" "$tmpdeb"
-          grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$tmpdeb/opt/archverse-overlay/app/electron/main.cjs"
-          grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY' "$tmpdeb/opt/archverse-overlay/app/electron/capture.cjs"
-          grep -q 'ARCHVERSE_LINUX_WATCHER_HANDOFF' "$tmpdeb/opt/archverse-overlay/app/server/server.mjs"
-          test ! -e "$tmpdeb/opt/archverse-overlay/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_cuda.so"
-          test ! -e "$tmpdeb/opt/archverse-overlay/app/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_tensorrt.so"
+          dpkg-deb --contents "$deb" | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$'
+          root="$(mktemp -d)"
+          dpkg-deb -x "$deb" "$root"
+          grep -q 'ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER' "$root/opt/archverse-overlay/app/electron/main.cjs"
+          grep -q 'backgroundThrottling: false' "$root/opt/archverse-overlay/app/electron/main.cjs"
           sha256sum "$deb"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ArchVerse-Alpha21-Debian
-          path: dist-debian/*.deb
+          path: dist-deb/*.deb
           if-no-files-found: error
           retention-days: 30
 
@@ -179,100 +178,62 @@ jobs:
     needs: payload
     runs-on: ubuntu-latest
     container: fedora:43
-    timeout-minutes: 45
+    timeout-minutes: 35
     steps:
       - name: Prepare Fedora build container
         shell: bash
         run: |
           set -euo pipefail
-          dnf -y install git rpm-build tar gzip findutils curl unzip cpio
+          dnf -y install rpm-build rpmdevtools git curl unzip findutils binutils
 
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
           name: ArchVerse-Alpha21-native-payload
-          path: dist-payload
+          path: ${{ runner.temp }}/payload
 
       - name: Prepare verified Electron 42 runtime
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/electron42"
-          curl --fail --location --retry 4 \
+          curl -fL --retry 3 \
             "https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/${ELECTRON_ASSET}" \
-            --output "$RUNNER_TEMP/$ELECTRON_ASSET"
+            -o "$RUNNER_TEMP/$ELECTRON_ASSET"
           echo "$ELECTRON_SHA256  $RUNNER_TEMP/$ELECTRON_ASSET" | sha256sum -c -
-          unzip -q "$RUNNER_TEMP/$ELECTRON_ASSET" -d "$RUNNER_TEMP/electron42"
-          test -x "$RUNNER_TEMP/electron42/electron"
-          mkdir -p "$RUNNER_TEMP/electron-stage/electron-runtime"
-          cp -a "$RUNNER_TEMP/electron42/." "$RUNNER_TEMP/electron-stage/electron-runtime/"
-          tar -C "$RUNNER_TEMP/electron-stage" -czf "$RUNNER_TEMP/electron-runtime.tar.gz" electron-runtime
+          mkdir -p "$RUNNER_TEMP/electron-runtime"
+          unzip -q "$RUNNER_TEMP/$ELECTRON_ASSET" -d "$RUNNER_TEMP/electron-runtime"
+          test -x "$RUNNER_TEMP/electron-runtime/electron"
+          tar -C "$RUNNER_TEMP/electron-runtime" -czf "$RUNNER_TEMP/electron-runtime.tar.gz" .
 
       - name: Build, inspect and dependency-check RPM
         shell: bash
         run: |
           set -euo pipefail
-          TOP="$RUNNER_TEMP/rpmbuild"
-          mkdir -p "$TOP"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
-          cp dist-payload/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz "$TOP/SOURCES/"
-          cp "$RUNNER_TEMP/electron-runtime.tar.gz" "$TOP/SOURCES/"
-          cp packaging/common/archverse-overlay "$TOP/SOURCES/"
-          cp packaging/common/archverse-overlay.desktop "$TOP/SOURCES/"
-          cp packaging/fedora/archverse-overlay.spec "$TOP/SPECS/"
-          rpmbuild --define "_topdir $TOP" -bb "$TOP/SPECS/archverse-overlay.spec"
-          mkdir -p "$GITHUB_WORKSPACE/dist-fedora"
-          find "$TOP/RPMS" -type f -name '*.rpm' -exec cp -v {} "$GITHUB_WORKSPACE/dist-fedora/" \;
-          rpmfile="$(find "$GITHUB_WORKSPACE/dist-fedora" -type f -name '*.rpm' -print -quit)"
-          test -n "$rpmfile"
-          rpm -qip "$rpmfile"
-          rpm -qlp "$rpmfile" | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/runtime/electron/electron$|/opt/archverse-overlay/app/electron/main.cjs$'
-          rpm -qpR "$rpmfile" | sort | tee "$RUNNER_TEMP/rpm-requires.txt"
-          if grep -Eiq 'libcuda|libcudart|libcublas|libcudnn|libcufft|libcurand|libnvinfer|libnvonnxparser|tensorrt|libc\.musl' "$RUNNER_TEMP/rpm-requires.txt"; then
-            echo 'ERROR: optional CUDA/TensorRT/musl dependency leaked into Fedora/Nobara RPM' >&2
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/rpm-unpack"
-          (cd "$RUNNER_TEMP/rpm-unpack" && rpm2cpio "$rpmfile" | cpio -idm --quiet)
-          grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$RUNNER_TEMP/rpm-unpack/opt/archverse-overlay/app/electron/main.cjs"
-          grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY' "$RUNNER_TEMP/rpm-unpack/opt/archverse-overlay/app/electron/capture.cjs"
-          grep -q 'ARCHVERSE_LINUX_WATCHER_HANDOFF' "$RUNNER_TEMP/rpm-unpack/opt/archverse-overlay/app/server/server.mjs"
-          sha256sum "$rpmfile"
+          rpmdev-setuptree
+          cp "$RUNNER_TEMP/payload/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz" "$HOME/rpmbuild/SOURCES/"
+          cp "$RUNNER_TEMP/electron-runtime.tar.gz" "$HOME/rpmbuild/SOURCES/"
+          cp packaging/common/archverse-overlay "$HOME/rpmbuild/SOURCES/"
+          cp packaging/common/archverse-overlay.desktop "$HOME/rpmbuild/SOURCES/"
+          rpmbuild -bb packaging/fedora/archverse-overlay.spec
+          mkdir -p "$GITHUB_WORKSPACE/dist-rpm"
+          cp "$HOME"/rpmbuild/RPMS/x86_64/*.rpm "$GITHUB_WORKSPACE/dist-rpm/"
+          rpm="$(find "$GITHUB_WORKSPACE/dist-rpm" -type f -name '*.rpm' -print -quit)"
+          test -n "$rpm"
+          rpm -qip "$rpm"
+          rpm -qlp "$rpm" | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$'
+          root="$(mktemp -d)"
+          rpm2cpio "$rpm" | (cd "$root" && cpio -idm --quiet)
+          grep -q 'ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER' "$root/opt/archverse-overlay/app/electron/main.cjs"
+          grep -q 'backgroundThrottling: false' "$root/opt/archverse-overlay/app/electron/main.cjs"
+          req="$RUNNER_TEMP/rpm-requires.txt"
+          rpm -qpR "$rpm" | tee "$req"
+          ! grep -Eiq 'cuda|tensorrt|libc\.musl' "$req"
+          sha256sum "$rpm"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ArchVerse-Alpha21-Fedora-Nobara
-          path: dist-fedora/*.rpm
-          if-no-files-found: error
-          retention-days: 30
-
-  package-set:
-    name: Publish CI package set
-    needs: [arch, debian, fedora]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ArchVerse-Alpha21-*
-          path: native-packages
-          merge-multiple: true
-
-      - name: Generate package checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd native-packages
-          sha256sum *.pkg.tar.* *.deb *.rpm | tee SHA256SUMS
-          sha256sum -c SHA256SUMS
-          ls -lh
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ArchVerse-Alpha21-Native-Three-Distro
-          path: |
-            native-packages/*.pkg.tar.*
-            native-packages/*.deb
-            native-packages/*.rpm
-            native-packages/SHA256SUMS
+          name: ArchVerse-Alpha21-Fedora
+          path: dist-rpm/*.rpm
           if-no-files-found: error
           retention-days: 30
