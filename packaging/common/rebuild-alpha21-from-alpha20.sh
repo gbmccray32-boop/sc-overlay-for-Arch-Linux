@@ -21,12 +21,17 @@ OUT="$WORK/ArchVerse-Overlay-$A21"
 cp -a "$SRC" "$OUT"
 python3 "$ROOT/linux-port/alpha21-runtime-log-fixes.py" "$OUT"
 
+# Distro-neutral Linux interaction policy. This is deliberately applied before any Arch/DEB/RPM
+# packaging so all native packages receive byte-identical interaction semantics.
+node "$ROOT/packaging/common/enforce-native-linux-interaction-policy.cjs" \
+  "$OUT/app/electron/main.cjs"
+
 python3 - "$OUT/app/package.json" <<'PY'
 from pathlib import Path
 import json, sys
 p=Path(sys.argv[1]); d=json.loads(p.read_text())
 d['version']='0.1.42-r31-alpha.21'
-d['description']='Community Linux port of SubliminalsTV SC Overlay 0.1.42 — Alpha 20 Resource Scanner plus runtime log fixes'
+d['description']='Community Linux port of SubliminalsTV SC Overlay 0.1.42 — Alpha 20 Resource Scanner plus runtime log fixes and native Linux interaction policy'
 p.write_text(json.dumps(d, indent=2)+'\n')
 PY
 
@@ -39,7 +44,8 @@ entry={
   'notes':[
     {'kind':'fixed','label':'OCR watchdog overlap','text':'A slow Fabricator/Mining OCR tick is no longer force-unlocked while its async native/OCR work is still alive. Alpha 21 skips overlapping polls and lets only the original tick release the busy guard.'},
     {'kind':'fixed','label':'KDE Spectacle screenshot race','text':'Wayland screenshot capture now waits longer for a stable file and verifies that Electron can decode the PNG before accepting it, reducing false fallbacks caused by the portal returning before the file writer finishes.'},
-    {'kind':'improved','label':'Alpha 20 behavior preserved','text':'Resource Scanner classification, salvage confirmation rules, per-widget text brightness/window transparency, F interaction, focus handoff, Scan Mode gating and upstream 0.1.42 security behavior are otherwise unchanged.'},
+    {'kind':'improved','label':'Linux hover-scoped interaction latch','text':'After a widget is clicked and the interaction key is released, the widget remains interactive only while the pointer stays within classified widgets. Leaving all widgets restores click-through and the exact pre-overlay window focus.'},
+    {'kind':'improved','label':'Alpha 20 behavior preserved','text':'Resource Scanner classification, salvage confirmation rules, per-widget text brightness/window transparency, held-key interaction, Gamescope/KDE handling, Scan Mode gating and upstream 0.1.42 security behavior are otherwise unchanged.'},
   ]
 }
 out={'0.1.42-r31-alpha.21':entry}; out.update(d)
@@ -60,8 +66,10 @@ for rel in ['install-cachyos.sh','doctor.sh','bin/sc-blueprint-tracker','README.
     p.write_text(s)
 PY
 
-# The native package workflow checks the same Alpha 21 runtime invariants as the original field build.
+# The native package workflow checks the same Alpha 21 runtime invariants as the original field build
+# plus the permanent Linux interaction contract.
 node --check "$OUT/app/electron/capture.cjs"
+node --check "$OUT/app/electron/main.cjs"
 find "$OUT/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
 grep -q '0.1.42-r31-alpha.21' "$OUT/app/package.json"
 grep -q 'Resource Scanner' "$OUT/app/server/overlay/mining.html"
@@ -74,6 +82,9 @@ grep -q 'skipping overlap' "$OUT/app/electron/capture.cjs"
 grep -q 'queueDepth' "$OUT/app/electron/rapidocr-client.cjs"
 grep -q 'Cross-origin requests are not accepted.' "$OUT/app/server/server.mjs"
 grep -q 'scan-mode-gate.cjs' "$OUT/app/electron/capture.cjs"
+grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$OUT/app/electron/main.cjs"
+grep -q 'LINUX_HOVER_LATCH_MISS_MS = 90' "$OUT/app/electron/main.cjs"
+grep -q '\[linux-interaction\] pointer left all widgets; overlay released and previous focus restored' "$OUT/app/electron/main.cjs"
 bash -n "$OUT/bin/sc-blueprint-tracker" "$OUT/doctor.sh"
 
 mkdir -p "$(dirname -- "$OUTPUT_TAR")"
