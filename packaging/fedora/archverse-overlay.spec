@@ -1,6 +1,6 @@
 Name:           archverse-overlay
 Version:        0.1.42
-Release:        6.r31.alpha21%{?dist}
+Release:        7.r31.alpha21%{?dist}
 Summary:        ArchVerse Star Citizen companion overlay
 License:        LicenseRef-FSL-1.1-MIT
 URL:            https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux
@@ -14,6 +14,11 @@ Source3:        archverse-overlay.desktop
 Requires:       nodejs
 Requires:       tesseract
 Requires:       tesseract-langpack-eng
+Requires:       pipewire-utils
+Requires:       pipewire-gstreamer
+Requires:       gstreamer1
+Requires:       gstreamer1-plugins-base
+Requires:       gstreamer1-plugins-good
 Requires:       xdotool
 Requires:       xrandr
 Requires:       xprop
@@ -41,8 +46,8 @@ Conflicts:      sc-blueprint-tracker
 %description
 Community Linux package of the tested ArchVerse Alpha 21 native payload.
 The Fedora-family package bundles the verified Electron 42.7.1 runtime while using the host
-Node.js, OCR, X11 integration and desktop capture utilities. The application payload and durable
-Linux behavior policies are identical to the Arch and Debian package targets.
+Node.js, OCR, PipeWire/GStreamer, X11 integration and desktop capture utilities. The application
+payload and durable Linux behavior policies are identical to the Arch and Debian package targets.
 
 %prep
 %setup -q -n ArchVerse-Overlay-0.1.42-r31-alpha.21 -a 1
@@ -85,6 +90,12 @@ fi
 /opt/archverse-overlay
 
 %changelog
+* Sat Aug 15 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-7.r31.alpha21
+- Make the bound Gamescope PipeWire Video/Source the primary native Linux OCR capture backend.
+- Discover the PipeWire node and BGRx frame size dynamically for each Gamescope session instead of hard-coding a monitor or panorama resolution.
+- Keep Spectacle and Electron capture as fallback paths only.
+- Keep Mining Assistant OCR armed independently of widget visibility, F-key state, hover and overlay focus.
+
 * Sat Aug 15 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-6.r31.alpha21
 - Make RapidOCR the permanent primary native Linux OCR backend, with Tesseract as failure-only fallback.
 - Keep Windows.Media.Ocr/PowerShell behind a Windows-only runtime gate.
