@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld("overlayApi", {
   // Report the page's interactive element client-rects so the shell can hit-test the cursor
   // against them (replaces forward:true mouse-forwarding). rects = [{x,y,w,h}, …].
   reportRegions: (rects) => ipcRenderer.send("overlay:regions", rects),
+  // The shell polls the global pointer while F is held. Ask the renderer which actual DOM
+  // classification is under that canvas-local point instead of relying only on stale rectangles.
+  onProbePoint: (cb) => ipcRenderer.on("overlay:probe-point", (_e, point) => cb(point)),
+  reportPointClassification: (result) => ipcRenderer.send("overlay:point-classification", result),
   // A pointer press inside any shaped widget latches keyboard/mouse ownership to the overlay.
   // The latch ends when the native Overlay Manager loses focus to Star Citizen/another window.
   claimInteraction: (source) => ipcRenderer.send("overlay:claim-interaction", source || "widget"),
@@ -25,6 +29,11 @@ contextBridge.exposeInMainWorld("overlayApi", {
   onUnifiedInteraction: (cb) => ipcRenderer.on("overlay:unified-interaction", (_e, on) => cb(!!on)),
   onMiningOnlyInteraction: (cb) => ipcRenderer.on("overlay:mining-only-interaction", (_e, on) => cb(!!on)),
   onMiningMoveMode: (cb) => ipcRenderer.on("overlay:mining-move-mode", (_e, on) => cb(!!on)),  // The app version (authoritative), for the "what's new" card.
+  // The overlay window itself gaining/losing focus. Distinct from onGameFocus: that reports what
+  // is in the FOREGROUND (used to fade the cog while you play), this reports that the user
+  // deliberately switched TO the overlay via Alt-Tab or the taskbar.
+  onWindowFocus: (cb) => ipcRenderer.on("overlay:window-focus", (_e, on) => cb(!!on)),
+  // The app version (authoritative), for the "what's new" card.
   getVersion: () => ipcRenderer.invoke("app:version"),
   // While a modal (what's-new card) is open, keep the HUD hover-interactive even when
   // "locked" — so the card is always closeable while the game runs.
@@ -86,12 +95,31 @@ contextBridge.exposeInMainWorld("overlayApi", {
   onPartyVisible: (cb) => ipcRenderer.on("overlay:party-visible", (_e, s) => cb(s)),
   setBattaglia: (on) => ipcRenderer.send("app:set-battaglia", !!on),
   onBattagliaVisible: (cb) => ipcRenderer.on("overlay:battaglia-visible", (_e, s) => cb(s)),
+  // Social chat: shell-owned visibility; its send field reuses the keyboard-grab above.
+  setChat: (on) => ipcRenderer.send("app:set-chat", !!on),
+  onChatVisible: (cb) => ipcRenderer.on("overlay:chat-visible", (_e, s) => cb(s)),
+  // Settings as a canvas widget (the standalone window still exists — see openSettings above).
+  setConfig: (on) => ipcRenderer.send("app:set-config", !!on),
+  onConfigVisible: (cb) => ipcRenderer.on("overlay:config-visible", (_e, s) => cb(s)),
+  // Reveal one of the app's own data folders in Explorer (allow-listed in main).
   openDataFolder: (which) => ipcRenderer.send("app:open-data-folder", String(which)),
+  // First-run setup: existing users with unfinished setup get one dismissible banner here
+  // rather than the wizard taking over their screen. `openSetupWizard` is what its button calls.
+  // The background service (sidecar) going down and coming back. It does ALL the work — the
+  // overlay is only the display — so without this a dead sidecar looks like a perfectly normal
+  // HUD that silently tracks nothing.
+  onSidecarState: (cb) => ipcRenderer.on("overlay:sidecar-state", (_e, s) => cb(s)),
+  retrySidecar: () => ipcRenderer.send("app:retry-sidecar"),
+  onSetupNudge: (cb) => ipcRenderer.on("overlay:setup-nudge", (_e, s) => cb(s)),
+  openSetupWizard: () => ipcRenderer.send("setup:open-wizard"),
+  // Web Page widget + the Binding Chart WIDGET (the full-screen binding overlay is separate).
   setWebView: (on) => ipcRenderer.send("app:set-webview", !!on),
   onWebViewVisible: (cb) => ipcRenderer.on("overlay:webview-visible", (_e, s) => cb(s)),
   setBindingChart: (on) => ipcRenderer.send("app:set-bindingchart", !!on),
   onBindingChartVisible: (cb) => ipcRenderer.on("overlay:bindingchart-visible", (_e, s) => cb(s)),
-  onBindingChartReload: (cb) => ipcRenderer.on("overlay:bindingchart-reload", () => cb()),  widgetStates: () => ipcRenderer.invoke("app:widget-states"),
+  onBindingChartReload: (cb) => ipcRenderer.on("overlay:bindingchart-reload", () => cb()),
+  widgetStates: () => ipcRenderer.invoke("app:widget-states"),
+  canvasCalibration: (cal) => ipcRenderer.invoke("app:canvas-calibration", cal),
   onWidgetStates: (cb) => ipcRenderer.on("overlay:widget-states", (_e, s) => cb(s)),
   arrange: (on) => ipcRenderer.send(on ? "overlay:begin-move" : "overlay:end-move"),
   // The embedded Mining widget's cog summons the shared Overlay Manager cog.

@@ -1,0 +1,270 @@
+name: Build and audit r31 Linux alpha 18
+
+on:
+  push:
+    branches:
+      - integration/upstream-0.1.41-arch-r31-alpha18
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: r31-alpha18-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-arch-alpha18:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Download the released Alpha 17 baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/alpha17"
+          gh release download v0.1.36-r31-alpha.17 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz' \
+            --dir "$RUNNER_TEMP/alpha17"
+          sha256sum "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz"
+
+      - name: Semantically rebase Alpha 17 onto upstream 0.1.41 and verify
+        shell: bash
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
+        run: |
+          set -o pipefail
+          bash linux-port/build-r31-alpha18-final-audit.sh \
+            "$RUNNER_TEMP/alpha17/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz" \
+            2>&1 | tee "$RUNNER_TEMP/alpha18-build.log"
+
+      - name: Deep runtime/static merge audit
+        shell: bash
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
+        run: |
+          set -o pipefail
+          bash linux-port/alpha18-runtime-audit-final.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-audit.log"
+
+      - name: Preload to main IPC contract audit
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 linux-port/alpha18-ipc-contract-audit.py 2>&1 | tee "$RUNNER_TEMP/alpha18-ipc-audit.log"
+
+      - name: Upstream 0.1.41 public-contract preservation audit
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 linux-port/alpha18-upstream-contract-audit.py 2>&1 | tee "$RUNNER_TEMP/alpha18-upstream-contract.log"
+
+      - name: Renderer HTML and inline-script audit
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 linux-port/alpha18-renderer-audit.py 2>&1 | tee "$RUNNER_TEMP/alpha18-renderer-audit.log"
+
+      - name: Packaged main-process startup smoke
+        shell: bash
+        run: |
+          set -o pipefail
+          bash linux-port/alpha18-main-startup-smoke.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-startup-smoke.log"
+
+      - name: Unpacked system-Electron Linux startup smoke
+        shell: bash
+        run: |
+          set -o pipefail
+          bash linux-port/alpha18-unpacked-linux-startup-smoke.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-unpacked-startup.log"
+
+      - name: Transparent-canvas and startup-modal focus release smoke
+        shell: bash
+        run: |
+          set -o pipefail
+          bash linux-port/alpha18-focus-release-smoke.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-focus-release.log"
+
+      - name: Packaged sidecar startup and endpoint smoke
+        shell: bash
+        run: |
+          set -o pipefail
+          bash linux-port/alpha18-sidecar-smoke.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-sidecar-smoke.log"
+
+      - name: Alpha 17 Linux behavior regression audit
+        shell: bash
+        run: |
+          set -o pipefail
+          bash linux-port/alpha18-linux-contract-audit.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-linux-contract.log"
+
+      - name: Packaged canonical config and Settings round-trip E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          bash linux-port/alpha18-config-e2e.sh 2>&1 | tee "$RUNNER_TEMP/alpha18-config-e2e.log"
+
+      - name: Stage Alpha 18 audit artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp -a "$RUNNER_TEMP/dist/." dist/
+          ls -lh dist
+          (cd dist && sha256sum -c SHA256SUMS)
+
+      - name: Retain reconstructed runtime files on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha18-runtime-debug
+          path: |
+            ${{ runner.temp }}/r31-alpha18-build/work/electron/main.cjs
+            ${{ runner.temp }}/r31-alpha18-build/work/electron/capture.cjs
+            ${{ runner.temp }}/r31-alpha18-build/work/electron/preload.cjs
+            ${{ runner.temp }}/alpha18-build.log
+            ${{ runner.temp }}/alpha18-audit.log
+            ${{ runner.temp }}/alpha18-ipc-audit.log
+            ${{ runner.temp }}/alpha18-upstream-contract.log
+            ${{ runner.temp }}/alpha18-renderer-audit.log
+            ${{ runner.temp }}/alpha18-startup-smoke.log
+            ${{ runner.temp }}/alpha18-unpacked-startup.log
+            ${{ runner.temp }}/alpha18-focus-release.log
+            ${{ runner.temp }}/alpha18-sidecar-smoke.log
+            ${{ runner.temp }}/alpha18-linux-contract.log
+            ${{ runner.temp }}/alpha18-config-e2e.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Report Alpha 18 audit to PR
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Alpha 18 deep audit: ${BUILD_STATUS}"
+            echo
+            echo "Commit: \`${GITHUB_SHA}\` · Run: \`${GITHUB_RUN_ID}\`"
+            for pair in \
+              "Build:$RUNNER_TEMP/alpha18-build.log:120" \
+              "Deep audit:$RUNNER_TEMP/alpha18-audit.log:220" \
+              "IPC audit:$RUNNER_TEMP/alpha18-ipc-audit.log:120" \
+              "Upstream contract:$RUNNER_TEMP/alpha18-upstream-contract.log:180" \
+              "Renderer audit:$RUNNER_TEMP/alpha18-renderer-audit.log:160" \
+              "Main startup smoke:$RUNNER_TEMP/alpha18-startup-smoke.log:180" \
+              "Unpacked Linux startup:$RUNNER_TEMP/alpha18-unpacked-startup.log:180" \
+              "Focus release:$RUNNER_TEMP/alpha18-focus-release.log:180" \
+              "Sidecar smoke:$RUNNER_TEMP/alpha18-sidecar-smoke.log:180" \
+              "Linux contract:$RUNNER_TEMP/alpha18-linux-contract.log:220" \
+              "Config E2E:$RUNNER_TEMP/alpha18-config-e2e.log:180"; do
+              title="${pair%%:*}"; rest="${pair#*:}"; file="${rest%:*}"; lines="${rest##*:}"
+              echo
+              echo "<details><summary>${title}</summary>"
+              echo
+              echo '```text'
+              [[ -f "$file" ]] && tail -n "$lines" "$file" || echo "${title} did not start."
+              echo '```'
+              echo '</details>'
+            done
+          } > "$RUNNER_TEMP/alpha18-pr-comment.md"
+          gh pr comment 3 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/alpha18-pr-comment.md"
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: ArchVerse-Overlay-0.1.41-r31-alpha.18-audited
+          path: |
+            dist/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  # Re-quarantined after the explicitly approved public Alpha 18 publication.
+  # Future commits may build and audit but cannot overwrite the release without a new approval.
+  release-alpha18:
+    if: ${{ false }}
+    needs: build-arch-alpha18
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the audited Alpha 18 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Overlay-0.1.41-r31-alpha.18-audited
+          path: dist
+
+      - name: Verify audited release payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -lh dist
+          (cd dist && sha256sum -c SHA256SUMS)
+
+      - name: Publish approved Alpha 18 prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v0.1.41-r31-alpha.18
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          ## ArchVerse Overlay 0.1.41-r31 Alpha 18 — audited Linux test release
+
+          This prerelease replaces the earlier Alpha 18 package after a full semantic rebase and runtime audit of the upstream 0.1.41 jump.
+
+          Highlights:
+          - Reconstructed high-risk Electron main/capture/preload merge seams instead of relying on line-level conflict resolution.
+          - Preserved upstream 0.1.41 public IPC, preload, renderer, and HTTP contracts.
+          - Preserved the proven Alpha 17 Linux F-key interaction, Star Citizen session binding, Scan Mode gate, and RapidOCR isolation behavior.
+          - Restored Linux-native `onCursorAway` widget-chrome behavior.
+          - Corrected Settings save verification and Lightweight/Balanced/Mining/Custom OCR profile round-tripping.
+          - Linux-owned controls remain fixed to F, hold-to-interact, and Shift+F6.
+          - Added persistent bounded Scan Mode diagnostics for future calibration/debugging.
+
+          Validation before publication:
+          - TypeScript and all 17 upstream test suites passed.
+          - Deep generated/package JavaScript lexical and duplicate-handler audits passed.
+          - Preload/main IPC contract audit passed.
+          - Upstream feature-preservation audit passed (62 IPC registrations, 70 preload APIs, 60 HTTP routes checked).
+          - All 14 renderer HTML/inline-JS/DOM/JSON checks passed.
+          - Packaged Electron main-process startup smoke passed.
+          - Packaged sidecar startup and endpoint smoke passed.
+          - Alpha 17 Linux behavior and Scan Mode fixture regressions passed.
+          - Packaged canonical config + Settings round-trip E2E passed.
+
+          This is still an **Alpha** intended for real Star Citizen testing on Arch/CachyOS. Please report any in-game interaction, Scan Mode, OCR, focus, widget, or configuration regressions with the generated logs/diagnostic captures.
+          EOF
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "ArchVerse Overlay 0.1.41-r31 Alpha 18" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --prerelease \
+            dist/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz \
+            dist/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.zip \
+            dist/SHA256SUMS
+
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY"

@@ -1,0 +1,111 @@
+name: Build r31 Linux alpha 19 field test
+
+on:
+  push:
+    branches:
+      - integration/upstream-0.1.42-arch-r31-alpha19
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r31-alpha19-field-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-arch-alpha19:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Download ArchVerse Alpha 18 baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/alpha18"
+          gh release download v0.1.41-r31-alpha.18 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz' \
+            --dir "$RUNNER_TEMP/alpha18"
+          sha256sum "$RUNNER_TEMP/alpha18/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz"
+
+      - name: Apply upstream 0.1.41 to 0.1.42 to working Alpha 18
+        shell: bash
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
+        run: |
+          set -o pipefail
+          # Keep upstream 0.1.42's config/security model. Replace the old Alpha18 config repair
+          # with one Linux-only compatibility shim so the sidecar continues using the existing
+          # ~/.config/sc-blueprint-tracker directory supplied by Electron.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('linux-port/build-r31-alpha19-incremental.sh')
+          s=p.read_text()
+          old='python3 "$ROOT/linux-port/alpha18-config-contract-fixes.py" "$WORK"'
+          new='python3 "$ROOT/linux-port/alpha19-linux-sidecar-compat.py" "$WORK"'
+          if old not in s:
+              raise SystemExit('Alpha19 build compatibility hook not found')
+          p.write_text(s.replace(old,new,1))
+          PY
+          bash linux-port/build-r31-alpha19-incremental.sh \
+            "$RUNNER_TEMP/alpha18/ArchVerse-Overlay-0.1.41-r31-alpha.18-arch.tar.gz" \
+            2>&1 | tee "$RUNNER_TEMP/alpha19-build.log"
+
+      # Intentionally no ArchVerse security-regression suite for this candidate.
+      # The build uses upstream 0.1.42 security/chat behavior as released and only runs
+      # syntax/typecheck + the developer's own tests inside build-r31-alpha19-incremental.sh.
+
+      - name: Stage Alpha 19 field-test artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp -a "$RUNNER_TEMP/dist/." dist/
+          test -s dist/ArchVerse-Overlay-0.1.42-r31-alpha.19-arch.tar.gz
+          test -s dist/ArchVerse-Overlay-0.1.42-r31-alpha.19-arch.zip
+          (cd dist && sha256sum -c SHA256SUMS)
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: ArchVerse-Overlay-0.1.42-r31-alpha.19-field-test
+          path: |
+            dist/ArchVerse-Overlay-0.1.42-r31-alpha.19-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.42-r31-alpha.19-arch.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: alpha19-field-test-debug
+          path: |
+            ${{ runner.temp }}/alpha19-build.log
+            ${{ runner.temp }}/r31-alpha19-build/conflicts.txt
+            ${{ runner.temp }}/r31-alpha19-build/work/electron/main.cjs
+            ${{ runner.temp }}/r31-alpha19-build/work/electron/capture.cjs
+            ${{ runner.temp }}/r31-alpha19-build/work/electron/preload.cjs
+            ${{ runner.temp }}/r31-alpha19-build/work/overlay/config.html
+            ${{ runner.temp }}/r31-alpha19-build/work/src/overlay-server.ts
+            ${{ runner.temp }}/r31-alpha19-build/work/src/chat.ts
+          if-no-files-found: warn
+          retention-days: 7
+
+  # FIELD-TEST QUARANTINE: no public Alpha 19 release is created automatically.

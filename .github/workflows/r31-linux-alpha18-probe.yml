@@ -1,0 +1,36 @@
+name: Summarize r31 Alpha 18 conflicts
+
+on:
+  push:
+    branches:
+      - integration/upstream-0.1.41-arch-r31-alpha18
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Summarize conflict signatures
+        shell: bash
+        run: python3 linux-port/conflict-summary.py > "$RUNNER_TEMP/conflicts.txt"
+      - name: Report summary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '### Alpha 18 conflict signatures'
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/conflicts.txt"
+            echo '```'
+          } > "$RUNNER_TEMP/comment.md"
+          gh pr comment 3 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"

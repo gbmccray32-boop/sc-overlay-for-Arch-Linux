@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_ROOT="${ARCHVERSE_APP_ROOT:-/opt/archverse-overlay}"
+PAYLOAD_LAUNCHER="$APP_ROOT/bin/sc-blueprint-tracker"
+
+[[ -x "$PAYLOAD_LAUNCHER" ]] || {
+  printf 'ArchVerse payload is incomplete: %s is missing or not executable.\n' "$PAYLOAD_LAUNCHER" >&2
+  exit 127
+}
+
+# Arch-family packages intentionally keep the already-tested system Electron 42 path.
+# Debian/Fedora packages ship the same Electron major in /opt so they do not depend on
+# a distro-specific Electron package being available.
+if [[ -z "${SC_TRACKER_ELECTRON_BIN:-}" ]]; then
+  if [[ -x "$APP_ROOT/runtime/electron/electron" ]]; then
+    export SC_TRACKER_ELECTRON_BIN="$APP_ROOT/runtime/electron/electron"
+  elif [[ -x /usr/bin/electron42 ]]; then
+    export SC_TRACKER_ELECTRON_BIN=/usr/bin/electron42
+  fi
+fi
+
+if [[ -z "${SC_TRACKER_NODE_BIN:-}" ]]; then
+  NODE_BIN="$(command -v node || true)"
+  [[ -n "$NODE_BIN" ]] && export SC_TRACKER_NODE_BIN="$NODE_BIN"
+fi
+
+exec "$PAYLOAD_LAUNCHER" "$@"

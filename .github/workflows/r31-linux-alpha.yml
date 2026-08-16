@@ -1,0 +1,93 @@
+name: Build and release r31 Linux alpha 17
+
+on:
+  push:
+    branches:
+      - integration/upstream-0.1.36-arch-fedora-r31
+    tags:
+      - v0.1.36-r31-alpha.17
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r31-alpha17-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-arch-alpha17:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Build and verify Alpha 17
+        shell: bash
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
+        run: bash linux-port/build-r31-alpha5.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Overlay-0.1.36-r31-alpha.17-arch
+          path: |
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  release-alpha17:
+    if: github.event_name == 'push'
+    needs: build-arch-alpha17
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Overlay-0.1.36-r31-alpha.17-arch
+          path: dist
+
+      - name: Publish Alpha 17 GitHub prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.36-r31-alpha.17
+          target_commitish: ${{ github.sha }}
+          name: ArchVerse Overlay 0.1.36-r31 Alpha 17
+          prerelease: true
+          generate_release_notes: false
+          body: |
+            Alpha 17 repairs Alpha 16's Scan Mode false positives using the user's labeled and explicitly outlined on/off frames, while preserving Alpha 16's click route and Alpha 14's resource budget.
+
+            Highlights:
+            - The normalized universal Scan HUD field is derived from paired 6360x2560 on/off screenshots explicitly outlined in #ff0000.
+            - Radar matches must contain both the cone/icon and separated angle label and must be isolated from surrounding bright structure.
+            - Alpha 16's confirmed changelog-button and hangar-beam false positives are now regression fixtures.
+            - Ship type, Prospector HUD color, ping state, target text, and OCR remain absent from the Scan Mode decision.
+            - Diagnostics save match changes and active refreshes with full frames, enlarged exact/context crops, structural scores, and rejection reasons.
+            - Mining Analysis and Signature OCR remain dormant outside Scan Mode.
+            - Alpha 16's physical click routing, one normal cursor, mandatory F interaction, and native-event grace period are preserved.
+            - Alpha 14's two-thread OCR budget, OpenGL default, and software Safe Mode remain preserved.
+
+            Install:
+            1. Download the .tar.gz or .zip asset and extract it.
+            2. Run `./install-cachyos.sh --clean-install`.
+            3. Do not add `--reset-layout` if you want to preserve your existing widget positions.
+
+            Keep Alpha 16 available as the immediate rollback point while testing this prerelease.
+          files: |
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.tar.gz
+            dist/ArchVerse-Overlay-0.1.36-r31-alpha.17-arch.zip
+            dist/SHA256SUMS

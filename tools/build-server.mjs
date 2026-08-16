@@ -1,36 +1,34 @@
 /**
- * Bundle the overlay server (no window) into one .mjs + its runtime assets, for the
- * Electron app to run under its own binary with ELECTRON_RUN_AS_NODE (no Node/tsx on
- * the user's machine). electron-builder ships build/server/ as an extraResource →
- * resources/server.
+ * Build the overlay sidecar and copy its runtime assets.
  *
- * It used to be a `bun build --compile` standalone exe — a 112 MB binary whose only job
- * was carrying the bun runtime, on a machine that already ships a Node runtime inside
- * Electron. Swapped 0.1.41: same TS sources, bundled by esbuild (~230 KB), run by the
- * app's own exe. Deliberately NOT minified — sidecar stack traces land in sidecar.log
- * and are read from user crash reports, so the frames must stay legible.
+ * Windows keeps the upstream Bun-compiled standalone executable. Linux emits
+ * the NodeNext module tree because the ArchVerse launcher already ships Node
+ * and starts server/sc-overlay-server.mjs directly.
  *
- *   npm run build:server  ->  build/server/{server.mjs, overlay/, data/}
+ *   Windows -> build/server/{sc-overlay-server.exe, overlay/, data/}
+ *   Linux   -> build/server/{sc-overlay-server.mjs, *.js, overlay/, data/}
  */
-import { build } from "esbuild";
-import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { cpSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { basename } from "node:path";
+import { applyArchVerseOverlayPatches } from "./archverse-overlay-patches.mjs";
 
 const out = "build/server";
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
-console.log("Bundling overlay server (esbuild) …");
-await build({
-  entryPoints: ["src/overlay-server.ts"],
-  bundle: true,
-  platform: "node",
-  format: "esm",
-  target: "node22",
-  outfile: `${out}/server.mjs`,
-  // CJS-style requires of node builtins inside an ESM bundle need a real `require`.
-  banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
-});
+if (process.platform === "win32") {
+  console.log("Compiling overlay server for Windows (bun) …");
+  execSync(`bun build src/overlay-server.ts --compile --outfile ${out}/sc-overlay-server.exe`, {
+    stdio: "inherit",
+  });
+} else {
+  console.log("Compiling overlay server for Linux/Node (tsc) …");
+  execSync(`npx tsc --outDir ${out} --declaration false --sourceMap false`, {
+    stdio: "inherit",
+  });
+  renameSync(`${out}/overlay-server.js`, `${out}/sc-overlay-server.mjs`);
+}
 
 // Per-changelist datasets stay in the repo for dev, but only `latest` ships: the newest
 // per-changelist pair is byte-identical to the .latest files (checked 0.1.41 — cmp says so),
@@ -39,12 +37,18 @@ await build({
 // Shipping all generations cost 25.5 MB of the 32 MB data dir.
 const OLD_DATASET = /^blueprint(?:s|-detail)\.\d+\.json$/;
 for (const dir of ["overlay", "data"]) {
-  // Never ship overlay/config.json — it's the developer's personal config (erkul
-  // URLs + sync token). The server seeds from DEFAULTS and persists to %APPDATA%.
+  // Never ship overlay/config.json — it may contain a developer's personal
+  // configuration. The server seeds defaults and writes runtime state under
+  // the user's config directory instead.
   cpSync(dir, `${out}/${dir}`, {
     recursive: true,
-    filter: (src) => basename(src) !== "config.json" && !OLD_DATASET.test(basename(src)),
+    filter: (src) => basename(src) !== "config.json",
   });
   console.log(`copied ${dir}/ -> ${out}/${dir}/`);
 }
+
+// Apply Linux-fork UX as a thin build layer instead of permanently forking the
+// giant upstream HTML files. This keeps future upstream merges dramatically cleaner.
+applyArchVerseOverlayPatches(out);
+
 console.log("server bundle ->", out);
