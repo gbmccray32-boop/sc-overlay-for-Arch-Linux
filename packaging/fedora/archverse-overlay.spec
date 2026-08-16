@@ -1,6 +1,6 @@
 Name:           archverse-overlay
 Version:        0.1.42
-Release:        7.r31.alpha21%{?dist}
+Release:        8.r31.alpha21%{?dist}
 Summary:        ArchVerse Star Citizen companion overlay
 License:        LicenseRef-FSL-1.1-MIT
 URL:            https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux
@@ -23,7 +23,9 @@ Requires:       xdotool
 Requires:       xrandr
 Requires:       xprop
 Requires:       ImageMagick
-Requires:       ffmpeg
+# ArchVerse invokes ffplay for native Mining alert audio. Requiring the executable path lets
+# Fedora/Nobara satisfy it with ffmpeg-free while RPM Fusion systems may use ffmpeg.
+Requires:       /usr/bin/ffplay
 Requires:       spectacle
 Requires:       gtk3
 Requires:       nss
@@ -90,6 +92,11 @@ fi
 /opt/archverse-overlay
 
 %changelog
+* Sun Aug 16 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-8.r31.alpha21
+- Require the ffplay executable instead of the conflicting ffmpeg package name.
+- Allow Fedora 44 and Nobara systems with ffmpeg-free already installed to satisfy the dependency without package replacement.
+- Validate the RPM with a clean DNF transaction before release.
+
 * Sat Aug 15 2026 Gavin <gbmccray32@gmail.com> - 0.1.42-7.r31.alpha21
 - Make the bound Gamescope PipeWire Video/Source the primary native Linux OCR capture backend.
 - Discover the PipeWire node and BGRx frame size dynamically for each Gamescope session instead of hard-coding a monitor or panorama resolution.
