@@ -1,0 +1,123 @@
+name: Upstream convergence preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_sha:
+        description: Exact reviewed upstream commit
+        required: true
+        default: f6ec3ba365e6d4ac8f08741152ee6bbfbc486941
+  push:
+    branches:
+      - integration/upstream-main-2026-08-16
+    paths:
+      - .github/workflows/upstream-convergence-preflight.yml
+      - packaging/upstream/**
+      - packaging/common/**
+      - docs/UPSTREAM-CONVERGENCE-2026-08-16.md
+      - electron/**
+      - overlay/**
+      - src/**
+      - package.json
+      - package-lock.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-convergence-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UPSTREAM_URL: https://github.com/SubliminalsTV-Projects/sc-overlay.git
+  UPSTREAM_RELEASE_SHA: 26dbff28e64f595e98c42e3f15bf84303d3d8da2
+  DEFAULT_CANDIDATE_SHA: f6ec3ba365e6d4ac8f08741152ee6bbfbc486941
+
+jobs:
+  preflight:
+    name: Pin delta and preserve Linux release gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CANDIDATE_SHA: ${{ inputs.upstream_sha || 'f6ec3ba365e6d4ac8f08741152ee6bbfbc486941' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify permanent three-distro contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x packaging/common/verify-linux-release-invariants.sh
+          packaging/common/verify-linux-release-invariants.sh .
+
+      - name: Fetch and verify exact upstream boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags "$UPSTREAM_URL" \
+            "$UPSTREAM_RELEASE_SHA:refs/remotes/upstream/release-base" \
+            "$CANDIDATE_SHA:refs/remotes/upstream/candidate"
+          test "$(git rev-parse refs/remotes/upstream/release-base)" = "$UPSTREAM_RELEASE_SHA"
+          test "$(git rev-parse refs/remotes/upstream/candidate)" = "$CANDIDATE_SHA"
+          git merge-base --is-ancestor "$UPSTREAM_RELEASE_SHA" HEAD
+          git merge-base --is-ancestor "$UPSTREAM_RELEASE_SHA" "$CANDIDATE_SHA"
+
+      - name: Produce delta, overlap, and merge reports
+        id: report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p upstream-preflight
+          git diff --name-status "$UPSTREAM_RELEASE_SHA..$CANDIDATE_SHA" \
+            > upstream-preflight/upstream-delta.txt
+          git log --oneline --no-decorate "$UPSTREAM_RELEASE_SHA..$CANDIDATE_SHA" \
+            > upstream-preflight/upstream-commits.txt
+          git diff --name-only "$UPSTREAM_RELEASE_SHA..$CANDIDATE_SHA" | sort -u \
+            > upstream-preflight/upstream-files.txt
+          git diff --name-only "$UPSTREAM_RELEASE_SHA..HEAD" | sort -u \
+            > upstream-preflight/linux-files.txt
+          comm -12 upstream-preflight/upstream-files.txt upstream-preflight/linux-files.txt \
+            > upstream-preflight/protected-overlap.txt
+
+          set +e
+          git merge-tree --write-tree HEAD "$CANDIDATE_SHA" \
+            > upstream-preflight/merge-tree.txt 2>&1
+          merge_status=$?
+          set -e
+          printf '%s\n' "$merge_status" > upstream-preflight/merge-status.txt
+          printf 'merge_status=%s\n' "$merge_status" >> "$GITHUB_OUTPUT"
+
+          {
+            printf 'upstream_release=%s\n' "$UPSTREAM_RELEASE_SHA"
+            printf 'candidate=%s\n' "$CANDIDATE_SHA"
+            printf 'upstream_commits=%s\n' "$(wc -l < upstream-preflight/upstream-commits.txt)"
+            printf 'upstream_files=%s\n' "$(wc -l < upstream-preflight/upstream-files.txt)"
+            printf 'protected_overlap=%s\n' "$(wc -l < upstream-preflight/protected-overlap.txt)"
+            printf 'merge_status=%s\n' "$merge_status"
+          } > upstream-preflight/summary.txt
+
+      - name: Write preflight summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Upstream convergence preflight'
+            echo
+            echo "- Release base: \`$UPSTREAM_RELEASE_SHA\`"
+            echo "- Reviewed candidate: \`$CANDIDATE_SHA\`"
+            if [[ -s upstream-preflight/summary.txt ]]; then
+              while IFS= read -r line; do echo "- $line"; done < upstream-preflight/summary.txt
+            fi
+            echo
+            echo 'A nonzero merge status is an expected review signal, not permission to discard either side. Resolve protected overlaps manually, then rerun this preflight and the complete package pipeline.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upstream-convergence-preflight
+          path: upstream-preflight/
+          if-no-files-found: error
+          retention-days: 30

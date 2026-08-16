@@ -1,0 +1,36 @@
+schema: 1
+status: preparation-only
+fork:
+  repository: gbmccray32-boop/sc-overlay-for-Arch-Linux
+  release_branch: archverse/r31
+  preparation_branch: integration/upstream-main-2026-08-16
+  base_sha: da31b427d23a1f33aba24f16a45d94246d9033c9
+upstream:
+  repository: SubliminalsTV-Projects/sc-overlay
+  release_tag: v0.1.43
+  release_sha: 26dbff28e64f595e98c42e3f15bf84303d3d8da2
+  candidate_ref: main
+  candidate_sha: f6ec3ba365e6d4ac8f08741152ee6bbfbc486941
+  observed_at: 2026-08-16T05:25:29Z
+delta:
+  commits: 37
+  files: 27
+targets:
+  - arch-cachyos
+  - debian-ubuntu
+  - fedora44-nobara
+shared_payload_required: true
+release_publication_allowed: false
+protected_overlap:
+  - electron/capture.cjs
+  - electron/main.cjs
+  - electron/preload.cjs
+  - overlay/config.html
+  - overlay/mining.html
+  - overlay/missions.html
+  - src/mining.ts
+  - src/missions.ts
+  - src/missions-parser.ts
+  - src/overlay-server.ts
+  - package.json
+  - package-lock.json
