@@ -1,0 +1,243 @@
+name: Rebuild Alpha 21 Fedora 44 / Nobara RPM r8
+
+on:
+  push:
+    branches:
+      - archverse/r31
+    paths:
+      - packaging/fedora/archverse-overlay.spec
+      - .github/workflows/rebuild-fedora-alpha21-r8.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: rebuild-alpha21-fedora44-r8
+  cancel-in-progress: false
+
+env:
+  TAG: v0.1.42-r31-alpha.21
+  PAYLOAD_ASSET: ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz
+  PAYLOAD_SHA256: 261db5cea92c9c17ea9a83e099c1dff18de689923cbf7a719d3601dcfe616dd9
+  ELECTRON_VERSION: 42.7.1
+  ELECTRON_ASSET: electron-v42.7.1-linux-x64.zip
+  ELECTRON_SHA256: e85b28245deaa75c3c4f2cf5da084f4c7fbedd5af1630c59a827c41ac1f5e1af
+
+jobs:
+  build:
+    name: Build and install-test Fedora 44 / Nobara RPM
+    runs-on: ubuntu-24.04
+    container: fedora:44
+    timeout-minutes: 40
+    steps:
+      - name: Prepare Fedora 44 build container
+        shell: bash
+        run: |
+          set -euo pipefail
+          dnf -y install rpm-build rpmdevtools git curl unzip findutils binutils cpio
+
+      - uses: actions/checkout@v4
+
+      - name: Download and verify the released Alpha 21 payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/payload"
+          curl -fL --retry 4 \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$PAYLOAD_ASSET" \
+            -o "$RUNNER_TEMP/payload/$PAYLOAD_ASSET"
+          echo "$PAYLOAD_SHA256  $RUNNER_TEMP/payload/$PAYLOAD_ASSET" | sha256sum -c -
+
+      - name: Prepare verified Electron 42 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 \
+            "https://github.com/electron/electron/releases/download/v$ELECTRON_VERSION/$ELECTRON_ASSET" \
+            -o "$RUNNER_TEMP/$ELECTRON_ASSET"
+          echo "$ELECTRON_SHA256  $RUNNER_TEMP/$ELECTRON_ASSET" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/electron-runtime"
+          unzip -q "$RUNNER_TEMP/$ELECTRON_ASSET" -d "$RUNNER_TEMP/electron-runtime"
+          test -x "$RUNNER_TEMP/electron-runtime/electron"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/electron-runtime.tar.gz" electron-runtime
+
+      - name: Build RPM and verify dependency metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          rpmdev-setuptree
+          cp "$RUNNER_TEMP/payload/$PAYLOAD_ASSET" "$HOME/rpmbuild/SOURCES/"
+          cp "$RUNNER_TEMP/electron-runtime.tar.gz" "$HOME/rpmbuild/SOURCES/"
+          cp packaging/common/archverse-overlay "$HOME/rpmbuild/SOURCES/"
+          cp packaging/common/archverse-overlay.desktop "$HOME/rpmbuild/SOURCES/"
+
+          rpmbuild -bb packaging/fedora/archverse-overlay.spec
+
+          mkdir -p "$GITHUB_WORKSPACE/dist-rpm"
+          cp "$HOME"/rpmbuild/RPMS/x86_64/*.rpm "$GITHUB_WORKSPACE/dist-rpm/"
+          rpm_file="$(find "$GITHUB_WORKSPACE/dist-rpm" -type f -name 'archverse-overlay-*.rpm' -print -quit)"
+          test -n "$rpm_file"
+          test "$(basename "$rpm_file")" = "archverse-overlay-0.1.42-8.r31.alpha21.fc44.x86_64.rpm"
+
+          rpm -qip "$rpm_file"
+          rpm -qlp "$rpm_file" | grep -E '/usr/bin/archverse-overlay$|/opt/archverse-overlay/app/electron/main.cjs$|/opt/archverse-overlay/app/electron/native-linux-ocr.cjs$'
+
+          requires="$RUNNER_TEMP/rpm-requires.txt"
+          rpm -qpR "$rpm_file" | sort | tee "$requires"
+          grep -Fxq '/usr/bin/ffplay' "$requires"
+          if grep -Fxq 'ffmpeg' "$requires"; then
+            echo 'The conflicting ffmpeg package-name dependency is still present.' >&2
+            exit 1
+          fi
+          grep -q '^tesseract-langpack-eng' "$requires"
+          ! grep -Eiq 'cuda|tensorrt|libc\.musl' "$requires"
+
+      - name: Prove a clean Fedora 44 DNF transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          rpm_file="$(find "$GITHUB_WORKSPACE/dist-rpm" -type f -name 'archverse-overlay-*.rpm' -print -quit)"
+          dnf -y --setopt=install_weak_deps=False install "$rpm_file"
+
+          rpm -q archverse-overlay
+          rpm -q --whatprovides /usr/bin/ffplay | grep -q '^ffmpeg-free-'
+          command -v ffplay
+          test -x /usr/bin/archverse-overlay
+          test -x /opt/archverse-overlay/bin/sc-blueprint-tracker
+          test -x /opt/archverse-overlay/runtime/electron/electron
+          test "$(stat -c '%a' /opt/archverse-overlay/runtime/electron/chrome-sandbox)" = 4755
+
+          sha256sum "$rpm_file" | tee "$GITHUB_WORKSPACE/dist-rpm/RPM-SHA256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha21-Fedora44-Nobara-r8
+          path: |
+            dist-rpm/archverse-overlay-0.1.42-8.r31.alpha21.fc44.x86_64.rpm
+            dist-rpm/RPM-SHA256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  publish:
+    name: Replace broken RPM release asset
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Alpha21-Fedora44-Nobara-r8
+          path: dist
+
+      - name: Verify RPM and create corrected checksum manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          rpm_file="dist/archverse-overlay-0.1.42-8.r31.alpha21.fc44.x86_64.rpm"
+          test -s "$rpm_file"
+          rpm_hash="$(sha256sum "$rpm_file" | awk '{print $1}')"
+
+          cat > SHA256SUMS <<EOF
+          261db5cea92c9c17ea9a83e099c1dff18de689923cbf7a719d3601dcfe616dd9  ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz
+          793fd57bf59073e4331c65f0c42f0cab6623cc1535ac916c44d816272c978188  archverse-overlay-0.1.42.r31.alpha21-7-x86_64.pkg.tar.zst
+          e92978793552ae3aa91ed228e84b510b5593157c238ba3d6feb024019a2b0134  archverse-overlay_0.1.42.r31.alpha21-7_amd64.deb
+          $rpm_hash  archverse-overlay-0.1.42-8.r31.alpha21.fc44.x86_64.rpm
+          EOF
+
+      - name: Write corrected release notes
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## ArchVerse Overlay 0.1.42 r31 Alpha 21
+
+          Alpha 21 is the official native Linux prerelease built from application source commit `96f49742a973902e2b4ba309b78e233d11aab057`. The Arch/CachyOS package is byte-for-byte identical to the package field-tested by Gabe after successful GitHub Actions run [31921494705](https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/actions/runs/31921494705).
+
+          ### Fedora 44 / Nobara packaging correction
+
+          RPM revision 8 replaces the original Fedora 43 RPM. ArchVerse uses `/usr/bin/ffplay` for Mining alert audio, so the RPM now requires that executable instead of hard-requiring the conflicting `ffmpeg` package name. Fedora 44 and Nobara can therefore satisfy the dependency with their installed `ffmpeg-free` package without erasing or replacing it.
+
+          The corrected RPM passed a complete clean Fedora 44 DNF installation transaction and verified that `ffmpeg-free` supplied `/usr/bin/ffplay`.
+
+          ### Highlights
+
+          - Makes the bound Gamescope PipeWire Video/Source the primary Linux capture path, with dynamic node and frame-size discovery.
+          - Keeps Spectacle and Electron capture as fallback paths.
+          - Makes RapidOCR/ONNX the primary Linux OCR engine and uses Tesseract only when RapidOCR fails.
+          - Uses independent, persistent OCR regions for Resource Scanner, Fabricator, Mission, Claim/context, and Refinery features.
+          - Keeps Resource Scanner OCR active independently of widget visibility, held-F interaction, hover, and overlay focus.
+          - Preserves hover-scoped held-F interaction, F-up hover re-arm, Star Citizen focus handoff, and 30-second drag-lock watchdogs.
+          - Keeps overlay rendering live while Star Citizen owns focus and bounds mining cadence.
+          - Treats a valid parsed resource signature as authoritative; radar/glyph analysis remains nonblocking confirmation telemetry.
+          - Removes unused CUDA, TensorRT, and musl runtime variants from the native payload.
+
+          ### Packages
+
+          - **Arch / CachyOS — field-tested:** `archverse-overlay-0.1.42.r31.alpha21-7-x86_64.pkg.tar.zst`
+          - **Debian / Ubuntu — CI-built and package-validated:** `archverse-overlay_0.1.42.r31.alpha21-7_amd64.deb`
+          - **Fedora 44 / Nobara — clean-install validated:** `archverse-overlay-0.1.42-8.r31.alpha21.fc44.x86_64.rpm`
+          - **Shared verified payload:** `ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz`
+
+          ### Install
+
+          Arch / CachyOS:
+
+          ```bash
+          sudo pacman -U ./archverse-overlay-0.1.42.r31.alpha21-7-x86_64.pkg.tar.zst
+          ```
+
+          Debian / Ubuntu:
+
+          ```bash
+          sudo apt install ./archverse-overlay_0.1.42.r31.alpha21-7_amd64.deb
+          ```
+
+          Fedora 44 / Nobara:
+
+          ```bash
+          sudo dnf install ./archverse-overlay-0.1.42-8.r31.alpha21.fc44.x86_64.rpm
+          ```
+
+          Launch from the application menu or run `archverse-overlay`. Existing user configuration under `${XDG_CONFIG_HOME:-~/.config}/sc-blueprint-tracker` is preserved.
+
+          Verify downloads with the attached `SHA256SUMS`.
+          EOF
+
+      - name: Publish corrected Fedora 44 / Nobara RPM
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          new_rpm="dist/archverse-overlay-0.1.42-8.r31.alpha21.fc44.x86_64.rpm"
+          old_rpm="archverse-overlay-0.1.42-7.r31.alpha21.fc43.x86_64.rpm"
+
+          gh release upload "$TAG" "$new_rpm" SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+          gh release delete-asset "$TAG" "$old_rpm" \
+            --repo "$GITHUB_REPOSITORY" \
+            --yes || true
+
+          gh release edit "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "ArchVerse Overlay 0.1.42 r31 Alpha 21 — Native Linux" \
+            --notes-file release-notes.md \
+            --prerelease \
+            --latest=false
+
+      - name: Record correction summary
+        shell: bash
+        run: |
+          {
+            echo "## Fedora 44 / Nobara RPM corrected"
+            echo
+            echo "- Removed package-name requirement: `ffmpeg`"
+            echo "- Required executable: `/usr/bin/ffplay`"
+            echo "- Clean provider: `ffmpeg-free`"
+            echo "- RPM: `archverse-overlay-0.1.42-8.r31.alpha21.fc44.x86_64.rpm`"
+            echo "- Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          } >> "$GITHUB_STEP_SUMMARY"
