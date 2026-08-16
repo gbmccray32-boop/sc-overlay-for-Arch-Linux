@@ -12,6 +12,20 @@ depends=(
   'nodejs'
   'tesseract'
   'tesseract-data-eng'
+pkgrel=7
+pkgdesc='Community Linux port of the ArchVerse Star Citizen overlay'
+arch=('x86_64')
+url='https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux'
+license=('custom:FSL-1.1-MIT')
+depends=(
+  'electron42'
+  'nodejs'
+  'tesseract'
+  'tesseract-data-eng'
+  'pipewire'
+  'gstreamer'
+  'gst-plugin-pipewire'
+  'gst-plugins-good'
   'xdotool'
   'xorg-xprop'
   'xorg-xrandr'
@@ -63,4 +77,36 @@ package() {
   if [[ -f "$pkgdir/opt/archverse-overlay/runtime/electron/chrome-sandbox" ]]; then
     chmod 4755 "$pkgdir/opt/archverse-overlay/runtime/electron/chrome-sandbox"
   fi
+  'libx11'
+  'libxtst'
+)
+optdepends=(
+  'kscreen: more accurate KDE multi-monitor geometry detection'
+)
+provides=('sc-blueprint-tracker')
+conflicts=('sc-blueprint-tracker')
+options=('!strip')
+
+_appver='0.1.42-r31-alpha.21'
+source=(
+  "ArchVerse-Overlay-${_appver}-payload.tar.gz"
+  'archverse-overlay'
+  'archverse-overlay.desktop'
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+package() {
+  local srcroot="$srcdir/ArchVerse-Overlay-${_appver}"
+
+  install -d "$pkgdir/opt/archverse-overlay"
+  cp -a "$srcroot/." "$pkgdir/opt/archverse-overlay/"
+
+  install -Dm755 "$srcdir/archverse-overlay" "$pkgdir/usr/bin/archverse-overlay"
+  ln -s archverse-overlay "$pkgdir/usr/bin/sc-blueprint-tracker"
+  install -Dm644 "$srcdir/archverse-overlay.desktop" \
+    "$pkgdir/usr/share/applications/archverse-overlay.desktop"
+  install -Dm644 "$srcroot/app/build/icon.png" \
+    "$pkgdir/usr/share/icons/hicolor/256x256/apps/archverse-overlay.png"
+  install -Dm644 "$srcroot/LICENSE.md" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE.md"
 }
