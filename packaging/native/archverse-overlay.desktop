@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ArchVerse Overlay
+Comment=Community Linux companion overlay for Star Citizen
+Exec=archverse-overlay
+Icon=archverse-overlay
+Terminal=false
+Categories=Game;Utility;
+StartupNotify=false
+Keywords=Star Citizen;Overlay;ArchVerse;Mining;Blueprint;
