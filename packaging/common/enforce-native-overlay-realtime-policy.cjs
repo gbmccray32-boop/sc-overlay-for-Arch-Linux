@@ -42,4 +42,10 @@ must(main.includes('ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER'), 'realtime overl
 must(main.includes('autoplayPolicy: "no-user-gesture-required", backgroundThrottling: false'), 'main overlay renderer can still be background-throttled');
 
 fs.writeFileSync(mainPath, main);
+
+// This runs last in the shared native payload rebuild, after the OCR architecture has created its
+// runtime imports and per-widget region plumbing. Apply the clean Gamescope compositor source here
+// so all three native distro packages receive identical PipeWire-first capture behavior.
+require('./enforce-native-linux-pipewire-capture.cjs');
+
 console.log('Native Linux realtime overlay policy enforced:', mainPath);
