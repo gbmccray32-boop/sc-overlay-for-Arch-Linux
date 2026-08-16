@@ -27,17 +27,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Stop if the release already exists
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; leaving it unchanged."
-            exit 0
-          fi
-
       - name: Download exact artifacts from the successful native-package run
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,7 +45,8 @@ jobs:
             --name ArchVerse-Alpha21-native-payload --dir incoming/payload
 
           cp incoming/arch/archverse-overlay-0.1.42.r31.alpha21-7-x86_64.pkg.tar.zst release/
-          cp incoming/debian/archverse-overlay_0.1.42~r31~alpha21-7_amd64.deb release/
+          cp incoming/debian/archverse-overlay_0.1.42~r31~alpha21-7_amd64.deb \
+            release/archverse-overlay_0.1.42.r31.alpha21-7_amd64.deb
           cp incoming/fedora/archverse-overlay-0.1.42-7.r31.alpha21.fc43.x86_64.rpm release/
           cp incoming/payload/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz release/
 
@@ -65,14 +55,13 @@ jobs:
         run: |
           set -euo pipefail
           cd release
-          cat > EXPECTED-SHA256SUMS <<'EOF'
+          cat > SHA256SUMS <<'EOF'
           261db5cea92c9c17ea9a83e099c1dff18de689923cbf7a719d3601dcfe616dd9  ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz
           dd2d5112a0951a72e5403b4363582ed2f6a409dcaebccd41746f86824da40910  archverse-overlay-0.1.42-7.r31.alpha21.fc43.x86_64.rpm
           793fd57bf59073e4331c65f0c42f0cab6623cc1535ac916c44d816272c978188  archverse-overlay-0.1.42.r31.alpha21-7-x86_64.pkg.tar.zst
-          e92978793552ae3aa91ed228e84b510b5593157c238ba3d6feb024019a2b0134  archverse-overlay_0.1.42~r31~alpha21-7_amd64.deb
+          e92978793552ae3aa91ed228e84b510b5593157c238ba3d6feb024019a2b0134  archverse-overlay_0.1.42.r31.alpha21-7_amd64.deb
           EOF
-          sha256sum -c EXPECTED-SHA256SUMS
-          mv EXPECTED-SHA256SUMS SHA256SUMS
+          sha256sum -c SHA256SUMS
 
       - name: Write release notes
         shell: bash
@@ -97,7 +86,7 @@ jobs:
           ### Packages
 
           - **Arch / CachyOS — field-tested:** `archverse-overlay-0.1.42.r31.alpha21-7-x86_64.pkg.tar.zst`
-          - **Debian / Ubuntu — CI-built and package-validated:** `archverse-overlay_0.1.42~r31~alpha21-7_amd64.deb`
+          - **Debian / Ubuntu — CI-built and package-validated:** `archverse-overlay_0.1.42.r31.alpha21-7_amd64.deb`
           - **Fedora 43 / Nobara — CI-built and package-validated:** `archverse-overlay-0.1.42-7.r31.alpha21.fc43.x86_64.rpm`
           - **Shared verified payload:** `ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz`
 
@@ -114,7 +103,7 @@ jobs:
           Debian / Ubuntu:
 
           ```bash
-          sudo apt install ./archverse-overlay_0.1.42~r31~alpha21-7_amd64.deb
+          sudo apt install ./archverse-overlay_0.1.42.r31.alpha21-7_amd64.deb
           ```
 
           Fedora 43 / Nobara:
@@ -128,24 +117,32 @@ jobs:
           Verify downloads with the attached `SHA256SUMS`.
           EOF
 
-      - name: Create GitHub prerelease and tag the tested source
+      - name: Publish or refresh the GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$TAG" \
-            release/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz \
-            release/archverse-overlay-0.1.42-7.r31.alpha21.fc43.x86_64.rpm \
-            release/archverse-overlay-0.1.42.r31.alpha21-7-x86_64.pkg.tar.zst \
-            release/archverse-overlay_0.1.42~r31~alpha21-7_amd64.deb \
-            release/SHA256SUMS \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$SOURCE_SHA" \
-            --title "ArchVerse Overlay 0.1.42 r31 Alpha 21 — Native Linux" \
-            --notes-file release-notes.md \
-            --prerelease \
-            --latest=false
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+            gh release edit "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$SOURCE_SHA" \
+              --title "ArchVerse Overlay 0.1.42 r31 Alpha 21 — Native Linux" \
+              --notes-file release-notes.md \
+              --prerelease \
+              --latest=false
+          else
+            gh release create "$TAG" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$SOURCE_SHA" \
+              --title "ArchVerse Overlay 0.1.42 r31 Alpha 21 — Native Linux" \
+              --notes-file release-notes.md \
+              --prerelease \
+              --latest=false
+          fi
 
       - name: Record release summary
         shell: bash
