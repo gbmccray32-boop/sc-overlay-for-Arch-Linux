@@ -1,0 +1,159 @@
+name: Publish ArchVerse Alpha 21 official release
+
+on:
+  push:
+    branches:
+      - archverse/r31
+    paths:
+      - .github/workflows/publish-alpha21.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-archverse-alpha21
+  cancel-in-progress: false
+
+env:
+  TAG: v0.1.42-r31-alpha.21
+  SOURCE_SHA: 96f49742a973902e2b4ba309b78e233d11aab057
+  SOURCE_RUN: "31921494705"
+
+jobs:
+  publish:
+    name: Publish tested Alpha 21 package set
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Stop if the release already exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it unchanged."
+            exit 0
+          fi
+
+      - name: Download exact artifacts from the successful native-package run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p incoming/arch incoming/debian incoming/fedora incoming/payload release
+
+          gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name ArchVerse-Alpha21-Arch --dir incoming/arch
+          gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name ArchVerse-Alpha21-Debian --dir incoming/debian
+          gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name ArchVerse-Alpha21-Fedora --dir incoming/fedora
+          gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name ArchVerse-Alpha21-native-payload --dir incoming/payload
+
+          cp incoming/arch/archverse-overlay-0.1.42.r31.alpha21-7-x86_64.pkg.tar.zst release/
+          cp incoming/debian/archverse-overlay_0.1.42~r31~alpha21-7_amd64.deb release/
+          cp incoming/fedora/archverse-overlay-0.1.42-7.r31.alpha21.fc43.x86_64.rpm release/
+          cp incoming/payload/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz release/
+
+      - name: Verify the field-tested package set
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          cat > EXPECTED-SHA256SUMS <<'EOF'
+          261db5cea92c9c17ea9a83e099c1dff18de689923cbf7a719d3601dcfe616dd9  ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz
+          dd2d5112a0951a72e5403b4363582ed2f6a409dcaebccd41746f86824da40910  archverse-overlay-0.1.42-7.r31.alpha21.fc43.x86_64.rpm
+          793fd57bf59073e4331c65f0c42f0cab6623cc1535ac916c44d816272c978188  archverse-overlay-0.1.42.r31.alpha21-7-x86_64.pkg.tar.zst
+          e92978793552ae3aa91ed228e84b510b5593157c238ba3d6feb024019a2b0134  archverse-overlay_0.1.42~r31~alpha21-7_amd64.deb
+          EOF
+          sha256sum -c EXPECTED-SHA256SUMS
+          mv EXPECTED-SHA256SUMS SHA256SUMS
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## ArchVerse Overlay 0.1.42 r31 Alpha 21
+
+          Alpha 21 is the official native Linux prerelease built from commit `96f49742a973902e2b4ba309b78e233d11aab057`. The attached Arch/CachyOS package is byte-for-byte identical to the package field-tested by Gabe after successful GitHub Actions run [31921494705](https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/actions/runs/31921494705).
+
+          ### Highlights
+
+          - Makes the bound Gamescope PipeWire Video/Source the primary Linux capture path, with dynamic node and frame-size discovery.
+          - Keeps Spectacle and Electron capture as fallback paths.
+          - Makes RapidOCR/ONNX the primary Linux OCR engine and uses Tesseract only when RapidOCR fails.
+          - Replaces full-frame OCR with independent, persistent regions for Resource Scanner, Fabricator, Mission, Claim/context, and Refinery features.
+          - Keeps Resource Scanner OCR active independently of widget visibility, held-F interaction, hover, and overlay focus.
+          - Preserves hover-scoped held-F interaction, F-up hover re-arm, Star Citizen focus handoff, and 30-second drag-lock watchdogs.
+          - Keeps overlay rendering live while Star Citizen owns focus and bounds mining cadence so slow OCR cannot create long sleeps.
+          - Treats a valid parsed resource signature as authoritative; radar/glyph analysis remains nonblocking confirmation telemetry.
+          - Removes unused CUDA, TensorRT, and musl runtime variants from the native payload.
+
+          ### Packages
+
+          - **Arch / CachyOS — field-tested:** `archverse-overlay-0.1.42.r31.alpha21-7-x86_64.pkg.tar.zst`
+          - **Debian / Ubuntu — CI-built and package-validated:** `archverse-overlay_0.1.42~r31~alpha21-7_amd64.deb`
+          - **Fedora 43 / Nobara — CI-built and package-validated:** `archverse-overlay-0.1.42-7.r31.alpha21.fc43.x86_64.rpm`
+          - **Shared verified payload:** `ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz`
+
+          Debian/Ubuntu and Fedora/Nobara packages passed clean container builds, file inspection, dependency checks, native OCR policy checks, and runtime payload validation. They have not yet received the same real-host field test as the Arch/CachyOS package.
+
+          ### Install
+
+          Arch / CachyOS:
+
+          ```bash
+          sudo pacman -U ./archverse-overlay-0.1.42.r31.alpha21-7-x86_64.pkg.tar.zst
+          ```
+
+          Debian / Ubuntu:
+
+          ```bash
+          sudo apt install ./archverse-overlay_0.1.42~r31~alpha21-7_amd64.deb
+          ```
+
+          Fedora 43 / Nobara:
+
+          ```bash
+          sudo dnf install ./archverse-overlay-0.1.42-7.r31.alpha21.fc43.x86_64.rpm
+          ```
+
+          Launch from the application menu or run `archverse-overlay`. Existing user configuration under `${XDG_CONFIG_HOME:-~/.config}/sc-blueprint-tracker` is preserved.
+
+          Verify downloads with the attached `SHA256SUMS`.
+          EOF
+
+      - name: Create GitHub prerelease and tag the tested source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            release/ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz \
+            release/archverse-overlay-0.1.42-7.r31.alpha21.fc43.x86_64.rpm \
+            release/archverse-overlay-0.1.42.r31.alpha21-7-x86_64.pkg.tar.zst \
+            release/archverse-overlay_0.1.42~r31~alpha21-7_amd64.deb \
+            release/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title "ArchVerse Overlay 0.1.42 r31 Alpha 21 — Native Linux" \
+            --notes-file release-notes.md \
+            --prerelease \
+            --latest=false
+
+      - name: Record release summary
+        shell: bash
+        run: |
+          {
+            echo "## Published $TAG"
+            echo
+            echo "- Source commit: `$SOURCE_SHA`"
+            echo "- Tested package run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN"
+            echo "- Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          } >> "$GITHUB_STEP_SUMMARY"
