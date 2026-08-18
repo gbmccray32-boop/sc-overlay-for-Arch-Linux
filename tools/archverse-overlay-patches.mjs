@@ -28,15 +28,41 @@ function appendScript(html, src, marker) {
   return html.replace("</body>", `  <!-- ${marker} -->\n  <script src="${src}"></script>\n</body>`);
 }
 
+function patchLinuxOcrRegions(html) {
+  if (html.includes('ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI_LOADER')) return html;
+  let s = replaceOnce(
+    html,
+    'const scanDisplay = () => canvasInfo || { px: 0, py: 0, pw: window.innerWidth, ph: window.innerHeight };',
+    'const scanDisplay = () => window.__archverseOcrDisplay?.() || canvasInfo || { px: 0, py: 0, pw: window.innerWidth, ph: window.innerHeight };\n  window.__drawResourceScanBox = () => drawScanBox();',
+    'Resource Scanner capture geometry',
+  );
+  s = replaceOnce(
+    s,
+    'body: JSON.stringify({ scanRegion: f }),',
+    'body: JSON.stringify({ scanRegion: f, linuxOcrRegions: { resourceSignature: f } }),',
+    'Resource Scanner ROI persistence',
+  );
+  s = replaceOnce(
+    s,
+    'if (c && c.scanRegion) { scanRegion = c.scanRegion; drawScanBox(); }',
+    'if (c && (c.linuxOcrRegions?.resourceSignature || c.scanRegion)) { scanRegion = c.linuxOcrRegions?.resourceSignature || c.scanRegion; drawScanBox(); }',
+    'Resource Scanner ROI restore',
+  );
+  s = appendScript(s, '/linux-ocr-region-manager.js', 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI_LOADER');
+  must(s.includes('window.__archverseOcrDisplay?.()'), 'Resource Scanner ROI is not tied to captured-game geometry');
+  must(s.includes('linuxOcrRegions: { resourceSignature: f }'), 'Resource Scanner ROI is not mirrored into Linux region config');
+  return s;
+}
+
 function patchMissionInteractionRegions(html) {
   if (html.includes('ARCHVERSE_LINUX_DYNAMIC_WIDGET_REGIONS')) return html;
-  // Keep upstream's carefully scoped hit-test list intact. In particular, its display-only OCR
-  // guide boxes intentionally remain pointer-events:none and MUST NOT become giant click targets.
-  // We add only an explicit opt-in selector for future Linux-only controls.
+  // Preserve upstream's hit-test list exactly, then add only ArchVerse controls that are explicitly
+  // interactive. `.ocr-capture-box.shown` is the user-enabled calibration editor from our manager;
+  // unrelated upstream display-only OCR guides are NOT included.
   let s = replaceOnce(
     html,
     'const RSEL = "body.scanbox #scanBox, body.boardbox #boardBox, body.payoutscan #payoutPanel, #panel, #globalCog, #hub, #cogMenu, #whatsnew, #setupNudge.show, #svcDown.show, #ocrWarn.show, #arrangeScrim .ab, #arrangeScrim .nudge, .widget:not(.notifier), .widget.notifier.live, .widget.notifier.moving, .widget.notifier.cfgopen, .widget:hover .whead, .widget.touched .whead, .widget.grouped .whead, #panel:hover .whead, #panel.touched .whead, #panel.grouped .whead";',
-    'const RSEL = "body.scanbox #scanBox, body.boardbox #boardBox, body.payoutscan #payoutPanel, #panel, #globalCog, #hub, #cogMenu, #whatsnew, #setupNudge.show, #svcDown.show, #ocrWarn.show, #arrangeScrim .ab, #arrangeScrim .nudge, .widget:not(.notifier), .widget.notifier.live, .widget.notifier.moving, .widget.notifier.cfgopen, .widget:hover .whead, .widget.touched .whead, .widget.grouped .whead, #panel:hover .whead, #panel.touched .whead, #panel.grouped .whead, [data-archverse-interactive=\\"true\\"]"; // ARCHVERSE_LINUX_DYNAMIC_WIDGET_REGIONS',
+    'const RSEL = ".ocr-capture-box.shown, body.scanbox #scanBox, body.boardbox #boardBox, body.payoutscan #payoutPanel, #panel, #globalCog, #hub, #cogMenu, #whatsnew, #setupNudge.show, #svcDown.show, #ocrWarn.show, #arrangeScrim .ab, #arrangeScrim .nudge, .widget:not(.notifier), .widget.notifier.live, .widget.notifier.moving, .widget.notifier.cfgopen, .widget:hover .whead, .widget.touched .whead, .widget.grouped .whead, #panel:hover .whead, #panel.touched .whead, #panel.grouped .whead, [data-archverse-interactive=\\"true\\"]"; // ARCHVERSE_LINUX_DYNAMIC_WIDGET_REGIONS',
     'mission interaction region selector',
   );
   s = replaceOnce(
@@ -64,14 +90,12 @@ function patchLinuxSettings(html) {
     '    document.getElementById("holdToInteract").checked = !!cfg.holdToInteract;\n    applyArchVerseLinuxSettings();',
     'Linux Settings load-time lock',
   );
-
   s = replaceOnce(
     s,
     '    const token = document.getElementById("syncToken").value.trim();',
     '    if (ARCHVERSE_LINUX_DESKTOP()) {\n      body.interactHotkey = "F";\n      body.holdToInteract = true;\n      body.moveHotkey = "Shift+F6";\n    }\n    const token = document.getElementById("syncToken").value.trim();',
     'Linux Settings save repair',
   );
-
   s = replaceOnce(
     s,
     '  async function clearHotkey(which) {',
@@ -91,7 +115,6 @@ function patchLinuxSettings(html) {
     'Linux hold-mode guard',
   );
 
-  // The staged build is Linux-only; do not tell users its OCR is Windows OCR.
   s = s.replace(
     "Uses Windows' built-in text recognition, only while Star Citizen is focused. These two are for you — nothing leaves your PC.",
     "Uses ArchVerse's native Linux OCR pipeline only while Star Citizen is focused. These two are for you — nothing leaves your PC.",
@@ -109,6 +132,7 @@ export function applyArchVerseOverlayPatches(outDir) {
 
   rewrite(join(overlay, "missions.html"), (html) => {
     let next = html.replaceAll("Mining Scanner", "Resource Scanner");
+    next = patchLinuxOcrRegions(next);
     next = patchMissionInteractionRegions(next);
     next = appendScript(next, "/archverse-widget-appearance.js", "ARCHVERSE_WIDGET_APPEARANCE_V1");
     return next;
@@ -127,5 +151,5 @@ export function applyArchVerseOverlayPatches(outDir) {
     return next;
   });
 
-  console.log("applied ArchVerse Resource Scanner, Linux Settings and dynamic interaction-region patches");
+  console.log("applied ArchVerse Resource Scanner, per-widget OCR regions, Linux Settings and dynamic interaction regions");
 }
