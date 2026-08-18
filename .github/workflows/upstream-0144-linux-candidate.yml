@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  APP_VERSION: 0.1.44-r31.alpha22.candidate1
+  APP_VERSION: 0.1.44-r31.alpha22.candidate2
   VERIFIED_ALPHA21_CORE_RUN_ID: '31901404904'
   VERIFIED_ALPHA21_CORE_ARTIFACT_ID: '9251185299'
   VERIFIED_ALPHA21_CORE_ARTIFACT: ArchVerse-Alpha21-native-payload
@@ -103,7 +103,7 @@ jobs:
           compression-level: 0
 
   linux-runtime:
-    name: Verified Alpha21 Linux core + later OCR contract + current upstream behavior
+    name: Verified Alpha21 Linux core + later OCR contract + PipeWire-first capture + current upstream behavior
     needs: upstream-logic
     runs-on: ubuntu-24.04
     steps:
@@ -184,6 +184,11 @@ jobs:
             "$RUNNER_TEMP/sources/$ELECTRON_ASSET" \
             "$STAGE_ROOT"
 
+          # Alpha21 lesson: the five-region OCR policy and the direct Gamescope PipeWire policy are
+          # separate layers, and PipeWire MUST be applied after the OCR architecture has rewritten
+          # capture.cjs. This is the field-proven low-latency Mining Scanner path.
+          node packaging/common/enforce-native-linux-pipewire-capture.cjs "$STAGE_ROOT"
+
           test -x "$STAGE_ROOT/runtime/electron/electron"
           grep -q -- '--ozone-platform=x11' "$STAGE_ROOT/bin/sc-blueprint-tracker"
           grep -q 'SC_TRACKER_HOST_WAYLAND_DISPLAY' "$STAGE_ROOT/bin/sc-blueprint-tracker"
@@ -197,6 +202,15 @@ jobs:
           ! grep -q 'overlay\.setFocusable(false)' "$STAGE_ROOT/app/electron/main.cjs"
           grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGIONS' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_NO_FULL_FRAME_OCR_ARCHIVE' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_CAPTURE' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'pipewire: captureWithGamescopePipeWire' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -Fq '["pipewire", "gamescope", "spectacle", "electron"]' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -Fq '["pipewire", "electron", "gamescope", "spectacle"]' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'method: "gamescope-pipewire"' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'sourceName: `Gamescope PipeWire node ${got.node.id}`' "$STAGE_ROOT/app/electron/capture.cjs"
+          test -s "$STAGE_ROOT/app/electron/native-linux-gamescope-pipewire.cjs"
+          grep -q 'ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_CAPTURE' "$STAGE_ROOT/app/electron/native-linux-gamescope-pipewire.cjs"
+          grep -q 'pipewiresrc' "$STAGE_ROOT/app/electron/native-linux-gamescope-pipewire.cjs"
           grep -q 'electron-gamescope-window' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -q 'spectacle-wayland' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -qi 'rapidocr' "$STAGE_ROOT/app/electron/capture.cjs"
