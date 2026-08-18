@@ -41,30 +41,48 @@ function replaceRegexOnce(text, re, replacement, label) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Hauling widget shell plumbing.
+// 1. Shell-owned widgets added since the verified Linux base: Hauling, social Chat and Settings.
 // ---------------------------------------------------------------------------
 if (!main.includes('ARCHVERSE_UPSTREAM_0144_HAULING')) {
   main = replaceOnce(main,
     'let battagliaVisible = false;',
-    'let battagliaVisible = false;\nlet haulingVisible = false; // ARCHVERSE_UPSTREAM_0144_HAULING',
-    'hauling visibility state');
+    'let battagliaVisible = false;\nlet haulingVisible = false; // ARCHVERSE_UPSTREAM_0144_HAULING\nlet chatVisible = false; // upstream social Chat widget, distinct from Linux Twitch chat\nlet configWidgetVisible = false; // upstream in-canvas Settings widget; never persisted open',
+    'new widget visibility state');
 
-  // Every widget-state snapshot that already carries Battaglia must also carry Hauling.
+  // Every widget-state snapshot that already carries Battaglia must also carry the new widgets.
   main = main.replace(/battaglia: battagliaVisible,(?! hauling:)/g,
-    'battaglia: battagliaVisible, hauling: haulingVisible,');
+    'battaglia: battagliaVisible, hauling: haulingVisible, chat: chatVisible, config: configWidgetVisible,');
 
   const toggleRe = /function toggleBattaglia\(\)\s*\{\s*setBattagliaVisible\(!battagliaVisible\);\s*\}/;
   const toggleMatch = main.match(toggleRe);
   must(toggleMatch, 'Battaglia toggle anchor missing');
-  main = main.replace(toggleRe, `${toggleMatch[0]}\nfunction sendHaulingVisible(state){ try { overlay?.webContents.send("overlay:hauling-visible", state); } catch {} }\nfunction setHaulingVisible(on){ haulingVisible=!!on; sendHaulingVisible({on:haulingVisible}); postConfig({haulingOpen:haulingVisible}); pushWidgetStates(); refreshTray(); }\nfunction toggleHauling(){ setHaulingVisible(!haulingVisible); }`);
+  main = main.replace(toggleRe, `${toggleMatch[0]}
+function sendHaulingVisible(state){ try { overlay?.webContents.send("overlay:hauling-visible", state); } catch {} }
+function setHaulingVisible(on){ haulingVisible=!!on; sendHaulingVisible({on:haulingVisible}); postConfig({haulingOpen:haulingVisible}); pushWidgetStates(); refreshTray(); }
+function toggleHauling(){ setHaulingVisible(!haulingVisible); }
+function sendChatVisible(state){ try { overlay?.webContents.send("overlay:chat-visible", state); } catch {} }
+function setChatVisible(on){ chatVisible=!!on; sendChatVisible({on:chatVisible}); postConfig({chatOpen:chatVisible}); pushWidgetStates(); refreshTray(); }
+function toggleChat(){ setChatVisible(!chatVisible); }
+function sendConfigWidgetVisible(state){ try { overlay?.webContents.send("overlay:config-visible", state); } catch {} }
+function setConfigWidgetVisible(on){ configWidgetVisible=!!on; sendConfigWidgetVisible({on:configWidgetVisible}); pushWidgetStates(); refreshTray(); }
+// Upstream's Settings surface is the canvas widget when the overlay exists, with the standalone
+// BrowserWindow retained only as the recovery path when the canvas is disabled or unavailable.
+function openSettingsSurface(){
+  if (overlayEnabled && overlay && !overlay.isDestroyed()) setConfigWidgetVisible(true);
+  else openConfig();
+}`);
 
+  // Hauling and social Chat persist open/closed. Settings deliberately starts closed each launch.
   main = main.replace(/(^\s*)battagliaVisible = c\.battagliaOpen === true;/gm,
-    '$&\n$1haulingVisible = c.haulingOpen === true;');
+    '$&\n$1haulingVisible = c.haulingOpen === true;\n$1chatVisible = c.chatOpen === true;');
 
-  // Initial visibility may be sent once in createOverlay and again after config restore. Add it
-  // after each Battaglia initial/state send, but never duplicate an already-ported block.
-  main = main.replace(/(^\s*)sendBattagliaVisible\(([^\n;]+)\);(?!\n\s*sendHaulingVisible)/gm,
-    '$&\n$1sendHaulingVisible({ on: haulingVisible });');
+  // The verified Linux base pushes dedicated visibility events after its canvas finishes loading.
+  // Add all three new widgets at that exact seam, then the existing aggregate snapshot follows.
+  const initialRe = /(^\s*)sendBattagliaVisible\?\.\(\{ on: battagliaVisible \}\);/m;
+  const initialMatch = main.match(initialRe);
+  must(initialMatch, 'initial Battaglia visibility replay anchor missing');
+  main = main.replace(initialRe,
+    '$&\n$1sendHaulingVisible({ on: haulingVisible });\n$1sendChatVisible({ on: chatVisible });\n$1sendConfigWidgetVisible({ on: configWidgetVisible });');
 
   const trayNeedle = '{ label: "Event Tracker", type: "checkbox", checked: battagliaVisible, click: toggleBattaglia },';
   must(main.includes(trayNeedle), 'tray Event Tracker anchor missing');
@@ -73,10 +91,11 @@ if (!main.includes('ARCHVERSE_UPSTREAM_0144_HAULING')) {
 
   const ipcNeedle = 'ipcMain.on("app:set-battaglia", (_e,on)=>setBattagliaVisible(!!on));';
   const ipcNeedleSpaced = 'ipcMain.on("app:set-battaglia", (_e, on) => setBattagliaVisible(!!on));';
+  const ipcTail = '\n  ipcMain.on("app:set-hauling", (_e, on) => setHaulingVisible(!!on));\n  ipcMain.on("app:set-chat", (_e, on) => setChatVisible(!!on));\n  ipcMain.on("app:set-config", (_e, on) => setConfigWidgetVisible(!!on));';
   if (main.includes(ipcNeedle)) {
-    main = main.replace(ipcNeedle, `${ipcNeedle}\n  ipcMain.on("app:set-hauling", (_e,on)=>setHaulingVisible(!!on));`);
+    main = main.replace(ipcNeedle, `${ipcNeedle}${ipcTail}`);
   } else if (main.includes(ipcNeedleSpaced)) {
-    main = main.replace(ipcNeedleSpaced, `${ipcNeedleSpaced}\n  ipcMain.on("app:set-hauling", (_e, on) => setHaulingVisible(!!on));`);
+    main = main.replace(ipcNeedleSpaced, `${ipcNeedleSpaced}${ipcTail}`);
   } else {
     throw new Error('0.1.44 Linux shell port: app:set-battaglia IPC anchor missing');
   }
@@ -90,7 +109,53 @@ if (!main.includes('ARCHVERSE_UPSTREAM_0144_HAULING')) {
 if (!main.includes('ARCHVERSE_UPSTREAM_0144_WIDGET_HOTKEYS')) {
   const insertAt = main.indexOf('let interactAccel = null;');
   must(insertAt >= 0, 'interaction hotkey state anchor missing');
-  const hotkeysBlock = `// ARCHVERSE_UPSTREAM_0144_WIDGET_HOTKEYS\nconst WIDGET_TOGGLES = {\n  mining: () => toggleMining(),\n  notepad: () => toggleNotepad(),\n  twitchChat: () => toggleTwitchChat(),\n  scFeed: () => toggleScFeed(),\n  unlockAlert: () => toggleUnlockAlert(),\n  party: () => toggleParty(),\n  battaglia: () => toggleBattaglia(),\n  hauling: () => toggleHauling(),\n  chat: () => { if (typeof toggleChat === "function") toggleChat(); },\n  webView: () => toggleWebView(),\n  bindingChart: () => toggleBindingChart(),\n  config: () => openConfig(),\n};\nconst widgetAccels = new Map();\nconst LEGACY_WIDGET_REGISTRARS = {\n  mining: (a) => registerMiningHotkey(a),\n  notepad: (a) => typeof registerNotepadHotkey === "function" ? registerNotepadHotkey(a) : registerGenericWidgetHotkey("notepad", a),\n  webView: (a) => registerWebViewHotkey(a),\n  bindingChart: (a) => registerBindingHotkey(a),\n};\nfunction registerGenericWidgetHotkey(key, accel) {\n  const prior = widgetAccels.get(key);\n  if (prior) hotkeys.unregister(prior);\n  widgetAccels.delete(key);\n  if (!accel || typeof accel !== "string") return { ok: true };\n  const toggle = WIDGET_TOGGLES[key];\n  if (typeof toggle !== "function") return { ok: false, error: "Unknown widget" };\n  const r = hotkeys.register(accel, toggle);\n  if (r.ok) widgetAccels.set(key, accel);\n  return r;\n}\nfunction registerWidgetHotkey(key, accel) {\n  if (!Object.prototype.hasOwnProperty.call(WIDGET_TOGGLES, key)) return { ok: false, error: "Unknown widget" };\n  const legacy = LEGACY_WIDGET_REGISTRARS[key];\n  if (legacy) return legacy(typeof accel === "string" ? accel : "");\n  return registerGenericWidgetHotkey(key, typeof accel === "string" ? accel : "");\n}\nfunction applyWidgetHotkeys(cfg) {\n  const saved = cfg && typeof cfg.widgetHotkeys === "object" && cfg.widgetHotkeys ? cfg.widgetHotkeys : {};\n  for (const [key, accel] of Object.entries(saved)) registerWidgetHotkey(key, typeof accel === "string" ? accel : "");\n}\nfunction applyWidgetHotkeysFromDisk() {\n  try { applyWidgetHotkeys(JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, "config.json"), "utf8"))); } catch { /* defaults: no new hotkeys */ }\n}\n`;
+  const hotkeysBlock = `// ARCHVERSE_UPSTREAM_0144_WIDGET_HOTKEYS
+const WIDGET_TOGGLES = {
+  mining: () => toggleMining(),
+  notepad: () => toggleNotepad(),
+  twitchChat: () => toggleTwitchChat(),
+  scFeed: () => toggleScFeed(),
+  unlockAlert: () => toggleUnlockAlert(),
+  party: () => toggleParty(),
+  battaglia: () => toggleBattaglia(),
+  hauling: () => toggleHauling(),
+  chat: () => toggleChat(),
+  webView: () => toggleWebView(),
+  bindingChart: () => toggleBindingChart(),
+  config: () => setConfigWidgetVisible(!configWidgetVisible),
+};
+const widgetAccels = new Map();
+const LEGACY_WIDGET_REGISTRARS = {
+  mining: (a) => registerMiningHotkey(a),
+  notepad: (a) => typeof registerNotepadHotkey === "function" ? registerNotepadHotkey(a) : registerGenericWidgetHotkey("notepad", a),
+  webView: (a) => registerWebViewHotkey(a),
+  bindingChart: (a) => registerBindingHotkey(a),
+};
+function registerGenericWidgetHotkey(key, accel) {
+  const prior = widgetAccels.get(key);
+  if (prior) hotkeys.unregister(prior);
+  widgetAccels.delete(key);
+  if (!accel || typeof accel !== "string") return { ok: true };
+  const toggle = WIDGET_TOGGLES[key];
+  if (typeof toggle !== "function") return { ok: false, error: "Unknown widget" };
+  const r = hotkeys.register(accel, toggle);
+  if (r.ok) widgetAccels.set(key, accel);
+  return r;
+}
+function registerWidgetHotkey(key, accel) {
+  if (!Object.prototype.hasOwnProperty.call(WIDGET_TOGGLES, key)) return { ok: false, error: "Unknown widget" };
+  const legacy = LEGACY_WIDGET_REGISTRARS[key];
+  if (legacy) return legacy(typeof accel === "string" ? accel : "");
+  return registerGenericWidgetHotkey(key, typeof accel === "string" ? accel : "");
+}
+function applyWidgetHotkeys(cfg) {
+  const saved = cfg && typeof cfg.widgetHotkeys === "object" && cfg.widgetHotkeys ? cfg.widgetHotkeys : {};
+  for (const [key, accel] of Object.entries(saved)) registerWidgetHotkey(key, typeof accel === "string" ? accel : "");
+}
+function applyWidgetHotkeysFromDisk() {
+  try { applyWidgetHotkeys(JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, "config.json"), "utf8"))); } catch { /* defaults: no new hotkeys */ }
+}
+`;
   main = main.slice(0, insertAt) + hotkeysBlock + '\n' + main.slice(insertAt);
 
   const startupAnchor = 'registerFabClaimHotkey(fabClaimKey);';
@@ -116,7 +181,13 @@ if (main.includes('const WIDGET_TOGGLES = {') && !/hauling:\s*\(\)\s*=>\s*toggle
 if (!main.includes('ARCHVERSE_UPSTREAM_0144_FOCUS_BEHAVIOR')) {
   const focusAnchor = 'function applyMouse() {';
   must(main.includes(focusAnchor), 'applyMouse focus seam missing');
-  main = main.replace(focusAnchor, `// ARCHVERSE_UPSTREAM_0144_FOCUS_BEHAVIOR\n// Upstream Win32 uses WS_EX_NOACTIVATE while Star Citizen is foreground. Linux intentionally\n// does not call overlay.setFocusable(false): KDE/X11/Gamescope need the verified explicit\n// ownership model. Non-keyboard clicks use the existing hover-scoped latch and restore the exact\n// pre-overlay game window when ownership ends; typing, dragging, and arrange mode retain focus\n// only for their explicit lifetime.\n${focusAnchor}`);
+  main = main.replace(focusAnchor, `// ARCHVERSE_UPSTREAM_0144_FOCUS_BEHAVIOR
+// Upstream Win32 uses WS_EX_NOACTIVATE while Star Citizen is foreground. Linux intentionally
+// does not call overlay.setFocusable(false): KDE/X11/Gamescope need the verified explicit
+// ownership model. Non-keyboard clicks use the existing hover-scoped latch and restore the exact
+// pre-overlay game window when ownership ends; typing, dragging, and arrange mode retain focus
+// only for their explicit lifetime.
+${focusAnchor}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -148,9 +219,17 @@ if (!preload.includes('setWidgetHotkey:')) {
 // ---------------------------------------------------------------------------
 must(main.includes('ARCHVERSE_UPSTREAM_0144_HAULING'), 'Hauling shell marker missing');
 must(main.includes('hauling: haulingVisible'), 'Hauling missing from widget state snapshots');
+must(main.includes('chat: chatVisible'), 'social Chat missing from widget state snapshots');
+must(main.includes('config: configWidgetVisible'), 'Settings widget missing from widget state snapshots');
 must(main.includes('app:set-hauling'), 'Hauling toggle IPC missing');
+must(main.includes('app:set-chat'), 'social Chat toggle IPC missing');
+must(main.includes('app:set-config'), 'Settings widget toggle IPC missing');
 must(main.includes('overlay:hauling-visible'), 'Hauling visibility event missing');
+must(main.includes('overlay:chat-visible'), 'social Chat visibility event missing');
+must(main.includes('overlay:config-visible'), 'Settings visibility event missing');
 must(main.includes('haulingOpen'), 'Hauling persistence missing');
+must(main.includes('chatOpen'), 'social Chat persistence missing');
+must(main.includes('function openSettingsSurface()'), 'Settings canvas/fallback router missing');
 must(main.includes('label: "Hauling"'), 'Hauling tray entry missing');
 must(main.includes('ARCHVERSE_UPSTREAM_0144_WIDGET_HOTKEYS'), 'universal widget hotkey marker missing');
 must(main.includes('set-widget-hotkey'), 'generic widget hotkey IPC missing');
@@ -161,6 +240,8 @@ must(main.includes('ARCHVERSE_LINUX_HOVER_SCOPED_LATCH'), 'verified Linux hover-
 must(main.includes('ARCHVERSE_LINUX_GAME_FOCUS_HANDOFF'), 'verified Linux game focus handoff missing');
 must(main.includes('ARCHVERSE_LINUX_DRAG_LOCK_WATCHDOG'), 'verified Linux drag watchdog missing');
 must(preload.includes('setHauling:'), 'preload Hauling bridge missing');
+must(preload.includes('setChat:'), 'preload social Chat bridge missing');
+must(preload.includes('setConfig:'), 'preload Settings bridge missing');
 must(preload.includes('setWidgetHotkey:'), 'preload widget hotkey bridge missing');
 must(preload.includes('claimInteraction:'), 'Linux interaction claim bridge missing');
 must(preload.includes('releaseInteraction:'), 'Linux interaction release bridge missing');
