@@ -34,7 +34,20 @@ The following are ArchVerse platform contracts:
 - The one-native-cursor design remains; a synthetic second visible cursor must not return.
 - KDE/X11/Gamescope focus handoff and verified pointer handoff remain.
 - Exact `StarCitizen.exe` session binding remains the privacy/foreground gate for capture.
-- Linux capture backends/fallbacks remain available.
+- **Direct Gamescope PipeWire capture is the mandatory first-choice Linux OCR capture backend.**
+  The runtime must expose the capture method as `gamescope-pipewire`, identify the selected source
+  as `Gamescope PipeWire node <id>`, and retain the direct `pipewiresrc` implementation bound to
+  the Gamescope process that owns the active Star Citizen session. This source identity is a
+  permanent Linux contract because it is the field-proven low-latency path required by the Mining
+  Scanner. A generic Electron/portal capture path that happens to use PipeWire internally is **not**
+  an equivalent replacement.
+- On Linux Wayland the normal capture order is
+  `pipewire -> gamescope -> spectacle -> electron`.
+- On Linux X11 the normal capture order is
+  `pipewire -> electron -> gamescope -> spectacle`.
+  The later entries are fallbacks only; an upstream rebase may not silently promote them ahead of
+  direct Gamescope PipeWire capture.
+- Linux capture backends/fallbacks remain available after the PipeWire-first path.
 - RapidOCR remains isolated in a disposable Node child process with bounded queue/thread resources.
 - OpenGL remains the normal Linux renderer, with software Safe Mode as the fallback.
 
@@ -155,12 +168,21 @@ Re-run the still-applicable proven Alpha 17 tests against the new candidate, inc
 - idle pointer pinning;
 - explicit interaction ownership;
 - physical click forwarding;
-- structural radar/Scan Mode behavior.
+- structural radar/Scan Mode behavior;
+- direct Gamescope PipeWire capture remains registered as `gamescope-pipewire`;
+- its source identity remains `Gamescope PipeWire node <id>`;
+- the packaged helper still uses direct `pipewiresrc` and binds the node to the active Gamescope
+  process rather than accepting an ambiguous desktop source;
+- PipeWire remains first in both Linux backend-order vectors, with Gamescope-window, Spectacle and
+  Electron capture retained only as fallbacks.
 
 The four labeled Alpha 17 Scan Mode fixtures are part of the permanent detector regression corpus.
 
 Also assert current equivalents for architecture-sensitive contracts rather than relying only on
-old source-text regexes when upstream legitimately changes implementation shape.
+old source-text regexes when upstream legitimately changes implementation shape. The explicit
+`gamescope-pipewire` method/source identity is an exception: it is deliberately stable and must be
+checked literally so a future rebase cannot accidentally demote the field-proven Mining Scanner
+capture path while still passing a generic "some capture works" test.
 
 ### Config E2E
 
