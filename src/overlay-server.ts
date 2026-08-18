@@ -12,11 +12,19 @@ import { PartyTracker, ownHandleFromLog } from "./party.js";
 import { MissionTracker } from "./missions.js";
 import { collectLogPaths } from "./log-paths.js";
 import { MiningTracker } from "./mining.js";
+import { HaulingTracker } from "./hauling.js";
 import { ChatClient } from "./chat.js";
 import { MiningEconomyStore } from "./mining-economy.js";
+import { HaulingDataStore } from "./hauling-data.js";
+import { canAutoLoad } from "./hauling-autoload.js";
+import { buildHaulingPlan } from "./hauling-plan.js";
+import {
+  buildContracts, climbToNextRung, rankContracts, regimeFor, rungAt, HAULING_LADDER,
+  type AdvisorContract,
+} from "./hauling-advisor.js";
 import { MissionFeedbackStore } from "./mission-feedback.js";
 import { FabClaims } from "./fab-claim.js";
-import { SCENARIOS, replayLines, replayMissionId } from "./dev-replay.js";
+import { SCENARIOS, replayLines, replayMissionId, HAUL_SCENARIOS, haulReplayLines } from "./dev-replay.js";
 import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
 import { loadCatalog, ocrImage, ocrSelfTest, hasScanHud, classifyScreen, bestSignatureLine, glyphSearchBox, contractRegionOrDefault, DEFAULT_CONTRACT_REGION, type CatalogEntry, type OcrHealth, type OcrResult, type ScanRegion } from "./screen-read.js";
@@ -197,6 +205,45 @@ interface Config {
   partyOpen: boolean;
   /** Remembers whether the Battaglia grind widget was left open, so it's restored on launch. */
   battagliaOpen: boolean;
+  /** Remembers whether the Hauling widget was left open, so it's restored on launch. */
+  haulingOpen: boolean;
+  /** Ship class the player picked in the Hauling widget, overriding what the log saw. Empty =
+   *  trust the log. Persisted because the log's ship signal is not guaranteed — a relog, or
+   *  taking off in a ship the vehicle-control lines never named, leaves it blank. */
+  haulingShip: string;
+  /**
+   * Places the player has named by hand, keyed by the hauling planner's own location id.
+   *
+   * 🔑 THAT ID IS THE COORDINATES, rounded to the kilometre (see posKey in hauling-plan.ts) — not a
+   * zoneHostId, which the game reissues every session and which would make every saved name go
+   * stale overnight. A marker's position is byte-identical across days, so naming a place once
+   * names it for good.
+   *
+   * Why it has to exist at all: only a TRACKED drop-off carries a name (the Deliver line's "… to
+   * <D>"), so a pickup site, or any leg the player never tracked, shows as "Site 1". Sub has asked
+   * for this four times.
+   */
+  haulingPlaces: Record<string, string>;
+  /**
+   * Every place name the GAME has ever stated on a Deliver line, newest last.
+   *
+   * 🔴 This is the good half of the suggestion list, and it is not optional garnish. locations.json
+   * carries 1,968 rows and **does not contain "Riker Memorial Spaceport"** — nor any other city
+   * spaceport; it has `Area18` but not the spaceport inside it. A picker built only from the
+   * dataset would fail on Sub's single most common drop-off. Names the game has actually used on a
+   * hauling contract are by definition real hauling stops, so they rank above the dataset.
+   */
+  haulingSeenPlaces: string[];
+  /* ⛔ NO haulingRank / haulingRep. A picker was built here and it was wrong twice over, both
+     caught by Sub within minutes:
+       1. The app ALREADY KNOWS. MissionTracker.repDiagnostics() carries every giver's witnessed
+          standing, accrued from every log backup — his Covalex read 5,400 (Member) while the
+          widget was asking him to type it. Asking for a number you hold is not a fallback, it is
+          a bug with a text box on it.
+       2. "The player cannot know their rep value" — correct. mobiGlas draws a bar, not an
+          integer. The only place he could read the number is this app, so a box asking him for it
+          is circular.
+     Standing is read live, per giver. See the advisor endpoint. */
   /** Remembers whether the Web Page widget was left open, so it's restored on launch. */
   webViewOpen: boolean;
   /** URL shown by the Web Page widget (http/https only). Empty = it shows its address picker. */
@@ -245,6 +292,19 @@ interface Config {
   /** Seconds an Unlock Alert card stays up. Same clamp, same reasoning. */
   unlockAlertShowSeconds: number;
   miningHotkey: string;
+  /** Per-widget show/hide hotkeys, keyed by REGISTRY key (mining, party, chat, …).
+   *
+   *  🔑 One map instead of a scalar per widget. Four widgets had a hand-written config field, a
+   *  hand-written shell registration and a hand-written settings row each, and the other seven had
+   *  no hotkey at all — so "every widget gets one" meant writing that boilerplate seven more times
+   *  and again for every widget ever added. A map keyed on the registry key means a new widget
+   *  gets a hotkey for free.
+   *  🔑 NO DEFAULTS (Sub, 2026-08-14: "we don't even necessarily need to put in a default"). An
+   *  absent entry means no hotkey, which is also the only safe answer — eleven default chords
+   *  would collide with each other, with the game, and with whatever the player already uses.
+   *  ⚠️ `""` is a REAL saved value meaning "removed", distinct from absent. The legacy migration
+   *  below depends on that distinction. */
+  widgetHotkeys: Record<string, string>;
   webViewHotkey: string;
   /** Global hotkey that shows/hides the Journal widget (Electron accelerator syntax).
    *  Read by electron/main.cjs at startup. */
@@ -378,6 +438,10 @@ const DEFAULTS: Config = {
   scFeedTone: "",
   partyOpen: false,
   battagliaOpen: false,
+  haulingOpen: false,
+  haulingShip: "",
+  haulingPlaces: {},
+  haulingSeenPlaces: [],
   webViewOpen: false,
   // A first-run Web Page widget opens on the blueprint tracker rather than an empty form —
   // it's the page most likely to be wanted beside the game, and it shows what the widget does.
@@ -395,6 +459,7 @@ const DEFAULTS: Config = {
   scFeedShowSeconds: 12,
   unlockAlertShowSeconds: 8,
   miningHotkey: "Shift+F3",
+  widgetHotkeys: {},
   webViewHotkey: "Ctrl+Shift+F3",
   notepadHotkey: "Alt+F3",
   interactHotkey: "F",
@@ -456,13 +521,19 @@ function loadConfig(): Config {
         // off-frame or squashed to nothing is replaced for the same reason (it reads an empty
         // rectangle and looks exactly like a scanner that has stopped working).
         return { ...DEFAULTS, ...raw, payoutScan: false,
-          contractRegion: contractRegionOrDefault(raw?.contractRegion) };
+          contractRegion: contractRegionOrDefault(raw?.contractRegion),
+          // ⚠️ Copied, not spread through. A shallow `{...DEFAULTS}` hands out DEFAULTS' OWN
+          // container for these two, and both are mutated in place (naming a place, learning a
+          // name) — so the defaults object would accumulate this session's data and any later
+          // load would inherit it. Also normalises a config written before the fields existed.
+          haulingPlaces: { ...(raw?.haulingPlaces ?? {}) },
+          haulingSeenPlaces: Array.isArray(raw?.haulingSeenPlaces) ? [...raw.haulingSeenPlaces] : [] };
       }
     } catch {
       /* corrupt — try the next source */
     }
   }
-  return { ...DEFAULTS };
+  return { ...DEFAULTS, haulingPlaces: {}, haulingSeenPlaces: [] };
 }
 // 🔑 Whether this is a genuinely FIRST run, decided BEFORE anything can write a config —
 // the setup wizard takes over the screen, so it must never fire at someone who has been
@@ -605,6 +676,16 @@ let lastSaveOk: string | null = null;
 // See the /api/overlay-geometry routes; in memory only, because it describes a window that exists
 // right now and a stale copy would be worse than none.
 let overlayGeometry: Record<string, unknown> | null = null;
+// Errors forwarded by the canvas page (window.onerror / unhandledrejection). Same reasoning as
+// lastSaveError: a renderer's console does not exist in a packaged build, so these used to
+// vanish. Remembered here for /api/diagnostics AND echoed to the console (→ sidecar.log).
+// Capped both ways — a ring of the last few, and a per-minute intake ceiling, because the one
+// thing worse than losing an error is an error LOOP flooding the log that would explain it.
+const CLIENT_ERR_KEEP = 20;
+const CLIENT_ERR_PER_MIN = 10;
+const clientErrors: { at: string; from: string; msg: string }[] = [];
+let clientErrWindowStart = 0;
+let clientErrWindowCount = 0;
 const saveConfig = async (): Promise<void> => {
   try {
     mkdirSync(userDir, { recursive: true });
@@ -982,12 +1063,224 @@ const economy = new MiningEconomyStore(dataDir);
     (c.compositionSource ? ` (composition from ${c.compositionSource})` : ""));
 }
 
+// ── Hauling datasets (ship cargo grids + contract cargo + locations) ────────
+// Bundled reference data for the hauling optimiser (see HaulingDataStore). Served via
+// /api/ships, /api/hauling-orders and /api/locations; the widget is not built yet.
+const haulingData = new HaulingDataStore(dataDir);
+{
+  const c = haulingData.counts();
+  console.log(`[hauling] ships: ${c.ships}, contracts: ${c.contracts}, locations: ${c.locations}` +
+    (c.version ? ` (${c.version})` : ""));
+}
+
+// ── Naming a place the game never named ─────────────────────────────────────
+//
+// Only a TRACKED drop-off gets a name out of the game, so most stops read "Site 1". Sub has asked
+// four times for a box to type the real name into. Two pieces make that work: a list worth
+// choosing from, and a match that forgives typing.
+
+/** Types a cargo ship can actually be sent to. Everything else in locations.json is scenery: 816
+ *  asteroids, plus stars, systems, jump points and nav points. Offering them is offering a wrong
+ *  answer, and it is most of the list. */
+const PLACE_TYPES = new Set([
+  "Outpost", "Outpost_InvalidQT", "LandingZone", "Manmade",
+  "Manmade_VisibleOnInteraction", "PointOfInterest", "Moon", "Planet",
+]);
+/** How many suggestions a 420px panel can usefully show. */
+const PLACE_LIMIT = 8;
+/** ⚠️ The datacore ships unfinished rows under real-looking types — "<= PLACEHOLDER =>",
+ *  "<= UNINITIALIZED =>" — and they sort to the top of an alphabetical list because of the angle
+ *  bracket. Offering one as a place name is offering nonsense. */
+const PLACE_JUNK = /^<=|=>$|^\s*$/;
+/** Ceiling on the learned list, so a long-running install cannot grow the config without bound. */
+const SEEN_PLACES_MAX = 200;
+
+/**
+ * Remember names the GAME stated, newest last.
+ *
+ * 🔑 A name only counts if the game produced it. `Site 3` and anything the player typed are
+ * excluded — the point of this list is that its entries are known-good, so it can outrank a
+ * dataset of 1,125 candidates. Player answers are already remembered per place; feeding them back
+ * in here would let one typo become a permanent suggestion.
+ */
+function rememberSeenPlaces(names: readonly string[]): void {
+  const player = new Set(Object.values(config.haulingPlaces));
+  let changed = false;
+  for (const raw of names) {
+    const n = (raw ?? "").trim();
+    if (!n || /^Site \d+$/.test(n) || player.has(n)) continue;
+    const at = config.haulingSeenPlaces.indexOf(n);
+    // ⚠️ `at >= 0` is load-bearing. On an EMPTY list indexOf is -1 and length-1 is also -1, so a
+    // bare `at === length - 1` reads "already the most recent" for every name and the list can
+    // never take its first entry. Silent: no error, just a feature that quietly never learns.
+    if (at >= 0 && at === config.haulingSeenPlaces.length - 1) continue;
+    if (at >= 0) config.haulingSeenPlaces.splice(at, 1);
+    config.haulingSeenPlaces.push(n);
+    changed = true;
+  }
+  if (!changed) return;
+  if (config.haulingSeenPlaces.length > SEEN_PLACES_MAX) {
+    config.haulingSeenPlaces = config.haulingSeenPlaces.slice(-SEEN_PLACES_MAX);
+  }
+  void saveConfig();
+}
+
+/**
+ * Subsequence match with a bias toward the obvious reading.
+ *
+ * Returns null when the query's letters do not appear in order. Lower is better. A prefix match
+ * beats a word-start match beats letters merely scattered through the string, so typing "bai" puts
+ * "Baijini Point" above "Bloom Air Institute" even though both technically match.
+ */
+function fuzzyScore(name: string, q: string): number | null {
+  if (!q) return 0;
+  const hay = name.toLowerCase();
+  const needle = q.toLowerCase();
+  if (hay.startsWith(needle)) return 0;
+  const at = hay.indexOf(needle);
+  // A run that begins at a word boundary reads as a real hit; one starting mid-word is weaker.
+  if (at >= 0) return at === 0 || /[\s&'/-]/.test(hay[at - 1]) ? 1 : 2;
+  let i = 0, gaps = 0;
+  for (const ch of hay) {
+    if (ch === needle[i]) { i++; if (i === needle.length) break; }
+    else if (i > 0) gaps++;
+  }
+  return i === needle.length ? 3 + gaps / 1000 : null;
+}
+
+/** Ranked suggestions for the naming box: names the game has used, then the shipped dataset. */
+function haulingPlaceSuggestions(q: string): { name: string; hint: string | null; seen: boolean }[] {
+  const out: { name: string; hint: string | null; seen: boolean; rank: number }[] = [];
+  const taken = new Set<string>();
+  // Tier 1 — the game's own words, most recently used first. `seen.length - i` keeps recency as
+  // the tiebreak inside an equal fuzzy score, which is what "people work one area for hours" needs.
+  const seen = config.haulingSeenPlaces;
+  seen.forEach((name, i) => {
+    const s = fuzzyScore(name, q);
+    if (s === null) return;
+    taken.add(name.toLowerCase());
+    out.push({ name, hint: "used before", seen: true, rank: s - 10 - (i / (seen.length || 1)) });
+  });
+  // 🔑 AN EMPTY BOX OFFERS ONLY WHAT THE GAME HAS USED. Ranking 1,125 dataset rows with no query
+  // to rank them BY produces an alphabetical list starting at "The Pit" — eight rows of noise, and
+  // worse, it buries the handful of places this player actually visits. With nothing typed the
+  // useful answer is "somewhere you have been before"; the dataset earns its place the moment
+  // there are letters to match against.
+  if (!q) return out.sort((a, b) => a.rank - b.rank).slice(0, PLACE_LIMIT)
+    .map(({ name, hint, seen: s }) => ({ name, hint, seen: s }));
+  // Tier 2 — the shipped dataset, minus everything a ship cannot be sent to.
+  for (const l of Object.values(haulingData.locations())) {
+    if (!l.name || !PLACE_TYPES.has(l.type ?? "")) continue;
+    if (PLACE_JUNK.test(l.name)) continue;
+    if (taken.has(l.name.toLowerCase())) continue;
+    const s = fuzzyScore(l.name, q);
+    if (s === null) continue;
+    taken.add(l.name.toLowerCase());
+    out.push({ name: l.name, hint: l.parentName ?? l.system ?? null, seen: false, rank: s });
+  }
+  out.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
+  return out.slice(0, PLACE_LIMIT).map(({ name, hint, seen: s }) => ({ name, hint, seen: s }));
+}
+
+// ── The advisor: which contracts to go looking for ──────────────────────────
+//
+// `src/hauling-advisor.ts` has done this work since it was written and nothing has ever called it —
+// only `parseBoardTitle` was wired up. It ranks the shipped contract TYPES by reputation (or money)
+// per unit of handling, which is the accept/skip decision at the board, and answers "how many of
+// these to the next rung".
+
+/** Built once: `buildContracts` walks 853 keys against the orders table, and neither dataset
+ *  changes while the process is up. */
+let advisorRows: AdvisorContract[] | null = null;
+function advisorContracts(): AdvisorContract[] {
+  if (advisorRows) return advisorRows;
+  const missions = tracker.missionsByKeyPrefix("HaulCargo");
+  const orders = haulingData.contracts();
+  advisorRows = buildContracts(missions as never, orders as never);
+  console.log(`[hauling] advisor: ${advisorRows.length} rankable contract types`);
+  return advisorRows;
+}
+
+/**
+ * How long one contract actually takes, MEASURED — accept to turn-in, off the player's own runs.
+ *
+ * 🔑 Sub asked for this directly: "we have enough information to figure out exactly how long it
+ * takes me to do a mission, because you know when I grabbed it and when I turned it in." Right, and
+ * it beats the modelled figure outright — `handlingEffort` counts box handling and nothing else, so
+ * it is a floor, while this includes the flying, the elevator queue and the walk.
+ *
+ * MEDIAN, not mean. One contract accepted and forgotten for two hours would drag an average into
+ * uselessness, and a hauler's run times are naturally skewed that way.
+ *
+ * ⚠️ Contracts overlap — several are usually run together — so this is "wall-clock from accepting
+ * this one to finishing it", not "time this one cost you". It is the honest reading of what the log
+ * records, and the right one for "how long until I rank up" precisely because a real session runs
+ * them in parallel too.
+ */
+function haulingRunMinutes(): { median: number; samples: number } | null {
+  const spans = hauling.view().finished
+    .filter((f) => f.acceptedAt != null && f.at > f.acceptedAt)
+    .map((f) => (f.at - (f.acceptedAt as number)) / 60_000)
+    .sort((a, b) => a - b);
+  if (!spans.length) return null;
+  return { median: spans[Math.floor(spans.length / 2)], samples: spans.length };
+}
+
+/**
+ * 🔴 STANDING IS PER GIVER, NOT PER SCOPE.
+ *
+ * Four factions share the `Hauling` scope — Covalex (817 contracts), Dead Saints (8), Red Wind (7),
+ * Ling Family (7) — and reputation accrues to the FACTION. Sub saw the danger before the code did:
+ * "if I select my rank, it's going to show me missions from another mission giver at that rank, and
+ * I'm not that rank with that mission giver." Exactly right. Gating on one ladder would have
+ * offered him Member-tier Ling Family work against a Covalex standing he earned elsewhere.
+ *
+ * The numbers come from MissionTracker's own accrual, which has been running all along and is
+ * keyed by giver — 307 credited completions at the time this was written, reading Covalex 5,400.
+ */
+function haulingStandings(): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const g of tracker.repDiagnostics().givers) {
+    if (g.scope === "Hauling") out.set(g.giver, g.sum);
+  }
+  return out;
+}
+
+/**
+ * How long the next rung is away, for ONE giver.
+ *
+ * 🔑 The rate is the player's own MEASURED rep/hour, or nothing. `climbToNextRung` counts only
+ * loading work — no flying, no quantum, no walk to the elevator — so turning its seconds into
+ * "time to rank" would understate by however long the travelling takes, which is most of it. No
+ * rate, no time: report the rep needed and say what would fix that.
+ */
+function haulingClimb(giver: string, standing: number, repPerHour: number | null): Record<string, unknown> {
+  const { current, next } = rungAt(standing);
+  if (!next) return { giver, standing, rung: current.name, next: null };
+  const need = Math.max(0, next.minRep - standing);
+  return {
+    giver, standing,
+    rung: current.name,
+    next: next.name,
+    // How far through the current rung they are — the bar the game draws but never numbers.
+    progress: (standing - current.minRep) / Math.max(1, next.minRep - current.minRep),
+    repNeeded: need,
+    hours: repPerHour && repPerHour > 0 ? need / repPerHour : null,
+    repPerHour,
+  };
+}
+
 // ── Mining Assistant (signature scanner + refinery timer) ────────────────────
 // Party roster + reward split. The log can only COUNT party members (and name them late,
 // on despawn), so the roster is manual — see src/party.ts for the full finding.
 const party = new PartyTracker(join(userDir, "party.json"), join(userDir, "party-sessions"));
 
 const mining = new MiningTracker({ dataDir, stateDir: userDir });
+
+// Hauling contracts, off the same mission event stream. Purely in-memory and derived: the game
+// is the source of truth for which contracts you hold, so there is no state file to keep in sync
+// and nothing to migrate.
+const hauling = new HaulingTracker();
 
 // Crowdsourced mission facts (what you actually do in it, difficulty, soloable) collected by
 // the completion report. Local-only for now — this file IS the upload queue for when the
@@ -1311,6 +1604,17 @@ function miningSend(msg: unknown): void {
 function miningAppearance(): { kind: "appearance"; theme: string; overlayTwist: number; overlayScale: number } {
   return { kind: "appearance", theme: effectiveTheme(), overlayTwist: config.overlayTwist, overlayScale: config.overlayScale };
 }
+// ── Hauling optimiser ──────────────────────────────────────────────────────
+// Its own SSE channel rather than a field on the missions payload: hauling state changes on a
+// completely different cadence (a marker burst on accept, then nothing for twenty minutes), and
+// every widget on the missions stream would otherwise re-render for a delivery it doesn't show.
+const haulingClients = new Set<ServerResponse>();
+function haulingSend(msg: unknown): void {
+  const data = `data: ${JSON.stringify(msg)}\n\n`;
+  for (const res of haulingClients) res.write(data);
+}
+hauling.on("change", () => { if (haulingClients.size) haulingSend({ kind: "state", view: hauling.view() }); });
+
 mining.on("change", () => miningSend({ kind: "state", view: miningViewWithPlace() }));
 // Transient alerts the overlay turns into TTS + sound + a flash.
 mining.on("target-hit", (hit) => miningSend({ kind: "target-hit", hit }));
@@ -1473,8 +1777,55 @@ function syncFull(): void {
 
 /** One-time read of the current log so the overlay knows the tracked mission +
  *  collected state immediately on start (the watcher then tails from the end). */
+/** How far back a rotated log is still worth reading. A hauling run spans hours, not days, and a
+ *  week-old log would resurrect contracts that are long gone. */
+const BACKUP_SEED_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * 🔴 A LOG ROTATION MUST NOT ERASE WHAT THE PLAYER ALREADY DID.
+ *
+ * The game starts a fresh `Game.log` on every launch and moves the old one to `logbackups/`. The
+ * seed below reads only the CURRENT file, so everything from before the last restart was simply
+ * gone — and mission state does not restate itself.
+ *
+ * Sub, 2026-08-17, holding 103 SCU of Scrap: the widget told him to go and collect it. He had
+ * collected it hours earlier; the game logged `pickup … MISSION_OBJECTIVE_STATE_COMPLETED` and then
+ * rotated the log, and the app was reading a file that started after the fact. Same root cause as
+ * losing his ship, his tonnages and his contracts across each of the day's crashes.
+ *
+ * So: replay the most recent backup first, then the live log on top. Mission events are idempotent
+ * — the tracker keys by missionId and objectiveId — so anything restated simply lands twice.
+ *
+ * ⚠️ Only the newest backup, and only if it is recent. Reading the whole folder would drag back
+ * every contract the player has ever flown.
+ */
+function seedFromRotatedLog(): void {
+  try {
+    const dir = join(dirname(config.logPath), "logbackups");
+    if (!existsSync(dir)) return;
+    const newest = readdirSync(dir)
+      .filter((f) => f.toLowerCase().endsWith(".log"))
+      .map((f) => join(dir, f))
+      .map((p) => ({ p, at: statSync(p).mtimeMs }))
+      .sort((a, b) => b.at - a.at)[0];
+    if (!newest || Date.now() - newest.at > BACKUP_SEED_MAX_AGE_MS) return;
+    let applied = 0;
+    for (const line of readFileSync(newest.p, "utf8").split(/\r?\n/)) {
+      if (!line) continue;
+      const ev = parseMissionEvent(parseLine(line));
+      if (ev) { tracker.apply(ev); hauling.apply(ev); applied++; }
+    }
+    const mins = Math.round((Date.now() - newest.at) / 60000);
+    console.log(`[seed] rotated log replayed: ${applied} mission events from ${mins}m ago (${newest.p})`);
+  } catch (err) {
+    console.log(`[seed] rotated log skipped: ${(err as Error).message}`);
+  }
+}
+
 function seedTrackerFromLog(): number | null {
   try {
+    // Before the live log: whatever the player did before the game last restarted.
+    seedFromRotatedLog();
     // 🔑 Read as a BUFFER so the exact byte count is known. `text.length` is CHARACTERS, and the
     // watcher seeks by bytes — any non-ASCII in the log (handles, ship names) would make the two
     // disagree and re-emit or skip lines at the seam.
@@ -1489,7 +1840,7 @@ function seedTrackerFromLog(): number | null {
       if (!line) continue;
       tracker.detectPatch(line);
       const ev = parseMissionEvent(parseLine(line));
-      if (ev) { tracker.apply(ev); party.apply(ev); applyChatSignals(ev); }
+      if (ev) { tracker.apply(ev); party.apply(ev); hauling.apply(ev); applyChatSignals(ev); }
       const chan = shipChannelEvent(line);
       if (chan) {
         if (chan.action === "enter" && chan.manufacturer) { seedMfr = chan.manufacturer; seedShip = chan.ship; }
@@ -1517,6 +1868,18 @@ function startWatcher(): void {
   // 🔴 Hand over from the seed read at its exact byte, not at whatever the file measures NOW.
   // The two used to be independent, and everything the game logged in between belonged to
   // neither — see the startPosition note in watcher.ts for what that costs.
+  // Build the phrasebook here rather than at construction: this is the one place that always
+  // runs with a SETTLED log path, on boot and again after the user repoints it. Without it a
+  // player on a non-English UI, or running a language pack, resolves nothing — see localization.ts.
+  try {
+    const loc = tracker.setLogPath(config.logPath);
+    console.log(`[localization] ${loc.source}${loc.path ? ` ${loc.path}` : ""} (${loc.entries} names`
+      + `${loc.language ? `, g_language=${loc.language}` : ""})`);
+    if (loc.formatDrift.length)
+      console.log(`[localization] !! notification wording differs from English: ${loc.formatDrift.join(", ")}`);
+  } catch (err) {
+    console.log(`[localization] failed: ${(err as Error).message}`);
+  }
   watcher = new LogWatcher(config.logPath, {
     pollInterval: 1000,
     ...(seedEndsAt != null ? { startPosition: seedEndsAt } : {}),
@@ -1536,7 +1899,7 @@ function startWatcher(): void {
     // by system, and a stale answer there sends someone to another star.
     if (sysWatch.push(e.raw)) { tracker.setSystem(sysWatch.current()); broadcastMissions(); }
     const me = parseMissionEvent(e);
-    if (me) { tracker.apply(me); party.apply(me); applyChatSignals(me); }
+    if (me) { tracker.apply(me); party.apply(me); hauling.apply(me); applyChatSignals(me); }
 
     // Theme auto-switch: track the manufacturer of the ship we're in; re-broadcast so the
     // overlay retints live when theme="auto".
@@ -1887,7 +2250,8 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // /api/ocr/health names security software running on this PC and how it is failing — a
     // profile of the machine, useless to the owner's OBS and no business of anything on the LAN.
     "/api/config", "/api/diagnostics", "/api/setup", "/api/ocr/health", "/api/mining/tone", "/api/scfeed/tone",
-    "/api/can-embed", "/api/dev/note",
+    // Names the path of the player's global.ini on disk — same class as diagnostics/setup.
+    "/api/can-embed", "/api/dev/note", "/api/localization",
   ]);
   const mutating = req.method !== "GET" && req.method !== "HEAD";
   const sensitive = mutating || SENSITIVE_GET.has(url);
@@ -1965,6 +2329,23 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     res.end(JSON.stringify({ missions: tracker.searchMissionTitles(q) }));
     return;
   }
+  // The widget's mission search: a brief for a contract you have NOT accepted, so someone can
+  // check what a job pays and drops without alt-tabbing out of the game. Keyed by TITLE because
+  // that is what a player can actually type; previewByTitle() owns what happens when a title
+  // covers several variants. Community payout is folded in so the brief ranks its money the same
+  // way the live panel does (observed beats the model).
+  if (url?.startsWith("/api/mission-preview") && req.method === "GET") {
+    const title = (new URL(req.url ?? "", "http://x").searchParams.get("title") || "").trim();
+    const preview = title ? tracker.previewByTitle(title) : null;
+    if (!preview) {
+      res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "not found" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ...preview, community: communityFor(preview.contractKey) }));
+    return;
+  }
   if (url === "/api/blueprint-detail" && req.method === "GET") {
     const q = new URL(req.url ?? "", "http://x").searchParams;
     const key = (q.get("item") || q.get("name") || "").trim();
@@ -2038,6 +2419,78 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     const body = key ? economy.composition(key) : { resources: economy.resources() };
     res.writeHead(key && !body ? 404 : 200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(body ?? { error: "not found" }));
+    return;
+  }
+
+  // ── Hauling reference data ────────────────────────────────────────────────
+  // Ship cargo grids: ?ship=<class or display name> for one hull, else the whole map.
+  // `?names=1` returns just class+name+SCU — the map is ~80 KB of grid geometry and a
+  // ship picker only wants a list to spell, the same reasoning as /api/commodities?names.
+  if (url === "/api/ships" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://x").searchParams;
+    const ship = q.get("ship")?.trim();
+    if (ship) {
+      const found = haulingData.ship(ship);
+      res.writeHead(found ? 200 : 404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(found ?? { error: "not found" }));
+      return;
+    }
+    if (q.get("names")) {
+      // Cargo-carrying spaceships only, biggest first — a ground vehicle with a 1 SCU
+      // cubby is not a hauling ship and only makes the list harder to get through.
+      const list = Object.values(haulingData.ships())
+        .filter((s) => s.isSpaceship && s.totalScu > 0)
+        .sort((a, b) => b.totalScu - a.totalScu)
+        // `autoLoad` rides along because the stowage view has to know BEFORE it draws anything:
+        // an open hauler's boxes are placed by the station's arm, so a stowage diagram for one
+        // describes work that does not exist. It is a property of the hull, so it belongs on the
+        // hull list rather than being re-derived per plan.
+        .map((s) => ({ className: s.className, displayName: s.displayName, totalScu: s.totalScu,
+                       autoLoad: canAutoLoad(s.className) }));
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ships: list }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ cellMetres: haulingData.cellMetres(), ships: haulingData.ships() }));
+    return;
+  }
+
+  // Contract cargo requirements: ?key=<contract key from CreateMarker> for one, else all.
+  // The box table always rides along — it is small and every consumer needs it.
+  if (url === "/api/hauling-orders" && req.method === "GET") {
+    const key = new URL(req.url ?? "", "http://x").searchParams.get("key")?.trim();
+    if (key) {
+      const found = haulingData.contract(key);
+      res.writeHead(found ? 200 : 404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(found ? { ...found, maxBoxScu: haulingData.maxBoxScu(key), boxes: haulingData.boxes() } : { error: "not found" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ boxes: haulingData.boxes(), contracts: haulingData.contracts() }));
+    return;
+  }
+
+  // Locations: ?code=<internal code as game.log writes it> resolves an alias (may match
+  // more than one place), ?uuid=<id> fetches one, else the whole map.
+  if (url === "/api/locations" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://x").searchParams;
+    const code = q.get("code")?.trim();
+    if (code) {
+      const hits = haulingData.byCode(code);
+      res.writeHead(hits.length ? 200 : 404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(hits.length ? { code, matches: hits } : { error: "not found" }));
+      return;
+    }
+    const uuid = q.get("uuid")?.trim();
+    if (uuid) {
+      const found = haulingData.location(uuid);
+      res.writeHead(found ? 200 : 404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(found ?? { error: "not found" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ locations: haulingData.locations() }));
     return;
   }
 
@@ -2128,6 +2581,28 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     seedTrackerFromLog();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // Re-read the player's language file. This is the Calibrate button: a language pack updating
+  // is not something we can detect from the outside (and not something we want to poll a 10 MB
+  // file for), so the user tells us. `force` skips the size+mtime short-circuit because an edit
+  // that happens to preserve both would otherwise appear to do nothing.
+  // 🔑 Also re-runs the seed, so blueprints already recorded under names we could not place get
+  // resolved retroactively — without that, Calibrate would only help FUTURE receipts and the
+  // player would still be staring at the empty pool they pressed it for.
+  if (url === "/api/localization/calibrate" && req.method === "POST") {
+    const info = tracker.setLogPath(config.logPath, true);
+    seedTrackerFromLog();
+    console.log(`[localization] recalibrated: ${info.source} (${info.entries} names)`);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, ...tracker.localizationStatus() }));
+    return;
+  }
+
+  if (url === "/api/localization" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(tracker.localizationStatus()));
     return;
   }
 
@@ -2410,6 +2885,231 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       : chat.leave(String(body.ch ?? ""));
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(out));
+    return;
+  }
+
+  // Hauling optimiser: live contract state + the "please track these" list.
+  if (url === "/hauling/events") {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+    res.write("\n");
+    haulingClients.add(res);
+    res.write(`data: ${JSON.stringify({ kind: "state", view: hauling.view() })}\n\n`);
+    req.on("close", () => haulingClients.delete(res));
+    return;
+  }
+  if (url === "/api/hauling" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, ...hauling.view() }));
+    return;
+  }
+  /**
+   * Candidate place names for the Hauling widget's naming box, best first.
+   *
+   * 🔴 TWO TIERS, AND THE ORDER IS THE WHOLE POINT.
+   *   1. Names the GAME has stated on a hauling Deliver line, most recent first. These are real
+   *      hauling stops by construction, and they cover what the dataset cannot: locations.json has
+   *      1,968 rows and none of them is "Riker Memorial Spaceport" — it carries `Area18` but not
+   *      the spaceport inside it, and the same is true of every city.
+   *   2. locations.json, filtered to types a ship can actually be sent to. That drops 816 asteroids
+   *      and the stars, systems and jump points — 1,968 rows down to 1,125 — because an asteroid is
+   *      never a cargo stop and offering it is offering a wrong answer.
+   *
+   * Matching is subsequence-fuzzy so "sams" finds "Samson & Son's Salvage Center", with a prefix
+   * and word-start bonus so exact typing still wins. Sub: "you just start typing it in and it'll
+   * just autocorrect it."
+   */
+  if (url.startsWith("/api/hauling/places") && req.method === "GET") {
+    const q = (new URL(req.url ?? "", "http://x").searchParams.get("q") ?? "").trim();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, places: haulingPlaceSuggestions(q) }));
+    return;
+  }
+  /**
+   * What to go looking for on the board, ranked, plus how far the next rung is.
+   *
+   * ⚠️ These figures are SOLO estimates — every contract scored as if it were the only one you
+   * took — and they are the right ones for the accept/skip decision. They are NOT comparable with
+   * the Route tab's numbers, which re-score the accepted set with real packing. See the header of
+   * hauling-advisor.ts.
+   */
+  if (url.startsWith("/api/hauling/advisor") && req.method === "GET") {
+    const qs = new URL(req.url ?? "", "http://x").searchParams;
+    const goal = qs.get("goal") === "money" ? "money" : "rep";
+    const ship = qs.get("ship") || config.haulingShip || shipName || null;
+    /* 🔑 THE FAMILIES ARE NOT ONE BOARD. Planetary 455, Hauling 161, Stellar 160, Interstellar 49,
+       Local 28 — and the player picks a board before they pick a contract, so ranking across all
+       of them at once answers a question nobody asked. Sub: "we also have planetary and stellar
+       hauling missions... we need a filter for that too."
+
+       ⚠️ Interstellar especially. It is a SEPARATE ECONOMY (see hauling-advisor's header): its
+       Rookie tier pays 50 OR 100 and its Master tier pays 0 or 200 where every core Master pays
+       8000 — money contracts with the rep switched off. Blending it into a reputation ranking
+       produces an order that is wrong for both. */
+    const wantType = qs.get("type") || "";
+    const types = new Map<string, number>();
+    for (const c of advisorContracts()) types.set(c.missionType ?? "Hauling", (types.get(c.missionType ?? "Hauling") ?? 0) + 1);
+    const standings = haulingStandings();
+    /* 🔴 GATED PER GIVER. rankContracts takes ONE standing, which is right for one faction and
+       wrong across four — so it is called with no standing at all (nothing locked) and the lock is
+       applied here, against the giver each contract actually belongs to. A contract from a faction
+       we have never worked for gates on 0, which is correct: that is exactly what the board shows. */
+    const ranked = rankContracts(advisorContracts(), { ship, goal, includeLocked: true, missionType: wantType || null })
+      .map((r) => {
+        const giver = r.contract.giver ?? "";
+        const standing = standings.get(giver) ?? 0;
+        const idx = r.contract.rank ? HAULING_LADDER.findIndex((x) => x.name === r.contract.rank) : -1;
+        // An unparseable title has no rung, so it cannot be gated — treat it as open, same as
+        // rankContracts does.
+        const locked = idx >= 0 && HAULING_LADDER[idx].minRep > standing;
+        return { ...r, locked, giver, standing };
+      })
+      .sort((a, b) => Number(a.locked) - Number(b.locked) || b.score - a.score
+        || a.effort.stops - b.effort.stops || a.effort.boxes - b.effort.boxes);
+    const regime = regimeFor(ship);
+    // The rate to quote the climb against: what the player is actually managing, else the plan's
+    // forecast. See haulingClimb — a modelled per-run time would be a floor, not an answer.
+    const rates = buildHaulingPlan(hauling.view(), haulingData, {
+      ship: config.haulingShip, detectedShip: shipName, pins: {}, hidden: [],
+      rewards: (k) => tracker.rewardsForKey(k), placeNames: config.haulingPlaces,
+    }).rates;
+    const perHour = rates.actual?.repPerHour ?? rates.projected?.repPerHour ?? null;
+    /**
+     * 🔴 COLLAPSE BY TITLE. The list is matched against the board by its TITLE — that is the whole
+     * premise of the module — and the datasets carry one key per COMMODITY, so a straight top-24
+     * opened with six byte-identical "Experienced Rank - Small Cargo Haul" rows. Six lines of a
+     * 560px panel saying one thing, and it reads like a bug.
+     *
+     * Keeps the best-scoring instance of each title (the list is already sorted, so the first one
+     * wins) and counts the rest, because "there are 6 of these on the board" is real information —
+     * it is how likely you are to actually find one.
+     *
+     * ⚠️ Box count is part of the identity, not just the title: same-titled contracts genuinely
+     * differ (4 boxes at 500 rep/box vs 6 at 333), and collapsing those would hide a 1.5x
+     * difference behind one row.
+     */
+    const byTitle = new Map<string, { row: typeof ranked[number]; variants: number }>();
+    for (const r of ranked) {
+      const k = `${r.contract.title}|${r.effort.boxes}`;
+      const had = byTitle.get(k);
+      if (had) had.variants++;
+      else byTitle.set(k, { row: r, variants: 1 });
+    }
+    /**
+     * 🔴 KEEP A WINDOW ON THE NEXT RUNG. `includeLocked` retains locked contracts but they sort
+     * last, so a plain top-24 of an unlocked-rich list cuts every one of them — which defeats the
+     * reason they are kept at all. Sub is sitting at a rank cusp deliberately waiting to see what
+     * changes when he crosses it; "what does the next rung open up" is the question, not a footnote.
+     *
+     * So the list is the best unlocked PLUS the best few locked, rather than the best N overall.
+     */
+    const collapsed = [...byTitle.values()];
+    const open = collapsed.filter((x) => !x.row.locked).slice(0, 20);
+    const soon = collapsed.filter((x) => x.row.locked).slice(0, 4);
+    const top = [...open, ...soon].map(({ row: r, variants }) => ({
+      variants,
+      key: r.contract.key,
+      title: r.contract.title,
+      giver: r.contract.giver,
+      missionType: r.contract.missionType,
+      rank: r.contract.rank,
+      size: r.contract.size,
+      direct: r.contract.shape.pickups === 1 && r.contract.shape.dropoffs === 1,
+      pickups: r.contract.shape.pickups,
+      dropoffs: r.contract.shape.dropoffs,
+      rep: r.contract.rep,
+      payout: r.contract.payout,
+      scuLo: r.contract.scuLo,
+      scuHi: r.contract.scuHi,
+      boxes: r.effort.boxes,
+      repRate: r.repRate,
+      moneyRate: r.moneyRate,
+      locked: r.locked,
+      standing: r.standing,
+    }));
+    // "How many of these to the next rung" — off the best UNLOCKED rep contract, which is what the
+    // player would actually be flying, and against ITS giver's standing.
+    const bestOpen = ranked.find((r) => !r.locked && r.contract.rep > 0) ?? null;
+    const runs = bestOpen
+      ? climbToNextRung(bestOpen.contract, bestOpen.standing, regime)
+      : null;
+    /* Every hauling faction the player has any standing with, best first — because "how far to the
+       next rank" is four different questions and the widget should not silently answer one. */
+    const climbs = [...standings.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([giver, sum]) => haulingClimb(giver, sum, perHour));
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({
+      ok: true, goal, regime,
+      type: wantType || null,
+      types: [...types.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })),
+      ladder: HAULING_LADDER,
+      contracts: top,
+      climbs,
+      /** Measured, from his own finished runs — see haulingRunMinutes. */
+      runMinutes: haulingRunMinutes(),
+      runsOfBest: runs && bestOpen
+        ? { key: bestOpen.contract.key, title: bestOpen.contract.title, giver: bestOpen.giver,
+            rep: bestOpen.contract.rep, runs: runs.runs, boxes: runs.boxes }
+        : null,
+    }));
+    return;
+  }
+  /** Name a place by hand — or clear it by sending an empty name. Keyed by the planner's location
+   *  id, which IS the coordinates (see PlanOptions.placeNames). */
+  if (url === "/api/hauling/place" && req.method === "POST") {
+    const body = (await readBody(req)) as Record<string, unknown>;
+    const id = typeof body.locationId === "string" ? body.locationId : "";
+    const name = typeof body.name === "string" ? body.name.trim().slice(0, 80) : "";
+    if (id) {
+      if (name) config.haulingPlaces[id] = name;
+      else delete config.haulingPlaces[id];
+      saveConfig();
+      hauling.emit("change");   // re-solve and push, so the route relabels immediately
+    }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: !!id }));
+    return;
+  }
+  // The solved plan: route order, box layout, and every load figure tagged with where it came
+  // from. Computed HERE rather than in the widget because the solver and the datasets are both
+  // server-side — the page only draws what this returns.
+  //
+  // 🔑 It takes the player's OVERRIDES (ship, objective, pinned tonnages), so it cannot ride on
+  // the SSE payload. The widget re-POSTs on every state change, which at this size is trivial.
+  if (url === "/api/hauling/plan" && (req.method === "GET" || req.method === "POST")) {
+    const body = req.method === "POST" ? ((await readBody(req)) as Record<string, unknown>) : {};
+    const pins: Record<string, number> = {};
+    for (const [id, v] of Object.entries((body.pins ?? {}) as Record<string, unknown>)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) pins[id] = Math.round(n);
+    }
+    const plan = buildHaulingPlan(hauling.view(), haulingData, {
+      // An absent `ship` falls back to the saved pick; an explicit "" clears it back to the log.
+      ship: typeof body.ship === "string" ? body.ship : config.haulingShip,
+      // …and if neither the pick nor the hauling log line names a hull, use the ship the app's
+      // own detector already resolved for the skin. See PlanOptions.detectedShip.
+      detectedShip: shipName,
+      objective: body.objective === "fewest-stops" ? "fewest-stops" : "auec-per-hour",
+      // Where the player says they are standing. See PlanOptions.startAt.
+      startAt: typeof body.startAt === "string" && body.startAt ? body.startAt : null,
+      // Contracts the player has set aside. See PlanOptions.hidden.
+      hidden: Array.isArray(body.hidden) ? body.hidden.filter((x): x is string => typeof x === "string") : [],
+      pins,
+      // What each contract pays and what standing it moves. The log states the payout only once a
+      // contract has completed and never states reputation at all, so both come off the mission
+      // dataset the blueprint tracker already has loaded.
+      rewards: (key) => tracker.rewardsForKey(key),
+      // Places the player named by hand. See ConfigShape.haulingPlaces — keyed by coordinates, so
+      // an answer given once holds for good.
+      placeNames: config.haulingPlaces,
+    });
+    // 🔑 LEARN EVERY NAME THE GAME STATES. locations.json does not carry city spaceports —
+    // "Riker Memorial Spaceport" is not in its 1,968 rows — so the dataset alone cannot offer the
+    // player the name they most often need. A name the game used on a hauling contract is by
+    // definition a real hauling stop, which makes this the better half of the suggestion list.
+    rememberSeenPlaces(Object.values(plan.locationNames));
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, ...plan }));
     return;
   }
 
@@ -2775,6 +3475,8 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     if (typeof body.scFeedTone === "string") config.scFeedTone = body.scFeedTone;
     if (typeof body.partyOpen === "boolean") config.partyOpen = body.partyOpen;
     if (typeof body.battagliaOpen === "boolean") config.battagliaOpen = body.battagliaOpen;
+    if (typeof body.haulingOpen === "boolean") config.haulingOpen = body.haulingOpen;
+    if (typeof body.haulingShip === "string") config.haulingShip = body.haulingShip.trim();
     if (typeof body.webViewOpen === "boolean") config.webViewOpen = body.webViewOpen;
     // http/https only — this string ends up as an iframe src.
     if (typeof body.webViewUrl === "string") {
@@ -2828,6 +3530,19 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     if (typeof body.bindingHotkey === "string") config.bindingHotkey = body.bindingHotkey.trim();
     if (typeof body.overlayHotkey === "string") config.overlayHotkey = body.overlayHotkey.trim();
     if (typeof body.miningHotkey === "string") config.miningHotkey = body.miningHotkey.trim();
+    // 🔑 MERGED per key, never replaced wholesale. A widget's own cog posts only its own entry
+    // (the sidecar merges field-by-field, which is what makes a partial POST safe), so replacing
+    // the map would let one widget's settings sheet delete every other widget's hotkey. Keys are
+    // taken from the body as-is; an unknown one is inert because the shell only registers keys
+    // that exist in its toggle table.
+    if (body.widgetHotkeys && typeof body.widgetHotkeys === "object" && !Array.isArray(body.widgetHotkeys)) {
+      const merged: Record<string, string> = { ...(config.widgetHotkeys ?? {}) };
+      for (const [k, v] of Object.entries(body.widgetHotkeys as Record<string, unknown>)) {
+        if (typeof v === "string") merged[k] = v.trim();
+        else if (v === null) delete merged[k]; // null = forget this widget entirely
+      }
+      config.widgetHotkeys = merged;
+    }
     if (typeof body.webViewHotkey === "string") config.webViewHotkey = body.webViewHotkey.trim();
     if (typeof body.notepadHotkey === "string") config.notepadHotkey = body.notepadHotkey.trim();
     // Clamped SERVER-side as well as in the input: a hand-edited config.json with 0 (or a string)
@@ -3229,9 +3944,38 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // window in the wrong place from a canvas laid out at the wrong scale. These are the numbers
       // that tell them apart, so they belong in the paste-able report rather than in a log file.
       geometry: overlayGeometry ?? "(the overlay has not reported yet — is it switched off?)",
+      // Which language the log is being read in, and what we could not place. An unmatched
+      // receipt is otherwise invisible — this is the difference between a user reporting "the
+      // app is broken" and reporting "my language pack renamed these five things".
+      localization: tracker.localizationStatus(),
       // Standing per giver plus the completion count behind it. A sum out of proportion to the
       // count is an accrual leak, and the count is the half that makes the sum interpretable.
       reputation: tracker.repDiagnostics(),
+      // The last few canvas/page errors (see /api/client-error) — the report used to carry only
+      // STATE, and "what recently went wrong" is the half a frozen-looking widget needs.
+      recentClientErrors: clientErrors.slice(),
+      // The tail of sidecar.log, so one Copy-diagnostics paste carries the history too — asking
+      // a user to dig %APPDATA% out of a Discord thread was the single biggest support friction.
+      // Secrets are redacted BY VALUE before anything leaves this process: the report's header
+      // promises "no passwords or tokens" and the tail must not be the exception. mtime rides
+      // along because a dev-run sidecar logs to a terminal, not this file — a stale tail must be
+      // recognisable as stale rather than read as "the app logged nothing".
+      logTail: (() => {
+        try {
+          const p = join(userDir, "sidecar.log");
+          if (!existsSync(p)) return { lines: [], note: "no sidecar.log — dev runs log to the terminal instead" };
+          const st = statSync(p);
+          let text = readFileSync(p, "utf8");
+          for (const secret of [config.syncToken, config.twitchUserToken, config.twitchRefreshToken]) {
+            if (secret && secret.length >= 8) text = text.split(secret).join("[redacted]");
+          }
+          const all = text.split(/\r?\n/).filter((l) => l.trim().length);
+          return {
+            modifiedMinutesAgo: Math.round((Date.now() - st.mtimeMs) / 60000),
+            lines: all.slice(-60),
+          };
+        } catch { return { lines: [], note: "sidecar.log unreadable" }; }
+      })(),
     }));
     return;
   }
@@ -3344,6 +4088,34 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     return;
   }
 
+  // The canvas forwards its window.onerror / unhandledrejection here — the only durable place.
+  // POST, so the standard mutating gate (loopback + Origin) already applies; nothing on the LAN
+  // can write to this machine's log through it.
+  if (url === "/api/client-error" && req.method === "POST") {
+    const now = Date.now();
+    if (now - clientErrWindowStart > 60_000) { clientErrWindowStart = now; clientErrWindowCount = 0; }
+    if (++clientErrWindowCount > CLIENT_ERR_PER_MIN) {
+      res.writeHead(429, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "too many error reports — the first ones are what matter" }));
+      return;
+    }
+    const body = await readBody(req);
+    const msg = String(body?.msg ?? "").slice(0, 300);
+    if (!msg) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "msg is required" }));
+      return;
+    }
+    const from = String(body?.source ?? "page").slice(0, 40);
+    const stack = String(body?.stack ?? "").slice(0, 1200);
+    clientErrors.push({ at: new Date().toISOString(), from, msg });
+    while (clientErrors.length > CLIENT_ERR_KEEP) clientErrors.shift();
+    console.error(`[client-error] [${from}] ${msg}${stack ? "\n" + stack : ""}`);
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   if (url === "/api/dev/note" && req.method === "GET") {
     if (process.env.SC_DEV === "1" && fromThisMachine(req)) {
       console.log(`[overlay] ${new URL(req.url ?? "/", "http://localhost").searchParams.get("msg") ?? ""}`);
@@ -3382,7 +4154,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       const lines = replayLines(s, replayMissionId(++replaySeq), blueprint, now);
       for (const line of lines) {
         const ev = parseMissionEvent(parseLine(line));
-        if (ev) { tracker.apply(ev); party.apply(ev); }
+        if (ev) { tracker.apply(ev); party.apply(ev); hauling.apply(ev); }
       }
       // Force the tiles for this simulated run. The receipt above genuinely happened, but it
       // cannot move an already-owned blueprint's unlock date into the window the report reads
@@ -3395,6 +4167,48 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
         outcome: s.outcome,
         note: s.drop && !blueprint ? "you own nothing in this mission's pool, so it ran without a drop" : null,
       }));
+      return;
+    }
+  }
+
+  // Hauling scenarios — the same idea as /api/dev/replay, but feeding the hauling tracker
+  // instead of the report card, so the widget can be built and reviewed without flying a
+  // contract. Separate route because it takes a different scenario shape entirely (legs,
+  // positions, manifests) and returns the resulting view rather than a completion.
+  if (url === "/api/dev/hauling-replay") {
+    if (process.env.SC_DEV !== "1" || !fromThisMachine(req)) {
+      res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "not available" }));
+      return;
+    }
+    if (req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ scenarios: HAUL_SCENARIOS }));
+      return;
+    }
+    if (req.method === "POST") {
+      const body = await readBody(req);
+      const wanted = (body as { scenario?: string })?.scenario;
+      // No scenario named = run the whole set, which is the useful default: a real player holds
+      // several contracts at once, and every layout question (do the cards stack, does the
+      // please-track prompt crowd out the route list) only appears with more than one.
+      const chosen = wanted ? HAUL_SCENARIOS.filter((x) => x.id === wanted) : HAUL_SCENARIOS;
+      if (!chosen.length) {
+        res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: "unknown scenario", known: HAUL_SCENARIOS.map((x) => x.id) }));
+        return;
+      }
+      const now = Date.now();
+      let count = 0;
+      for (const s of chosen) {
+        for (const line of haulReplayLines(s, replayMissionId(++replaySeq), now)) {
+          const ev = parseMissionEvent(parseLine(line));
+          if (ev) { hauling.apply(ev); count++; }
+        }
+      }
+      console.log(`[dev-replay] hauling: ${chosen.map((s) => s.id).join(", ")} — ${count} events`);
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ ok: true, scenarios: chosen.map((s) => s.id), events: count, view: hauling.view() }));
       return;
     }
   }

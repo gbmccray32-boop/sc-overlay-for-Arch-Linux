@@ -1,0 +1,2091 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hauling</title>
+<script>/* AMD compatibility: apply the lite skin BEFORE first paint (no flash) when the shell asks for it. */
+  if (new URLSearchParams(location.search).has("lite")) document.documentElement.classList.add("amd-lite");
+  /* Apply ?theme= before first paint (no flash). The parent canvas keeps this in sync live (same-origin). */
+  { const q = new URLSearchParams(location.search); const r = document.documentElement;
+    const t = q.get("theme"); if (t) r.setAttribute("data-theme", t);
+    /* ?bg=RRGGBB paints an opaque backdrop, for embedding in a THIRD-PARTY host (GameGlass
+       and friends). Hex digits only, and applied through CSSOM — a value that is not a colour
+       is rejected by the engine rather than landing anywhere it could be read as markup. */
+    const b = q.get("bg"); if (b && /^[0-9a-f]{3,8}$/i.test(b)) { r.style.setProperty("--wbg", "#" + b); r.dataset.bg = ""; } }</script>
+<link rel="stylesheet" href="/widget-theme.css" />
+<style>
+  /* Hauling optimiser: what order to fly the accepted contracts, and where the boxes go on the
+     ship. Data comes from /api/hauling/plan (see src/hauling-plan.ts), driven by the /hauling/events
+     SSE channel. Theme tokens come from the shared /widget-theme.css. */
+  * { box-sizing: border-box; }
+  * { scrollbar-width: thin; scrollbar-color: rgba(var(--accent-rgb), 0.28) transparent; }
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { font-family: var(--sans); color: var(--cyan-text); overflow: hidden; }
+
+  #panel {
+    display: flex; flex-direction: column;
+    width: 420px; height: 560px; margin: 20px auto;
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    position: relative;
+  }
+  html.amd-lite #panel { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  body.embedded { overflow: visible; background: transparent; }
+  body.embedded #panel { width: 100%; height: 100%; margin: 0; }
+
+  .head { min-height: 40px; }
+  .hbtn { font-family: var(--sans); font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+    color: var(--cyan-bright); background: rgba(var(--accent-rgb), 0.14); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 7px; cursor: pointer; white-space: nowrap; }
+  .hbtn:hover { background: rgba(var(--accent-rgb), 0.24); border-color: var(--cyan); }
+  .hbtn.on { background: rgba(var(--accent-rgb), 0.3); border-color: var(--cyan); }
+  .tabs { display: flex; gap: 4px; margin-left: auto; }
+
+  /* ── The ship, and how much of it is used ─────────────────────────────────
+     The capacity bar is per GRID, not one pool: a C2 is 8x15x4 plus 6x9x4, and a box that fits
+     the first may not fit the second. Segments are sized by each grid's share of the hull. */
+  .summary { flex: none; padding: 8px 12px 9px; border-bottom: 1px solid var(--divider);
+    position: relative; z-index: 4; }
+  .shiprow { display: flex; align-items: center; gap: 6px; }
+  /* Both pickers share one rule. #startPick was added without it and rendered as a bare white box
+     with white text in it — unreadable, and Sub could not tell what the control even was. */
+  #shipPick, #startPick { flex: 1; min-width: 0; font-family: var(--sans); font-size: 11px; color: var(--cyan-bright);
+    background: var(--menu-bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 5px; }
+  #startPick { margin-top: 5px; }
+  /* The dropdown's own list is drawn by the OS, which does not inherit the control's colours —
+     without this the options render dark-on-dark (or white-on-white) once it is open. */
+  #shipPick option, #startPick option { background: var(--menu-bg); color: var(--cyan-bright); }
+  .src { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--faint); }
+  .caps { display: flex; gap: 3px; margin-top: 7px; height: 13px; }
+  .cap { position: relative; border-radius: 4px; background: rgba(0, 0, 0, 0.34);
+    border: 1px solid var(--divider); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45); overflow: hidden; }
+  .cap i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--cyan), var(--gold)); }
+  .cap.over i { background: var(--red); }
+  .cap b { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--mono);
+    font-size: 8.5px; font-weight: 700; color: var(--cyan-text); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9); }
+  .facts { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px;
+    font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); }
+  .facts .v { color: var(--gold); font-weight: 600; }
+  .facts .bad { color: var(--red); }
+  /* A forecast, not a reading. Same rule as everywhere else on this panel: a number the app worked
+     out is never dressed the same as one it was told. */
+  .facts .est, .ratebar .est { color: var(--cyan-dim); font-style: italic; }
+
+  /* ── What the run earns, per hour ─────────────────────────────────────────
+     Its own strip, ruled off from the board facts above it, because it answers a different
+     question. "contracts 3" is a property of what you are holding; "72k aUEC/h" is a property of
+     how long the work is taking you. Sub asked for the separation so the second is not read as the
+     first — the rate is per hour of RUN, not per contract. */
+  .ratebar { display: flex; align-items: baseline; gap: 10px; margin-top: 7px; padding-top: 6px;
+    border-top: 1px solid var(--divider); }
+  .ratebar .k { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--faint); }
+  .ratebar .fig { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--green); }
+  .ratebar .fig.est { color: var(--cyan-dim); font-weight: 600; }
+  .ratebar .rep { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--gold); }
+  .ratebar .rep.est { color: var(--cyan-dim); font-weight: 600; }
+  .ratebar .basis { margin-left: auto; font-size: 9px; color: var(--faint); white-space: nowrap; }
+
+  /* ── 🔴 The load checklist ────────────────────────────────────────────────
+     Deliberately the loudest thing on the panel: 57% of contracts in the shipped data give a SCU
+     RANGE rather than a number, and the only things that pin the real figure are the game's own
+     Deliver line and the player typing it in.
+     ⚠️ It used to be headed "TRACK THESE IN MOBIGLAS" unconditionally, on the belief that the
+     Deliver line was tracking-gated. It is not — it fires on objective ASSIGNMENT and re-tracking
+     never replays it — so for an already-tracked contract that heading was an instruction the
+     game would not honour. The heading and the per-row state are both computed now; see
+     renderTrack(). */
+  .track { flex: none; border-bottom: 1px solid var(--divider); position: relative; z-index: 4;
+    background: rgba(var(--value-rgb), 0.07); }
+  .track .th { display: flex; align-items: baseline; gap: 6px; padding: 8px 12px 3px; }
+  .track .th .k { font-size: 9px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--gold); }
+  .track .th .n { font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); }
+  .track .why { padding: 0 12px 6px; font-size: 10px; line-height: 1.5; color: var(--cyan-dim); }
+  .track .list { max-height: 132px; overflow-y: auto; }
+  /* Collapsed = answered. Quietened rather than removed: the heading still reports what the plan
+     is using, and the whole strip is the click target that brings the type-in boxes back. */
+  .track.done { opacity: 0.72; }
+  .track .th { cursor: pointer; }
+  .track.done .th .k { color: var(--cyan-dim); }
+  .trow { display: flex; align-items: center; gap: 7px; padding: 4px 12px; }
+  .trow .t { flex: 1; min-width: 0; font-size: 11px; color: var(--cyan-text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .trow .rng { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--gold); }
+  .trow input { width: 52px; font-family: var(--mono); font-size: 10.5px; text-align: right;
+    color: var(--cyan-bright); background: var(--menu-bg); border: 1px solid var(--divider);
+    border-radius: 5px; padding: 2px 4px; }
+  .trow input:focus { outline: none; border-color: var(--cyan); }
+
+  /* ── Naming a place ───────────────────────────────────────────────────────
+     Reuses .track's frame so it reads as the same kind of question as the load checklist, tinted
+     cyan rather than gold because it is not a warning — nothing is wrong, the game simply never
+     said where this is. */
+  /* 🔴 THE SUGGESTION LIST MUST NOT BE CLIPPED. It inherited `.track .list`'s `overflow-y: auto`,
+     which is right for the tonnage checklist (many rows, capped height) and fatal here: an
+     absolutely-positioned dropdown inside a scrolling box is cut off at the box's edge, which is
+     exactly what Sub saw. So this section does NOT scroll — it has at most a handful of rows — and
+     the whole strip is raised above #body so the list hangs over the route as far as it likes.
+     Sub: "it should just hang as low as it wants to go." */
+  .track.places { background: rgba(var(--accent-rgb), 0.06); overflow: visible; z-index: 6; }
+  .track.places .list { max-height: none; overflow: visible; }
+  .track.places .th .k { color: var(--cyan-bright); }
+  .prow { padding: 4px 12px 5px; position: relative; }
+  .prow .top { display: flex; align-items: baseline; gap: 6px; }
+  .prow .site { flex: none; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+  .prow .role { flex: 1; min-width: 0; font-size: 10px; color: var(--cyan-dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prow input { width: 100%; margin-top: 3px; font-family: var(--sans); font-size: 11px;
+    color: var(--cyan-bright); background: var(--menu-bg); border: 1px solid var(--divider);
+    border-radius: 5px; padding: 3px 6px; }
+  .prow input:focus { outline: none; border-color: var(--cyan); }
+  /* The suggestions. Absolutely positioned so opening the list never reflows the route underneath
+     it — a list that pushes the page down moves the row you are aiming at. */
+  .psug { position: absolute; left: 12px; right: 12px; top: 100%; z-index: 9;
+    background: var(--menu-bg); border: 1px solid var(--cyan); border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55); overflow: hidden; }
+  .psug div { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; cursor: pointer;
+    font-size: 11px; color: var(--cyan-text); }
+  .psug div:hover, .psug div.on { background: rgba(var(--accent-rgb), 0.22); }
+  .psug .h { margin-left: auto; font-size: 9px; color: var(--faint); white-space: nowrap; }
+  /* A name the GAME has used before. It outranks the 1,125 dataset rows for a reason worth
+     showing: it is known to be a real hauling stop. */
+  .psug .seen { color: var(--green); }
+
+  #body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; z-index: 4; }
+  .sec { display: flex; align-items: baseline; gap: 6px; padding: 9px 12px 5px;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
+  .sec .n { font-weight: 500; letter-spacing: 0.04em; text-transform: none; font-family: var(--mono); }
+  .empty { padding: 26px 16px; text-align: center; color: var(--faint); font-size: 12px; line-height: 1.7; }
+  .note { padding: 5px 12px; font-size: 10px; line-height: 1.5; color: var(--amber); }
+
+  /* ── Route ───────────────────────────────────────────────────────────────── */
+  .stop { display: flex; gap: 8px; padding: 6px 12px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
+  /* Done: collected, not yet delivered. Dimmed so it reads as history, not as an instruction —
+     but kept in the numbering, because it IS a step of this contract and hiding it made the list
+     open mid-sentence. */
+  .stop.done { opacity: 0.45; }
+  .stop.done .num { border-color: var(--divider); color: var(--faint); }
+  .stop .num { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px;
+    font-family: var(--mono); font-size: 10px; font-weight: 700; border: 1px solid var(--divider);
+    color: var(--cyan-dim); background: rgba(0, 0, 0, 0.22); }
+  .stop.pickup .num { border-color: var(--cyan); color: var(--cyan-bright); }
+  .stop.dropoff .num { border-color: var(--gold); color: var(--gold); }
+  .stop.same .num { border-style: dashed; }
+  .stop .mid { flex: 1; min-width: 0; }
+  .stop .nm { font-size: 12px; font-weight: 600; color: var(--cyan-bright);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stop .acts { font-size: 10px; color: var(--cyan-dim); line-height: 1.5; margin-top: 1px; }
+  .stop .acts .c { color: var(--cyan-text); }
+  .stop .rt { flex: none; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+  /* 🔴 THE FIGURE ON A STEP IS THE FIGURE THAT STEP MOVES. This was `loadAfterScu` — what is in the
+     hold on LEAVING — so the final drop-off of a run always read "0 SCU", which is true and useless:
+     Sub read a step headed DROP OFF next to a zero and reasonably asked what it thought he was
+     dropping off. A numbered instruction states its own quantity; where the hold ends up is a
+     separate fact and now rides underneath in the faint line. */
+  .stop .rt .ld { color: var(--gold); }
+  .stop .rt .hold { color: var(--faint); font-size: 9px; }
+
+  /* ── Contract cards ──────────────────────────────────────────────────────── */
+  .card { padding: 6px 12px 7px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
+  /* The turn-around, parked in the picture's bottom-left corner. Quiet until hovered — it is a
+     control, not part of the diagram — and tinted gold while turned so the state is visible
+     without reading the door label. */
+  /* A foldable section header. The caret is the affordance; the whole strip is the target. */
+  .sec.fold { cursor: pointer; user-select: none; }
+  .sec.fold .caret { flex: none; margin-right: 4px; color: var(--faint); font-size: 9px; }
+  .sec.fold:hover .caret { color: var(--cyan-bright); }
+  /* The "why" reduced to one glyph. The reason stays reachable on hover; it stops eating four
+     lines of a small overlay on every render. */
+  .whyinfo { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%;
+    border: 1px solid rgba(var(--accent-rgb), 0.35); color: var(--cyan-dim); font-size: 9px;
+    cursor: help; }
+  .whyinfo:hover { color: var(--cyan-bright); border-color: var(--cyan); }
+  .isowrap { position: relative; }
+  .spincorner { position: absolute; left: 4px; bottom: 4px; width: 22px; height: 22px; padding: 0;
+    display: grid; place-items: center; border-radius: 6px; cursor: pointer;
+    border: 1px solid rgba(var(--accent-rgb), 0.28); background: rgba(0, 0, 0, 0.35);
+    color: var(--cyan-dim); font-size: 13px; line-height: 1; opacity: 0.55; transition: opacity .12s; }
+  .spincorner:hover { opacity: 1; color: var(--cyan-bright); border-color: var(--cyan); }
+  .spincorner.on { opacity: 1; color: var(--gold); border-color: var(--gold); }
+  .card.done { opacity: 0.6; }
+  /* Set aside: dimmed and struck through the title, so it reads as "not part of this run" rather
+     than "finished". Still listed — the player has to be able to put it back. */
+  .card.setaside { opacity: 0.45; }
+  .card.setaside .t { text-decoration: line-through; }
+  .card .cardx { flex: none; margin-left: 6px; width: 18px; height: 18px; line-height: 1; padding: 0;
+    border: 1px solid rgba(var(--accent-rgb), 0.3); border-radius: 5px; background: transparent;
+    color: var(--faint); font-size: 11px; cursor: pointer; }
+  .card .cardx:hover { color: var(--red); border-color: var(--red); }
+  .card.setaside .cardx:hover { color: var(--cyan-bright); border-color: var(--cyan); }
+  .card .top { display: flex; align-items: baseline; gap: 6px; }
+  .card .t { flex: 1; min-width: 0; font-size: 11.5px; color: var(--cyan-text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .amt { flex: none; font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--gold); }
+  /* 🔴 PROVENANCE IS A COLOUR, NOT A PILL. Every load figure and every box count still has to say
+     where it came from — that has been true since the first version — but it was saying it with a
+     word in a bordered chip next to the number, and a card carried up to three of them. Sub: "let's
+     just change the colour of the SCU count rather than having that pill there." He is right: the
+     number IS the thing being qualified, so qualify the number. One key at the foot of the list
+     carries the wording that used to be repeated on every row.
+     ⚠️ The tooltips move WITH the colour — a hue nobody can name is not provenance. */
+  .card .amt.src-log, .card .amt.src-manifest { color: var(--green); }
+  .card .amt.src-pinned { color: var(--cyan-bright); }
+  .card .amt.src-dataset { color: var(--cyan-dim); }
+  .card .amt.src-range { color: var(--gold); }
+  .card .amt.src-unknown { color: var(--red); }
+  .card .sub { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px;
+    font-size: 9.5px; color: var(--faint); }
+  .card .chips { font-family: var(--mono); font-size: 10px; color: var(--cyan-dim); margin-top: 2px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  /* A box size, and how many. The SIZE is the identity — a box has one shape — so it reads large
+     and the count rides beside it as a multiplier. Written as a run of text ("12 × 8") it was read
+     as a dimension, and four of them in a row was the busiest thing on the card. */
+  .card .boxpill { display: inline-flex; align-items: baseline; gap: 3px; padding: 1px 5px;
+    border: 1px solid rgba(var(--accent-rgb), 0.28); border-radius: 999px;
+    background: rgba(var(--accent-rgb), 0.06); white-space: nowrap; }
+  .card .boxpill b { font-weight: 700; color: var(--cyan-bright); font-size: 10px; }
+  .card .boxpill i { font-style: normal; font-size: 9px; color: var(--faint); }
+  /* Same rule as the SCU figure: gold = this split was worked out here (the game never logs a box
+     breakdown for a cargo haul), green = the game enumerated the boxes itself. Replaces the
+     "modelled" badge, which Sub called noise — the counts have been right every time he checked. */
+  .card .boxpill.src-partition { border-color: rgba(var(--value-rgb), 0.45); background: rgba(var(--value-rgb), 0.08); }
+  .card .boxpill.src-partition b { color: var(--gold); }
+  .card .boxpill.src-manifest { border-color: rgba(46, 230, 160, 0.4); background: rgba(46, 230, 160, 0.08); }
+  .card .boxpill.src-manifest b { color: var(--green); }
+  .card .boxcap { font-size: 9px; color: var(--faint); white-space: nowrap; }
+  /* The key. One per list, at the foot, because the colours are only decodable together. */
+  .srckey { display: flex; flex-wrap: wrap; gap: 3px 10px; padding: 6px 12px 10px;
+    font-size: 9px; color: var(--faint); }
+  .srckey span { display: inline-flex; align-items: center; gap: 4px; }
+  .srckey i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  /* Now only the load-checklist's row state. The provenance badge that used to share this class is
+     gone — a colour on the figure itself says the same thing without a chip per row (.amt.src-*). */
+  .badge { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    border-radius: 4px; padding: 1px 4px; border: 1px solid var(--divider); color: var(--faint); }
+  .badge.pinned { color: var(--cyan-bright); border-color: var(--border); }
+  /* The three states of the track prompt. Only `todo` is an instruction — `waiting` is the state
+     where the player has already done everything tracking can do, and colouring it like an action
+     is how a prompt starts lying. */
+  .badge.todo { color: var(--gold); border-color: rgba(var(--value-rgb), 0.45); }
+  .badge.waiting { color: var(--cyan-dim); }
+  /* Rank tier + size band, straight off the contract title — how the row is matched to mobiGlas. */
+  .trow .bd { flex: none; font-size: 9px; letter-spacing: 0.04em; color: var(--faint);
+    white-space: nowrap; }
+  .tick { flex: none; font-size: 10px; color: var(--green); }
+
+  /* ── Stow ─────────────────────────────────────────────────────────────────
+     The load order first, the picture second. 🔴 The freight elevator UI does not name missions,
+     so "load this one first" is only actionable if it comes with a BOX SIGNATURE — the commodity
+     plus the exact split — which is how the player finds the right lift among four. */
+  .gridwrap { padding: 4px 12px 12px; }
+
+  .steps { padding: 0 12px 4px; }
+  .step { display: flex; gap: 8px; padding: 7px 8px; margin-bottom: 5px; border-radius: 8px;
+    border: 1px solid var(--divider); background: rgba(0, 0, 0, 0.2); cursor: pointer;
+    border-left-width: 3px; }
+  .step:hover { border-color: var(--border); }
+  .step.on { background: rgba(var(--accent-rgb), 0.11); border-color: var(--cyan); }
+  .step .ord { flex: none; width: 20px; height: 20px; display: grid; place-items: center;
+    border-radius: 50%; font-family: var(--mono); font-size: 10px; font-weight: 700;
+    color: #04121a; }
+  .step .mid { flex: 1; min-width: 0; }
+  /* The signature. Deliberately the biggest text in the panel — it is the thing the player reads
+     off the elevator and matches by eye. */
+  .step .sig { font-size: 12px; font-weight: 600; color: var(--cyan-bright); line-height: 1.35; }
+  .step .sig .what { color: var(--gold); }
+  .step .meta { font-family: var(--mono); font-size: 9.5px; color: var(--faint); margin-top: 2px; }
+  .step .drops { margin-top: 4px; }
+  .drop { display: flex; align-items: baseline; gap: 6px; font-size: 10px; color: var(--cyan-dim);
+    line-height: 1.6; }
+  .drop i { flex: none; width: 8px; height: 8px; border-radius: 2px; display: inline-block;
+    transform: translateY(1px); }
+  .drop .d { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: var(--cyan-text); }
+  .drop .b { flex: none; font-family: var(--mono); color: var(--cyan-dim); }
+  .drop .deep { flex: none; font-size: 8.5px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--faint); }
+  /* ⚠️ Two missions with the same commodity AND the same split are indistinguishable at the
+     elevator. Saying so beats issuing an instruction the player cannot follow. */
+  .step.clash { border-left-color: var(--amber) !important; }
+  .step .clash-why { font-size: 9.5px; color: var(--amber); margin-top: 3px; line-height: 1.45; }
+
+  .glabel { display: flex; align-items: baseline; gap: 6px; font-size: 9.5px; color: var(--faint);
+    font-family: var(--mono); margin: 8px 0 2px; }
+  .glabel .gn { font-family: var(--sans); font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--cyan-dim); font-size: 9px; }
+  .glabel .here { color: var(--cyan-bright); }
+
+  /* The isometric drawing. Everything inside is in CELL units — the viewBox does the scaling — so
+     one cell is one SCU at every zoom and two grids on the same page are at the same true scale. */
+  .isowrap { background: rgba(0, 0, 0, 0.26); border: 1px solid var(--divider); border-radius: 6px;
+    padding: 4px; }
+  /* 🔑 No max-height. Height follows width, and the width is set per grid so every hold on the
+     ship shares one scale (see renderGrids) — a height cap would letterbox one drawing and quietly
+     break that. .isowrap centres whatever it is given. */
+  svg.iso { display: block; width: 100%; height: auto; overflow: visible; margin: 0 auto; }
+  svg.iso .iso-floor { fill: rgba(var(--accent-rgb), 0.07); stroke: rgba(var(--accent-rgb), 0.3);
+    stroke-width: 0.04; }
+  svg.iso .iso-wall { fill: rgba(var(--accent-rgb), 0.045); stroke: rgba(var(--accent-rgb), 0.22);
+    stroke-width: 0.04; }
+  svg.iso .iso-wall-b { fill: rgba(var(--accent-rgb), 0.02); }
+  svg.iso .iso-rule { stroke: rgba(var(--accent-rgb), 0.16); stroke-width: 0.025; }
+  /* The ramp edge. Gold and heavier than a cell rule, because "which way am I looking" has to be
+     answerable at a glance — especially once the view can be spun. */
+  svg.iso .iso-door-bar { fill: none; stroke: var(--gold); stroke-width: 0.09; stroke-linecap: round; }
+  svg.iso .iso-door-label { fill: var(--gold); font-family: var(--sans); font-size: 0.5px;
+    font-weight: 700; letter-spacing: 0.06px; }
+  svg.iso .iso-face { stroke: rgba(0, 0, 0, 0.55); stroke-width: 0.03; stroke-linejoin: round; }
+  /* A ghosted lift must still read as CARGO IS HERE — the hold is not empty just because you are
+     looking at a different lift — while never competing with the one you are being told to load. */
+  svg.iso .iso-box.ghost { opacity: 0.45; }
+  svg.iso .iso-num { fill: #04121a; font-family: var(--mono); font-weight: 700;
+    text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 3px 10px; margin-top: 8px; font-size: 9.5px; color: var(--cyan-dim); }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+  /* ── The advisor ──────────────────────────────────────────────────────────
+     "What should I go looking for?" — a ranked list of contract TYPES, matched against the board
+     by its TITLE, because the title IS the model: "<Rung> Rank - Direct <Size> Cargo Haul". */
+  .stand { padding: 8px 12px; border-bottom: 1px solid var(--divider); }
+  .stand .row { display: flex; align-items: center; gap: 6px; }
+  .stand select, .stand input { font-family: var(--sans); font-size: 11px; color: var(--cyan-bright);
+    background: var(--menu-bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 5px; }
+  .stand select { flex: 1; min-width: 0; }
+  .stand select option { background: var(--menu-bg); color: var(--cyan-bright); }
+  .stand input { width: 74px; font-family: var(--mono); text-align: right; }
+  .stand input:focus, .stand select:focus { outline: none; border-color: var(--cyan); }
+  /* The headline the whole tab exists for. */
+  .climb { margin-top: 7px; font-size: 11px; line-height: 1.5; color: var(--cyan-text); }
+  .climb .big { font-family: var(--mono); font-size: 15px; font-weight: 700; color: var(--gold); }
+  .climb .sub { display: block; margin-top: 2px; font-size: 9.5px; color: var(--faint); }
+  .climb .none { color: var(--amber); }
+
+  .arow { display: flex; gap: 8px; padding: 6px 12px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.06); }
+  /* Locked = above your rung, so it is not on your board at all. Kept in the list because seeing
+     what the next rank unlocks is half the reason to grind toward it. */
+  .arow.locked { opacity: 0.45; }
+  .arow .n { flex: none; width: 18px; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+  .arow .mid { flex: 1; min-width: 0; }
+  .arow .t { font-size: 11.5px; color: var(--cyan-bright); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .arow.locked .t { color: var(--cyan-dim); }
+  .arow .m { font-family: var(--mono); font-size: 9.5px; color: var(--faint); margin-top: 1px; }
+  .arow .r { flex: none; text-align: right; }
+  .arow .r .v { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--gold); }
+  .arow .r .u { display: block; font-size: 8.5px; color: var(--faint); }
+  .lockpill { font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--amber); }
+  /* The rep/aUEC switch, in the open where it can be flipped back and forth. Sized down from .hbtn
+     because it rides inside a section heading, not a toolbar. */
+  .goalseg { display: inline-flex; gap: 3px; margin-left: 4px; }
+  .goalseg .hbtn { padding: 1px 6px; font-size: 9px; letter-spacing: 0.02em; text-transform: none; }
+  /* The family filter — also in the open, for the same reason as the goal switch. Wraps, because a
+     420px panel cannot hold five of these on one line. */
+  .typebar { display: flex; flex-wrap: wrap; gap: 3px; padding: 7px 12px 2px;
+    border-bottom: 1px solid var(--divider); }
+  .typebar .hbtn { padding: 2px 7px; font-size: 9px; letter-spacing: 0.02em; text-transform: none; }
+
+  /* ⛔ Open haulers load themselves. The panel that replaces the whole view for them. */
+  .noplan { padding: 30px 20px; text-align: center; }
+  .noplan .k { font-size: 13px; font-weight: 600; color: var(--gold); }
+  .noplan .why { margin-top: 8px; font-size: 11px; line-height: 1.65; color: var(--cyan-dim); }
+</style>
+</head>
+<body>
+  <div id="panel" class="wpanel">
+    <div class="head">
+      <span class="dia"></span>
+      <span class="h-title">Hauling</span>
+      <span class="tabs">
+        <button id="tabRoute" class="hbtn on" type="button" title="What order to fly the stops">Route</button>
+        <button id="tabLayout" class="hbtn" type="button" title="What to load first, and where it goes on your ship">Stow</button>
+        <button id="tabAdvisor" class="hbtn" type="button" title="Which contracts to go looking for, and how far the next rank is">Rank</button>
+      </span>
+    </div>
+
+    <div class="summary">
+      <div class="shiprow">
+        <select id="shipPick" title="The ship you are flying. The log names it when it can; pick it here when it cannot."></select>
+        <span class="src" id="shipSrc"></span>
+      </div>
+      <!-- 🔴 Where the player is standing. The game does not log it, and without it the optimiser
+           has no origin: on mirrored contracts (A→B and B→A) it opens wherever it likes, which
+           sent Sub to Baijini EMPTY while the load he wanted was at his feet. -->
+      <div class="shiprow">
+        <select id="startPick" title="Where you are right now. The route starts here, so it stops sending you to the far end empty."></select>
+      </div>
+      <div class="caps" id="caps"></div>
+      <div class="facts" id="facts"></div>
+      <!-- 🔴 THE RATES GET THEIR OWN STRIP. Sitting in .facts they read as another property of the
+           board, like "contracts 3" — and they are not: they are a rate against TIME, and the time
+           is the run you are actually flying, not the contracts you happen to hold. Sub asked for
+           them separated so that is understood. -->
+      <div class="ratebar" id="ratebar" style="display:none"></div>
+    </div>
+
+    <!-- 🔴 Heading and explanation are BOTH filled from the live state — see renderTrack(). A
+         fixed "TRACK THESE IN MOBIGLAS" is what shipped a prompt that could not come true. -->
+    <div class="track" id="track" style="display:none">
+      <!-- 🔑 The ⓘ sits IN the heading, not on a line of its own. It had its own .why row, which
+           cost a whole line of a 560px panel to render one glyph out of line with the words it
+           explains. Sub: "that's just wasting UI space." -->
+      <div class="th" id="trackHead">
+        <span class="k" id="trackK"></span><span class="whyinfo" id="trackInfo">ⓘ</span><span class="n" id="trackN"></span>
+      </div>
+      <div class="list" id="trackList"></div>
+    </div>
+
+    <!-- 🔴 Places the game never named. Same shape and same keyboard handling as the load
+         checklist above — Sub asked for it as "you know how we have to put in the totals", which
+         is exactly the right instinct: it is the same kind of question and belongs in the same
+         kind of row. Only a TRACKED drop-off is ever named by the game, so pickups are almost
+         always anonymous and this is the only way they ever get a name. -->
+    <div class="track places" id="places" style="display:none">
+      <div class="th">
+        <span class="k">Name these places</span><span class="whyinfo" id="placesInfo">ⓘ</span><span class="n" id="placesN"></span>
+      </div>
+      <div class="list" id="placesList"></div>
+    </div>
+
+    <div id="body"><div class="empty" id="emptyState">Waiting for a hauling contract…</div></div>
+
+    <div id="wsettings" class="wsettings">
+      <div class="ws-sec">Plan for</div>
+      <div class="ws-row">
+        <button id="objBtn" class="hbtn" type="button" title="Both order a trip by time. This only decides which contracts share a trip when the load needs splitting.">Fastest run</button>
+      </div>
+      <div class="ws-sec">Stow view</div>
+      <div class="ws-row">
+        <button id="spinBtn" class="hbtn" type="button" title="Walk round to the other end of the hold. A fixed camera always hides the boxes behind the front row.">Turn around</button>
+      </div>
+      <!-- ⛔ The rep/aUEC toggle does NOT live here. Sub: "something people might want to literally
+           toggle back and forth on to see what the difference is — it shouldn't be hidden behind a
+           menu that's not visible all the time." Right: it is a comparison control, not a setting.
+           It sits on the Rank tab itself. -->
+      <div class="ws-sec">Contracts</div>
+      <div class="ws-row">
+        <button id="doneBtn" class="hbtn" type="button" title="Show contracts that have already ended">Show finished</button>
+      </div>
+    </div>
+  </div>
+
+<script src="/hauling-stow.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const EMBEDDED = new URLSearchParams(location.search).has("embedded");
+  if (EMBEDDED) document.body.classList.add("embedded");
+  // Same-origin bridge to the parent canvas (present only when embedded on the overlay).
+  const host = () => (EMBEDDED && window.parent) ? window.parent.__haulingHost : null;
+
+  let plan = null;
+  let ships = [];
+  let view = "route";
+  let objective = "auec-per-hour";
+  let showDone = false;
+  let shipPick = "";          // "" = trust the log
+  // Where the player says they are. localStorage, not config: it is a fact about right now, and a
+  // stale one is worse than none — so it is dropped the moment the plan stops containing it.
+  const START_KEY = "sc-hauling-start";
+  let startPick = (() => { try { return localStorage.getItem(START_KEY) || ""; } catch { return ""; } })();
+  // Which end of the hold the stow diagram is drawn from. Remembered, because a player who turned
+  // it round did so for a reason and a reset every render would fight them.
+  /* Contracts the player has set aside. Kept per-browser like the pins — it is a decision about
+     THIS run, not a setting. The game removes an ABANDONED contract on its own; this covers the gap
+     before that, when the player has decided to skip one but has not opened mobiGlas yet. */
+  const HIDE_KEY = "sc-hauling-hidden";
+  let hidden = (() => { try { return JSON.parse(localStorage.getItem(HIDE_KEY) || "[]"); } catch { return []; } })();
+  function saveHidden() { try { localStorage.setItem(HIDE_KEY, JSON.stringify(hidden)); } catch { /* private mode */ } }
+  /* The contracts list folded away. It is reference, not instruction — the route tells you what to
+     do — so on a small overlay it is the first thing worth reclaiming. */
+  const FOLD_KEY = "sc-hauling-fold-contracts";
+  let foldContracts = (() => { try { return localStorage.getItem(FOLD_KEY) === "1"; } catch { return false; } })();
+  const SPIN_KEY = "sc-hauling-spin";
+  let stowSpin = (() => { try { return localStorage.getItem(SPIN_KEY) === "1"; } catch { return false; } })();
+  function saveStart() { try { localStorage.setItem(START_KEY, startPick); } catch { /* private mode */ } }
+  /** Which lift the stow diagram is lighting up. Defaults to the first one to load. */
+  let focusMission = null;
+  /** Hull classes whose boxes the station's arm places for you — they get no stowage plan at all.
+   *  From /api/ships, which is the only place the flag lives (see src/hauling-autoload.ts). */
+  let autoLoadClasses = new Set();
+
+  /* 🔑 Pins are the player's own reading of a contract they have NOT tracked, so they must survive
+     the widget being closed — hiding a widget UNLOADS its iframe (see missions.html unloadFrame),
+     which would otherwise throw away typing the player did seconds ago. Keyed by missionId and
+     pruned to what is still live, so an old shard's contracts can never accumulate. */
+  const PIN_KEY = "sc-hauling-pins";
+  const readPins = () => { try { return JSON.parse(localStorage.getItem(PIN_KEY) || "{}"); } catch { return {}; } };
+  let pins = readPins();
+  function savePins() { try { localStorage.setItem(PIN_KEY, JSON.stringify(pins)); } catch { /* private mode */ } }
+  function prunePins(liveIds) {
+    let changed = false;
+    for (const id of Object.keys(pins)) if (!liveIds.has(id)) { delete pins[id]; changed = true; }
+    if (changed) savePins();
+  }
+
+  const num = (n) => Number(n || 0).toLocaleString();
+  /** "3", "3 and 4", "3, 4 and 7" — a list a person reads rather than an array printed. */
+  const list = (xs) => xs.length < 2 ? String(xs[0] ?? "")
+    : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1];
+  function fmtMins(min) {
+    const m = Math.max(1, Math.round(min || 0));
+    if (m < 60) return m + "m";
+    const h = Math.floor(m / 60), r = m % 60;
+    return r ? h + "h " + String(r).padStart(2, "0") + "m" : h + "h";
+  }
+  /** How a load figure is written. 🔴 A RANGE IS NEVER PRINTED AS A NUMBER — that is the whole
+   *  reason the plan tags every figure with a source. */
+  function fmtScu(c) {
+    if (c.scu == null) return "? SCU";
+    if (c.source === "range") return c.minScu + "–" + c.maxScu + " SCU";
+    return num(c.scu) + " SCU";
+  }
+  const BADGE = {
+    manifest: ["exact", "The game listed every box for this contract."],
+    log: ["stated", "The game stated this tonnage on its own objective line."],
+    pinned: ["yours", "You typed this figure in."],
+    dataset: ["data", "The game files state one figure for this contract."],
+    range: ["range", "The game files only bound this contract — the real load is somewhere inside it. The game states the exact figure when it assigns the objective; until then, type it in to pin it."],
+    unknown: ["unknown", "Neither the log nor the dataset says how much this contract carries."],
+  };
+
+  /* 🔑 One MISSION, one hue — and a mission's separate drop-offs shift lightness inside it.
+     That is the unit the player thinks in and the unit the freight elevator lifts in, so it has to
+     be the unit the eye groups by. Keyed off a leg's group so every call site (route chips,
+     contract cards, the stow diagram) lands on the same colour for the same cargo. */
+  const colourOf = (group) => StowView.shade(StowView.missionOf(plan, group), depthOf(group));
+  /** A leg's index within its own contract — the lightness step inside the mission's hue. */
+  const depthOf = (group) => StowView.depthOf(plan, group);
+
+  // ── loading ───────────────────────────────────────────────────────────────
+  let pending = null;
+  function refresh() {
+    // Coalesce: an accept burst emits a dozen CreateMarker lines and therefore a dozen SSE
+    // pushes, and re-solving on each one is pure waste.
+    clearTimeout(pending);
+    pending = setTimeout(load, 120);
+  }
+  async function load() {
+    try {
+      const r = await fetch("/api/hauling/plan", {
+        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        body: JSON.stringify({ ship: shipPick, objective, pins, startAt: startPick, hidden }),
+      });
+      if (!r.ok) return;
+      plan = await r.json();
+      prunePins(new Set(plan.contracts.filter((c) => !c.ended).map((c) => c.missionId)));
+      /* 🔑 TRACKING IT AGAIN BRINGS IT BACK — Sub's own suggestion, and better than a restore
+         button nobody would find: the player is already in mobiGlas, and selecting a contract there
+         is an unambiguous statement that they intend to fly it. Also drop any id the board no
+         longer carries, so a finished or abandoned contract does not sit in this list for ever. */
+      const live = new Set(plan.contracts.map((c) => c.missionId));
+      const restored = plan.contracts.filter((c) => c.trackedNow && hidden.includes(c.missionId)).map((c) => c.missionId);
+      const next = hidden.filter((id) => live.has(id) && !restored.includes(id));
+      if (next.length !== hidden.length) { hidden = next; saveHidden(); }
+      // A start the plan no longer knows about is a place from a finished board. Silently keeping
+      // it would route from somewhere that is not on the map any more.
+      // 🔴 BUT ONLY ONCE THERE IS A BOARD TO CHECK AGAINST. This ran unguarded and erased the
+      // player's position on EVERY app restart: the first plan arrives before the log watcher has
+      // read any contracts, so locationNames is `{}`, every id looks unknown, and the saved answer
+      // is deleted and written back empty. Sub set his location repeatedly and watched the route
+      // revert to opening at Baijini each time — this line was eating it, not the router.
+      // An empty board proves nothing about a place. Forget nothing until there is something to
+      // compare with.
+      const known = plan.locationNames && Object.keys(plan.locationNames).length;
+      if (startPick && known && !(startPick in plan.locationNames)) { startPick = ""; saveStart(); }
+    } catch { /* sidecar down — keep the last good plan on screen */ }
+    render();
+  }
+
+  async function loadShips() {
+    try {
+      const r = await fetch("/api/ships?names=1", { cache: "no-store" });
+      if (r.ok) {
+        // 🔑 Dedupe by display name. The dataset carries every AI and event variant of a hull as
+        // its own class with the SAME name — four "Aegis Idris-P", five "RSI Apollo Triage" — and
+        // an unfiltered list is 155 rows most of which are decoys. The store emits the base class
+        // first, so keeping the first of each name keeps the hull you can actually fly.
+        const all = (await r.json()).ships || [];
+        // The auto-load set is built from EVERY row, before the dedupe throws variants away — the
+        // log can name a variant class the picker never shows, and that hull still auto-loads.
+        autoLoadClasses = new Set(all.filter((s) => s.autoLoad).map((s) => s.className));
+        const seen = new Set();
+        ships = all.filter((s) => {
+          const k = (s.displayName || s.className).toLowerCase();
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      }
+    } catch { /* the picker just stays empty; the log's ship still works */ }
+    renderShipPicker();
+  }
+
+  /** The saved override, so a fresh widget opens on the hull the player last chose. */
+  async function loadConfig() {
+    try {
+      const r = await fetch("/api/config", { cache: "no-store" });
+      if (r.ok) shipPick = (await r.json()).haulingShip || "";
+    } catch { /* no sidecar config — the log's ship is the only source */ }
+  }
+  function saveShip(v) {
+    fetch("/api/config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ haulingShip: v }),
+    }).catch(() => { /* the pick still applies to this session */ });
+  }
+
+  // ── render ────────────────────────────────────────────────────────────────
+  function renderShipPicker() {
+    const el = $("shipPick");
+    el.textContent = "";
+    const auto = document.createElement("option");
+    auto.value = "";
+    // 🔴 SAY WHAT AUTO ACTUALLY FOUND. "Auto — whatever the log sees" is a promise, not a reading:
+    // Sub's C2 was detected correctly and the control gave him no way to know that, so he could not
+    // tell a working detector from a silent one. Name the hull when we have it.
+    const found = plan && plan.ship && plan.ship.source !== "manual" ? plan.ship.displayName : null;
+    auto.textContent = found ? "Auto — " + found : "Auto — nothing detected yet";
+    auto.title = found
+      ? "Detected from the game. Pick a hull below to override it."
+      : "No ship seen yet — the game names it when you board. Pick one below if it stays blank.";
+    el.appendChild(auto);
+    for (const s of ships) {
+      const o = document.createElement("option");
+      o.value = s.className;
+      o.textContent = (s.displayName || s.className) + "  ·  " + num(s.totalScu) + " SCU";
+      el.appendChild(o);
+    }
+    el.value = shipPick;
+  }
+
+  /** Where you are. Options are the places THIS board touches — nowhere else can be an origin the
+   *  router understands, and offering the whole star map would be offering places it cannot use. */
+  function renderStartPicker() {
+    const el = $("startPick");
+    el.textContent = "";
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = "I'm somewhere else — just order the stops";
+    el.appendChild(auto);
+    for (const [id, name] of Object.entries((plan && plan.locationNames) || {})) {
+      const o = document.createElement("option");
+      o.value = id;
+      o.textContent = "I'm at " + name;
+      el.appendChild(o);
+    }
+    el.value = startPick;
+  }
+
+  function renderSummary() {
+    const ship = plan && plan.ship;
+    $("shipPick").value = shipPick;
+    $("shipSrc").textContent = !ship ? "no ship" : ship.source === "manual" ? "your pick" : "from log";
+    $("shipSrc").title = !ship
+      ? "Nothing in the log named a ship, and nothing is picked."
+      : ship.source === "manual" ? "You chose this hull." : "The game's vehicle-control lines named this hull.";
+
+    const caps = $("caps");
+    caps.textContent = "";
+    if (ship) {
+      for (const g of ship.grids) {
+        const d = document.createElement("div");
+        d.className = "cap" + (g.usedScu > g.capacityScu ? " over" : "");
+        d.style.flex = g.capacityScu;
+        d.title = g.name + " — " + g.w + "x" + g.l + "x" + g.h + " cells, " + num(g.usedScu) + " of " + num(g.capacityScu) + " SCU";
+        const fill = document.createElement("i");
+        fill.style.width = Math.min(100, (g.usedScu / Math.max(1, g.capacityScu)) * 100) + "%";
+        const lbl = document.createElement("b");
+        lbl.textContent = num(g.usedScu) + " / " + num(g.capacityScu);
+        d.append(fill, lbl);
+        caps.appendChild(d);
+      }
+    }
+
+    const facts = $("facts");
+    facts.textContent = "";
+    if (!plan) return;
+    const t = plan.totals;
+    const bits = [];
+    bits.push(["to move", num(t.scu) + " SCU", false]);
+    if (plan.aboardScu > 0) bits.push(["aboard", num(plan.aboardScu) + " SCU", false]);
+    bits.push(["contracts", String(t.liveContracts), false]);
+    if (plan.trips.length) {
+      const landings = plan.trips.reduce((s, x) => s + x.landings, 0);
+      bits.push(["stops", String(landings), false]);
+      bits.push(["est. run", fmtMins(t.totalMinutes), false]);
+    }
+    if (plan.trips.length > 1) bits.push(["trips", String(plan.trips.length), true]);
+    if (plan.pack && !plan.pack.fits) bits.push(["won't fit", plan.pack.unplaced.length + " boxes", true]);
+    if (t.recentPayout) bits.push(["paid", num(t.recentPayout) + " aUEC", false]);
+    for (const [k, v, bad] of bits) {
+      const s = document.createElement("span");
+      s.textContent = k + " ";
+      const b = document.createElement("span");
+      b.className = "v" + (bad ? " bad" : "");
+      b.textContent = v;
+      s.appendChild(b);
+      facts.appendChild(s);
+    }
+    renderRates();
+  }
+
+  /**
+   * 🔴 WHAT THE RUN IS EARNING — per hour, in both currencies.
+   *
+   * Two rates, and which one is on screen is never left to be guessed. `actual` is MEASURED: real
+   * awards read off the log against real elapsed time. `projected` is what the board ahead is worth
+   * against this planner's own run estimate, and is therefore only ever as good as that estimate.
+   * Sub asked for the real figure "projected if we don't actually have enough data", so the
+   * measured one wins whenever it exists and the wording says which is showing — "earning" for a
+   * fact, "should earn" for a forecast.
+   *
+   * ⚠️ REPUTATION IS NEVER IN THE GAME LOG. Searching a live session finds only the name of the rep
+   * gRPC service — no amounts, no deltas. The figure comes off the mission dataset, which states it
+   * per contract and reads it from the game files rather than fitting it.
+   */
+  function renderRates() {
+    const bar = $("ratebar");
+    bar.textContent = "";
+    const r = (plan && plan.rates) || {};
+    const rate = r.actual || r.projected;
+    if (!rate) { bar.style.display = "none"; return; }
+    bar.style.display = "";
+    const measured = !!r.actual;
+    const est = measured ? "" : " est";
+    const per = (v) => (v >= 1000 ? Math.round(v / 1000) + "k" : Math.round(v));
+
+    const k = document.createElement("span");
+    k.className = "k";
+    k.textContent = measured ? "Earning" : "Should earn";
+    bar.appendChild(k);
+
+    const money = document.createElement("span");
+    money.className = "fig" + est;
+    money.textContent = per(rate.auecPerHour) + " aUEC/h";
+    money.title = measured
+      ? "Measured — " + num(Math.round(r.actual.auec)) + " aUEC from " + r.actual.contracts
+        + " finished contract" + (r.actual.contracts > 1 ? "s" : "") + " over " + fmtMins(r.actual.minutes)
+        + " of run. Per hour of RUN TIME, not per contract: flying and loading count against it."
+      : "A forecast: nothing has finished yet, so this is what the board ahead is worth against the"
+        + " estimated run time. It becomes a measured figure the moment you deliver."
+        + (r.payoutModelled ? "  ⚠️ A contract here has a modelled payout, not a stated one." : "");
+    bar.appendChild(money);
+
+    // Suppressed at zero rather than printed as "0/h": Master-rank Large and Bulk hauls genuinely
+    // pay no reputation, and a zero there is a fact about the contract, not about the run.
+    if (rate.repPerHour > 0) {
+      const rep = document.createElement("span");
+      rep.className = "rep" + est;
+      rep.textContent = per(rate.repPerHour) + " rep/h";
+      rep.title = "Reputation per hour, on the same basis. The game never logs reputation in any"
+        + " form — this comes from the mission dataset, which states it per contract.";
+      bar.appendChild(rep);
+    }
+
+    /* 🔑 SAY WHAT THE DENOMINATOR IS. The whole reason this strip exists is that a rate reads like
+       a property of the contracts unless something tells you otherwise, and it is not — it is
+       against the clock. Naming the window is what makes the number interpretable. */
+    const basis = document.createElement("span");
+    basis.className = "basis";
+    basis.textContent = measured ? "over " + fmtMins(r.actual.minutes) + " of run" : "at the estimated pace";
+    basis.title = measured
+      ? "Every minute since the first hauling event this session, including the ones spent not hauling."
+      : "Against this planner's own estimate for the run ahead.";
+    bar.appendChild(basis);
+  }
+
+  /* 🔴 THE THREE STATES. The old prompt had one — "TRACK THESE IN MOBIGLAS", shown to every
+     contract whose tonnage was unknown — and for most of them that instruction could not come
+     true. The game states a contract's tonnage when it ASSIGNS the objective (a fresh accept, a
+     spawn-in, a leg changing state); tracking an already-assigned contract replays nothing.
+     Sub tracked four contracts, watched this panel keep telling him to track them, and reasonably
+     concluded the app was broken. So a row now says which of these it is:
+
+       todo      not tracked in mobiGlas. Tracking is worth doing — the next assignment will
+                 carry the figure — but it is a "then", not a "now".
+       waiting   tracked already. Nothing further to do; the game has been asked and will not
+                 answer again this session. The type-it-in box is the only route to a number.
+       pinned    the player typed it. */
+  const TRACK_STATE = {
+    todo: ["track it", "Not tracked in mobiGlas. Track it and the tonnage arrives with the next objective assignment — at the latest, next time you spawn in. Or type it in now."],
+    waiting: ["tracked", "Already tracked — nothing more for you to do here. The game states the tonnage only when it assigns the objective (at accept, or on spawn-in), and re-tracking does not replay it. Type the figure off your mobiGlas to pin it."],
+    pinned: ["yours", "You typed this figure in. Clear the box to fall back to what the game files allow."],
+  };
+  const trackStateOf = (c) => c.source === "pinned" ? "pinned" : c.trackedNow ? "waiting" : "todo";
+  /** Has the player re-opened the collapsed "all answered" card to edit a figure? Reset whenever a
+   *  row needs action again, so a new unanswered contract always arrives expanded. */
+  let trackOpen = false;
+  /** missionId -> the row's live DOM, kept across renders so an input the player is clicking is
+   *  never destroyed underneath them. See renderTrack. */
+  const trackRows = new Map();
+
+  // ── the shared keyboard grab ───────────────────────────────────────────────────────────────
+  // 🔴 THE GRAB IS PER-WIDGET, NOT PER-FIELD, and it hands focus back through ONE function.
+  // Re-entering it while already inside a field is what made every box except the first
+  // unreachable: focusing box 2 called editStart again, the shell took window focus and called
+  // __haulingFocus to give it back — and that focused `querySelector("input")`, i.e. box 1.
+  // Clicking box 2 and TABBING to box 2 both died there, which is the tell: Tab is native
+  // behaviour, so nothing in this page's own DOM could have explained it.
+  //
+  // Two rules fix it, and both are needed:
+  //   1. Remember which box the player actually wants, so the hand-back goes to the right one.
+  //   2. Do not tear the grab down and rebuild it when focus moves BETWEEN fields of this widget.
+  //      The release is deferred a tick, and a sibling taking focus cancels it — so moving box to
+  //      box never re-enters the grab at all, and the shell is never asked to re-focus anything.
+  let wantFocus = null;
+  let grabHeld = false;
+  let releaseTimer = null;
+  function grabOn(el) {
+    wantFocus = el;
+    clearTimeout(releaseTimer); releaseTimer = null;
+    if (grabHeld) return;   // already inside a field — re-entering is the bug, not the fix
+    grabHeld = true;
+    try { host()?.editStart?.(); } catch { /* standalone */ }
+  }
+  function grabOff() {
+    clearTimeout(releaseTimer);
+    releaseTimer = setTimeout(() => {
+      releaseTimer = null; grabHeld = false; wantFocus = null;
+      try { host()?.editEnd?.(); } catch { /* standalone */ }
+      // Stepping out of the last box with every figure supplied is the natural moment to put the
+      // card away — Sub asked for exactly this, and it beats making him hunt for a control.
+      if (allPinnedNow()) { trackOpen = false; render(); }
+    }, 0);
+  }
+  /** Every listed contract carries a figure the player typed. Recomputed rather than remembered:
+   *  the board changes underneath this widget constantly. */
+  function allPinnedNow() {
+    if (!plan) return false;
+    const live = plan.contracts.filter((c) => !c.ended && (!c.deliverSeen || c.source === "range" || c.source === "unknown"));
+    return live.length > 0 && live.every((c) => trackStateOf(c) === "pinned");
+  }
+
+  /** 🔴 The load checklist. Each row names a contract whose tonnage the game has not stated,
+   *  says which of the three states it is in, shows the bounds we do have, and offers a box to
+   *  type the real figure into. */
+  function renderTrack() {
+    const el = $("track");
+    const live = plan ? plan.contracts.filter((c) => !c.ended && (!c.deliverSeen || c.source === "range" || c.source === "unknown")) : [];
+    if (!live.length) { el.style.display = "none"; return; }
+    el.style.display = "";
+    // The heading is an instruction ONLY while at least one row can act on it.
+    // 🔴 THREE row states need THREE headings. This was `todo ? … : "Load not confirmed"`, which
+    // told Sub the load was unconfirmed on 2026-08-17 *immediately after he confirmed it himself*.
+    // A pinned row never leaves this list — the filter keeps anything the GAME never stated, and
+    // pinning cannot change that — so "all pinned" is a normal resting state, not an alarm.
+    const todo = live.filter((c) => trackStateOf(c) === "todo").length;
+    const allPinned = live.every((c) => trackStateOf(c) === "pinned");
+    // 🔴 Nothing outstanding: the player answered every row themselves. The card cannot simply be
+    // hidden — the type-in box lives ONLY here, so hiding it strands the one way to correct a
+    // wrong figure — so it collapses to its heading and reopens on a click.
+    // A pinned row never leaves `live` (the filter keeps whatever the GAME never stated, and
+    // pinning cannot change that), which is why "answered" has to be a display state, not a filter.
+    if (allPinned && !trackOpen) {
+      el.classList.add("done");
+      $("trackK").textContent = "Load set by you";
+      $("trackInfo").title = "You typed these in and the plan is using your figures. Click the heading to change them.";
+      $("trackN").textContent = live.length + " of " + plan.totals.liveContracts;
+      $("trackList").textContent = "";
+      return;
+    }
+    el.classList.remove("done");
+    $("trackK").textContent = todo ? "Track these in mobiGlas" : allPinned ? "Load set by you" : "Load not confirmed";
+    /* 🔴 THE EXPLANATION IS A TOOLTIP, NOT A PARAGRAPH. Sub: "let's just put a circle with an eye
+       and put all that information in a tooltip. I want to clean up the UI." He is right — this is
+       WHY text, read once and then re-read on every render for the rest of the session. The reason
+       has to stay reachable, because "why am I typing this in" is a fair question, but it does not
+       have to occupy four lines of a small overlay forever. */
+    const why = todo
+      ? "The game states a contract's tonnage when it assigns the objective — at accept, or the next time you spawn in. Track the ones below and the next assignment tells us, or type the figure straight off your mobiGlas."
+      : allPinned
+      ? "The game never stated these, so they stay listed — but you have typed the figures in and the plan is using yours. Clear a box to fall back to what the game files allow."
+      : "These are tracked and the game still has not stated their load. It only says the tonnage when it assigns the objective, and re-tracking does not replay that — so type the figure off your mobiGlas, or wait for the next spawn-in.";
+    $("trackInfo").title = why;
+    $("trackN").textContent = live.length + " of " + plan.totals.liveContracts;
+    const list = $("trackList");
+    // 🔴 ROWS ARE REUSED, keyed by mission — they used to be torn down and rebuilt on every render,
+    // and that made the second box unclickable. Typing in one box and clicking the next fires
+    // `change` on blur → load() → render() → `list.textContent = ""`, which DESTROYS the input the
+    // player is mid-click on. The click then lands on a detached node and nothing happens; it looks
+    // like the field is dead. Sub hit this trying to enter three tonnages in a row.
+    // 🔑 A node the player is reaching for must survive the render.
+    const seen = new Set();
+    for (const c of live) {
+      seen.add(c.missionId);
+      let r = trackRows.get(c.missionId);
+      if (!r) {
+        const row = document.createElement("div");
+        row.className = "trow";
+        const t = document.createElement("div");
+        t.className = "t";
+        // Rank tier + size band, off the title. Known the moment a contract is accepted, unlike the
+        // tonnage — and it is the wording on the board, so it is how this row is matched to the
+        // contract in mobiGlas.
+        const bd = document.createElement("div");
+        bd.className = "bd";
+        const st = document.createElement("span");
+        const rng = document.createElement("div");
+        rng.className = "rng";
+        const inp = document.createElement("input");
+        inp.type = "number"; inp.min = "1"; inp.step = "1";
+        inp.placeholder = "SCU";
+        inp.title = "Type the SCU total from your mobiGlas to pin it.";
+        // Editing takes the canvas keyboard grab; the shell suspends the interact key while it is
+        // on. Held across a move between boxes — see grabOn/grabOff.
+        inp.addEventListener("focus", () => grabOn(inp));
+        inp.addEventListener("blur", () => grabOff());
+        // Pointer-down lands BEFORE the old field blurs, so this is the earliest honest statement
+        // of which box the player is going to. Without it, a hand-back that races the focus event
+        // has nothing better than "the first one" to aim at.
+        inp.addEventListener("pointerdown", () => { wantFocus = inp; });
+        // Keyed off the row's OWN missionId, not a captured contract object, because the row now
+        // outlives the render that made it.
+        const mid = c.missionId;
+        inp.addEventListener("change", () => {
+          const v = parseInt(inp.value, 10);
+          if (Number.isFinite(v) && v > 0) pins[mid] = v; else delete pins[mid];
+          savePins();
+          load();
+        });
+        row.append(t, bd, st, rng, inp);
+        r = { row, t, bd, st, rng, inp };
+        trackRows.set(c.missionId, r);
+      }
+      r.t.textContent = c.title || c.contractKey;
+      r.t.title = (c.giver ? c.giver + " · " : "") + (c.missionType || c.generator);
+      if (c.board && (c.board.rank || c.board.size)) {
+        r.bd.textContent = [c.board.rank, c.board.size].filter(Boolean).join(" · ");
+        r.bd.title = "The rank tier and size band this contract is listed under on the board.";
+      } else { r.bd.textContent = ""; r.bd.title = ""; }
+      const [label, why] = TRACK_STATE[trackStateOf(c)];
+      r.st.className = "badge " + trackStateOf(c);
+      r.st.textContent = label;
+      r.st.title = why;
+      r.rng.textContent = c.minScu != null && c.maxScu != null
+        ? (c.minScu === c.maxScu ? num(c.minScu) + " SCU" : c.minScu + "–" + c.maxScu + " SCU")
+        : "unknown";
+      r.rng.title = c.minScu != null
+        ? "What the game files allow for this contract. The real figure is somewhere in here."
+        : "The game files carry nothing for this contract key.";
+      // ⚠️ Never overwrite a box the player is typing in — a reload mid-edit would eat the digits
+      // they have entered so far.
+      if (document.activeElement !== r.inp) r.inp.value = pins[c.missionId] != null ? pins[c.missionId] : "";
+      list.appendChild(r.row);   // appendChild MOVES an existing node, so this also fixes the order
+    }
+    for (const [id, r] of trackRows) {
+      if (!seen.has(id)) { r.row.remove(); trackRows.delete(id); }
+    }
+  }
+
+  /**
+   * 🔴 NAME A PLACE THE GAME NEVER NAMED — Sub's most-asked-for control.
+   *
+   * Only a TRACKED drop-off carries a name (the Deliver line's "… to <D>"), so pickups are
+   * essentially always anonymous and show as "Site 1". The answer is remembered against the
+   * place's COORDINATES (the planner's location id is the position rounded to the kilometre), so
+   * it is asked once and never again — including across game restarts, when the zoneHostId this
+   * could otherwise have been keyed on is reissued.
+   *
+   * 🔑 Rows are REUSED across renders, keyed by location id, for the same reason the load
+   * checklist reuses its rows: a plan push mid-typing would otherwise destroy the input under the
+   * player's cursor and the field would look dead. That bug cost a session once already.
+   */
+  const placeRows = new Map();
+  /** locationId -> the suggestions currently showing, and which one arrow keys have landed on. */
+  let sugFor = null, sugList = [], sugIndex = -1;
+
+  function renderPlaces() {
+    const el = $("places");
+    const list = (plan && plan.unnamedPlaces) || [];
+    if (!list.length) { el.style.display = "none"; return; }
+    el.style.display = "";
+    $("placesN").textContent = list.length + (list.length > 1 ? " places" : " place");
+    $("placesInfo").title = "The game only names a place when it states a delivery objective, so"
+      + " pickups and untracked legs arrive anonymous. Type the name and it sticks to those"
+      + " coordinates — you will not be asked about this place again.";
+    const holder = $("placesList");
+    const seen = new Set();
+    for (const p of list) {
+      seen.add(p.locationId);
+      let r = placeRows.get(p.locationId);
+      if (!r) {
+        const row = document.createElement("div");
+        row.className = "prow";
+        const top = document.createElement("div"); top.className = "top";
+        const site = document.createElement("span"); site.className = "site";
+        const role = document.createElement("span"); role.className = "role";
+        top.append(site, role);
+        const inp = document.createElement("input");
+        inp.type = "text";
+        // 🔑 The empty box only offers places the game has already named, so the hint says so
+        // rather than promising a list that is not there yet on a first run.
+        inp.placeholder = "Type where this is…";
+        inp.autocomplete = "off";
+        // Same canvas keyboard grab as the tonnage boxes — see grabOn/grabOff. Reusing it is not
+        // tidiness: the shell suspends the interact key while a field is live, and a field that
+        // did not take the grab would type into the game instead.
+        inp.addEventListener("focus", () => grabOn(inp));
+        inp.addEventListener("blur", () => { grabOff(); setTimeout(() => closeSug(p.locationId), 120); });
+        inp.addEventListener("pointerdown", () => { wantFocus = inp; });
+        inp.addEventListener("input", () => askPlaces(p.locationId, inp.value, row));
+        inp.addEventListener("keydown", (e) => onSugKey(e, p.locationId, inp, row));
+        // Emptying the box is how a wrong name is undone, and `change` is what catches it —
+        // `keydown`'s Enter path only ever saves a non-empty pick.
+        inp.addEventListener("change", () => { if (!inp.value.trim()) savePlace(p.locationId, ""); });
+        row.append(top, inp);
+        r = { row, site, role, inp };
+        placeRows.set(p.locationId, r);
+      }
+      // 🔑 A place YOU named shows its Site-style slot as "yours" and pre-fills the box, so the
+      // answer can be corrected or emptied. Clearing the box deletes the name — see savePlace.
+      r.site.textContent = p.yours ? "yours" : p.label;
+      r.role.textContent = p.role === "pickup" ? "you pick up here"
+        : p.role === "both" ? "you pick up and drop off here" : "you drop off here";
+      if (p.commodity) r.role.textContent += "  ·  " + p.commodity;
+      if (p.yours) r.role.textContent += "  ·  clear the box to undo";
+      if (document.activeElement !== r.inp) r.inp.value = p.yours || "";
+      holder.appendChild(r.row);   // appendChild MOVES an existing node, so this fixes order too
+    }
+    for (const [id, r] of placeRows) {
+      if (!seen.has(id)) { r.row.remove(); placeRows.delete(id); }
+    }
+  }
+
+  /** Ask the server to rank the candidates. Debounced: one request per character is fine at this
+   *  size, but a burst while someone types fast is pure waste. */
+  let sugTimer = null;
+  function askPlaces(locationId, q, row) {
+    clearTimeout(sugTimer);
+    sugTimer = setTimeout(async () => {
+      try {
+        const r = await fetch("/api/hauling/places?q=" + encodeURIComponent(q), { cache: "no-store" });
+        if (!r.ok) return;
+        const places = (await r.json()).places || [];
+        showSug(locationId, places, row);
+      } catch { /* sidecar down — typing still saves, it just cannot suggest */ }
+    }, 90);
+  }
+
+  function closeSug(locationId) {
+    if (sugFor !== locationId) return;
+    const r = placeRows.get(locationId);
+    r?.row.querySelector(".psug")?.remove();
+    sugFor = null; sugList = []; sugIndex = -1;
+  }
+
+  function showSug(locationId, places, row) {
+    row.querySelector(".psug")?.remove();
+    sugFor = locationId; sugList = places; sugIndex = places.length ? 0 : -1;
+    if (!places.length) return;
+    const box = document.createElement("div");
+    box.className = "psug";
+    places.forEach((p, i) => {
+      const d = document.createElement("div");
+      if (i === sugIndex) d.className = "on";
+      const n = document.createElement("span");
+      if (p.seen) n.className = "seen";
+      n.textContent = p.name;
+      d.appendChild(n);
+      if (p.hint) { const h = document.createElement("span"); h.className = "h"; h.textContent = p.hint; d.appendChild(h); }
+      // pointerdown, not click: the input's blur fires first on a click and would close the list
+      // out from under the pointer.
+      d.addEventListener("pointerdown", (e) => { e.preventDefault(); savePlace(locationId, p.name); });
+      box.appendChild(d);
+    });
+    row.appendChild(box);
+  }
+
+  /** Arrow keys walk the list, Enter takes the highlighted one, Escape gives up. Enter with
+   *  nothing highlighted saves exactly what was typed — a place the datasets have never heard of
+   *  is a real case (locations.json has no city spaceports at all). */
+  function onSugKey(e, locationId, inp, row) {
+    const box = row.querySelector(".psug");
+    if (e.key === "Escape") { closeSug(locationId); inp.blur(); return; }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!sugList.length) return;
+      e.preventDefault();
+      sugIndex = (sugIndex + (e.key === "ArrowDown" ? 1 : sugList.length - 1)) % sugList.length;
+      if (box) [...box.children].forEach((c, i) => c.classList.toggle("on", i === sugIndex));
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const pick = sugIndex >= 0 && sugList[sugIndex] ? sugList[sugIndex].name : inp.value.trim();
+      if (pick) savePlace(locationId, pick);
+    }
+  }
+
+  async function savePlace(locationId, name) {
+    closeSug(locationId);
+    const r = placeRows.get(locationId);
+    if (r) { r.inp.value = name; r.inp.blur(); }
+    try {
+      await fetch("/api/hauling/place", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locationId, name }),
+      });
+    } catch { /* not saved — the row stays, so it can be tried again */ }
+    load();
+  }
+
+  /**
+   * 🔴 THE ADVISOR — what to go looking for, and how far the next rank is.
+   *
+   * Ranks contract TYPES, not board rows. Nothing here reads the screen: the shipped datasets are
+   * scored and the player matches the answer against the board BY ITS TITLE, because the title is
+   * the whole model spelled out — "Experienced Rank - Direct Medium Cargo Haul" is rung, shape and
+   * size band in one string.
+   *
+   * 🔑 Reputation is a pure function of the RUNG. Across the 393 real contracts in the three core
+   * families every tier awards exactly one value — Rookie 50, Junior 500, Member 1000, Experienced
+   * 2000, Senior 4000, Master 8000 — so the advice is "climb the ladder, then take the SMALLEST
+   * size band that rung offers", because a smaller band is fewer boxes for the same flat rep.
+   *
+   * ⚠️ These are SOLO estimates: every contract scored as if it were the only one you took, which
+   * is the right number for an accept/skip decision at the board and NOT comparable with the Route
+   * tab's, which re-scores the accepted set with real packing.
+   */
+  let advisor = null;
+  let advisorGoal = "rep";
+  /* Which family of hauling contracts. "" is all of them, which is deliberately NOT the default —
+     see the type filter's note in the endpoint: Interstellar is a separate economy and blending it
+     into a reputation ranking gives an order that is wrong for both. Remembered, because a player
+     works one board for hours. */
+  const TYPE_KEY = "sc-hauling-advisor-type";
+  let advisorType = (() => { try { return localStorage.getItem(TYPE_KEY) ?? "Hauling - Planetary"; } catch { return "Hauling - Planetary"; } })();
+  async function loadAdvisor() {
+    try {
+      const r = await fetch("/api/hauling/advisor?goal=" + advisorGoal
+        + "&type=" + encodeURIComponent(advisorType), { cache: "no-store" });
+      if (r.ok) advisor = await r.json();
+    } catch { /* sidecar down — keep whatever we had */ }
+    if (view === "advisor") render();
+  }
+  function setAdvisorType(t) {
+    advisorType = t;
+    try { localStorage.setItem(TYPE_KEY, t); } catch { /* private mode */ }
+    loadAdvisor();
+  }
+
+  function renderAdvisor() {
+    const body = $("body");
+    body.textContent = "";
+    if (!advisor) {
+      const d = document.createElement("div"); d.className = "empty";
+      d.textContent = "Working out what is worth flying…";
+      body.appendChild(d);
+      loadAdvisor();
+      return;
+    }
+    body.appendChild(renderStanding());
+    body.appendChild(renderTypeFilter());
+    const sec = document.createElement("div");
+    sec.className = "sec";
+    const h = document.createElement("span");
+    h.textContent = "Best for the work";
+    /* 🔑 The toggle lives HERE, in the open, not in the cog. The two orderings genuinely disagree —
+       across the 427 rep-paying contracts the median one moves 35 places between them — so
+       flipping back and forth IS the feature, and a control you have to go find is a control that
+       does not get used. */
+    const seg = document.createElement("span");
+    seg.className = "goalseg";
+    for (const [id, label, tip] of [
+      ["rep", "Reputation", "Rank by reputation earned per unit of work."],
+      ["money", "aUEC", "Rank by aUEC earned per unit of work. It is a different order."],
+    ]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "hbtn" + (advisorGoal === id ? " on" : "");
+      b.textContent = label;
+      b.title = tip;
+      b.addEventListener("click", () => { advisorGoal = id; loadAdvisor(); });
+      seg.appendChild(b);
+    }
+    const n = document.createElement("span");
+    n.className = "n";
+    // The unit is not decoration — under a manual hull there IS no published per-box timing, so
+    // the honest denominator is boxes, and saying so is what stops the number being read as time.
+    n.textContent = advisor.regime === "auto" ? "per second of loading" : "per box you move";
+    n.title = advisor.regime === "auto"
+      ? "This hull auto-loads, so the cost is the station arm's published seconds."
+      : "You load this hull by hand, and the tractor-beam grind has no published timing — so the"
+        + " cost is box COUNT. Sub: six 1 SCU boxes is about the same work as six 32 SCU boxes.";
+    sec.append(h, seg, n);
+    body.appendChild(sec);
+
+    let ruled = false;
+    advisor.contracts.forEach((c, i) => {
+      /* The locked block is appended after the open one (see the endpoint), so the first locked row
+         is where "what you could be flying" turns into "what the next rung opens up". Saying so is
+         the difference between a useful preview and a list that looks mis-sorted. */
+      if (c.locked && !ruled) {
+        ruled = true;
+        const s = document.createElement("div");
+        s.className = "sec";
+        const sh = document.createElement("span"); sh.textContent = "What the next rank opens up";
+        const sn = document.createElement("span"); sn.className = "n"; sn.textContent = "not on your board yet";
+        s.append(sh, sn);
+        body.appendChild(s);
+      }
+      const row = document.createElement("div");
+      row.className = "arow" + (c.locked ? " locked" : "");
+      const nEl = document.createElement("div"); nEl.className = "n"; nEl.textContent = String(i + 1);
+      const mid = document.createElement("div"); mid.className = "mid";
+      const t = document.createElement("div"); t.className = "t";
+      t.textContent = c.title || c.key;
+      t.title = c.key + (c.giver ? "  ·  " + c.giver : "");
+      const m = document.createElement("div"); m.className = "m";
+      const bits = [];
+      bits.push(c.boxes + " box" + (c.boxes === 1 ? "" : "es"));
+      bits.push(c.scuLo === c.scuHi ? c.scuLo + " SCU" : c.scuLo + "–" + c.scuHi + " SCU");
+      if (c.dropoffs > 1) bits.push(c.dropoffs + " drops");
+      if (c.rep > 0) bits.push(num(c.rep) + " rep");
+      if (c.payout) bits.push(num(c.payout) + " aUEC");
+      // How many commodity variants wear this exact title. Not trivia: it is roughly how likely
+      // you are to actually find one of these on a board.
+      if (c.variants > 1) bits.push(c.variants + " variants");
+      m.textContent = bits.join("  ·  ");
+      mid.append(t, m);
+      if (c.locked) {
+        const lp = document.createElement("span");
+        lp.className = "lockpill";
+        lp.textContent = "  needs " + c.rank + " with " + (c.giver || "this giver");
+        lp.title = "Above your standing WITH THAT GIVER, so it is not on your board yet."
+          + " Reputation is per faction — being Member with Covalex does not open Ling Family work.";
+        m.appendChild(lp);
+      }
+      const r = document.createElement("div"); r.className = "r";
+      const v = document.createElement("div"); v.className = "v";
+      const rate = advisorGoal === "rep" ? c.repRate : c.moneyRate;
+      v.textContent = rate >= 100 ? Math.round(rate) : rate.toFixed(rate >= 10 ? 1 : 2);
+      const u = document.createElement("div"); u.className = "u";
+      u.textContent = advisorGoal === "rep" ? "rep/box" : "aUEC/box";
+      if (advisor.regime === "auto") u.textContent = advisorGoal === "rep" ? "rep/s" : "aUEC/s";
+      r.append(v, u);
+      row.append(nEl, mid, r);
+      body.appendChild(row);
+    });
+  }
+
+  /**
+   * 🔴 WHERE YOU STAND — READ, NOT ASKED.
+   *
+   * This was a rank dropdown and a rep box, and both were wrong. The app has been accruing
+   * reputation per giver from every log backup all along (307 credited completions at the time),
+   * so it already knew Covalex 5,400 while the widget was asking Sub to type it. And he could not
+   * have answered anyway: mobiGlas draws a BAR, never an integer, so the only place that number
+   * exists for a player to read is this app. Asking was circular.
+   *
+   * 🔑 ONE ROW PER GIVER. Four factions share the `Hauling` scope and reputation accrues to the
+   * FACTION, so "how far to the next rank" is four different questions. Sub spotted the hazard
+   * before the code did: a single ladder would have offered him Member-tier Ling Family work
+   * against a standing he earned entirely with Covalex.
+   */
+  function renderStanding() {
+    const wrap = document.createElement("div");
+    wrap.className = "stand";
+    const climbs = advisor.climbs || [];
+    if (!climbs.length) {
+      const d = document.createElement("div");
+      d.className = "climb none";
+      d.textContent = "No hauling standing seen yet — finish a contract and this fills in.";
+      wrap.appendChild(d);
+      return wrap;
+    }
+    for (const c of climbs) wrap.appendChild(renderClimb(c));
+    return wrap;
+  }
+
+  /**
+   * Which family of hauling contracts to rank.
+   *
+   * 🔑 Defaults to Planetary rather than "all", and that is a correctness choice as much as a
+   * convenience one. `Hauling - Interstellar` is a SEPARATE ECONOMY — its Rookie tier pays 50 or
+   * 100 and its Master tier pays 0 or 200, where every core Master pays 8000 — so a single ranking
+   * across all families produces an order that is wrong for whichever board you are standing at.
+   * The label carries that warning rather than burying it.
+   */
+  function renderTypeFilter() {
+    const wrap = document.createElement("div");
+    wrap.className = "typebar";
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "hbtn" + (advisorType === "" ? " on" : "");
+    all.textContent = "All";
+    all.title = "Every hauling family at once. Useful for a survey, misleading for a decision — the"
+      + " families do not share an economy.";
+    all.addEventListener("click", () => setAdvisorType(""));
+    wrap.appendChild(all);
+    // Short names: the panel is 420px and "Hauling - Interstellar" four times over is the whole row.
+    for (const t of (advisor.types || [])) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "hbtn" + (advisorType === t.name ? " on" : "");
+      b.textContent = t.name.replace(/^Hauling\s*-\s*/, "").replace(/^Hauling$/, "Contract");
+      b.title = t.name + " — " + t.count + " contract types."
+        + (/Interstellar/.test(t.name)
+          ? "  ⚠️ A separate economy: its Master tier pays 0-200 rep where every other Master pays 8,000. Do not compare its rates with the others'."
+          : "");
+      b.addEventListener("click", () => setAdvisorType(t.name));
+      wrap.appendChild(b);
+    }
+    return wrap;
+  }
+
+  /** "How long to the next rank", for one giver. */
+  function renderClimb(c) {
+    const d = document.createElement("div");
+    d.className = "climb";
+    const who = document.createElement("div");
+    who.className = "sub";
+    who.style.marginTop = "0";
+    who.textContent = c.giver + "  ·  " + c.rung + "  ·  " + num(c.standing) + " rep";
+    who.title = "Accrued by this app from your completed contracts. The game never states it — "
+      + "mobiGlas only draws the bar.";
+    d.appendChild(who);
+    if (!c.next) {
+      const t = document.createElement("div");
+      t.textContent = "Top of the ladder.";
+      d.appendChild(t);
+      return d;
+    }
+    /* 🔴 NO RATE, NO TIME. The modelled per-run figure counts only box handling — no flying, no
+       quantum, no walk to the elevator — so quoting it as "time to rank" would understate by most
+       of the real time. Say the rep and say what would fix it. */
+    if (c.hours == null) {
+      const t = document.createElement("div");
+      t.textContent = num(c.repNeeded) + " rep to " + c.next + ".";
+      const s = document.createElement("span"); s.className = "sub";
+      s.textContent = "Finish a contract and this becomes a time, from your own rate.";
+      t.appendChild(s);
+      d.appendChild(t);
+      return d;
+    }
+    const line = document.createElement("div");
+    const big = document.createElement("span");
+    big.className = "big";
+    big.textContent = fmtMins(c.hours * 60);
+    line.append(big, document.createTextNode(" to " + c.next));
+    const s = document.createElement("span");
+    s.className = "sub";
+    s.textContent = num(c.repNeeded) + " rep to go · at your " + Math.round(c.repPerHour) + " rep/h";
+    s.title = "Against the reputation an hour you are actually earning, which includes the flying"
+      + " and the loading — not a model of either.";
+    line.appendChild(s);
+    // Runs of the best contract open to you WITH THIS GIVER, and a measured time per run when
+    // enough contracts have finished to have one.
+    const rb = advisor.runsOfBest;
+    if (rb && rb.runs && rb.giver === c.giver) {
+      const r = document.createElement("span");
+      r.className = "sub";
+      const rm = advisor.runMinutes;
+      r.textContent = "≈ " + rb.runs + " × " + rb.title
+        + (rm ? "  ·  ~" + fmtMins(rm.median) + " each" : "");
+      r.title = "Runs of the best contract open to you with this giver, at " + num(rb.rep) + " rep each."
+        + (rm ? "  Run time is the median of your own " + rm.samples + " finished contract(s), accept to turn-in." : "");
+      line.appendChild(r);
+    }
+    d.appendChild(line);
+    return d;
+  }
+
+  function renderRoute() {
+    const body = $("body");
+    body.textContent = "";
+    for (const n of plan.notes) {
+      const d = document.createElement("div"); d.className = "note"; d.textContent = n;
+      body.appendChild(d);
+    }
+    if (!plan.trips.length) {
+      const d = document.createElement("div"); d.className = "empty";
+      d.textContent = plan.contracts.length
+        ? "Nothing left to fly — every accepted leg is delivered."
+        : "Accept a hauling contract and it shows up here.";
+      body.appendChild(d);
+    }
+    plan.trips.forEach((trip, ti) => {
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      const h = document.createElement("span");
+      h.textContent = plan.trips.length > 1 ? "Trip " + (ti + 1) : "Route";
+      const n = document.createElement("span");
+      n.className = "n";
+      n.textContent = trip.landings + " stops · " + fmtMins(trip.totalMinutes) + " · peak " + num(trip.peakScu) + " SCU";
+      // The optimiser falls back to a heuristic past 14 visits — say so rather than imply optimal.
+      if (trip.method === "heuristic") n.textContent += " · approx.";
+      sec.append(h, n);
+      body.appendChild(sec);
+      // ⛔ NO "you are here" row. It was added on the theory that a route should name its origin,
+      // and Sub rejected it flatly: he knows where he is standing — he is standing there. Step 1
+      // must be the next thing he DOES, not a restatement of the present. A numbered list that
+      // spends its first line on something requiring no action is one step of pure noise.
+      // 🔴 ONE NUMBERED STEP = ONE ACTION. A landing that unloads and then loads used to be a
+      // single row carrying every chip at once, which Sub described exactly right: "a bunch of
+      // shit written in number one — I don't know what I need to drop off or what I need to pick
+      // up". Numbering is what a player follows, so the numbers have to match the things they do.
+      // Drop-offs lead at a landing: that is the order at a freight elevator, and it is what the
+      // solver models. So a mixed landing becomes "1. DROP OFF … / 2. PICK UP …", same place,
+      // marked as one landing so it never reads as two flights.
+      let step = 0;
+      // Already collected, not yet delivered. Greyed, ahead of the live steps, because that is
+      // where they happened — the contract then reads start to finish and the interim state is
+      // visible instead of having to be inferred from a route that opens mid-sentence.
+      if (ti === 0) {
+        for (const cp of (plan.completedPickups || [])) {
+          step++;
+          const row = document.createElement("div");
+          row.className = "stop pickup done";
+          const numEl = document.createElement("div");
+          numEl.className = "num";
+          numEl.textContent = "✓";
+          numEl.title = "Already collected — it is in your hold.";
+          const mid = document.createElement("div");
+          mid.className = "mid";
+          const nm = document.createElement("div");
+          nm.className = "nm";
+          nm.textContent = step + ". PICKED UP — " + (plan.locationNames[cp.locationId] || cp.locationId || "unknown");
+          const acts = document.createElement("div");
+          acts.className = "acts";
+          const chip = document.createElement("span");
+          const dot = document.createElement("i");
+          dot.style.cssText = "display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:4px;background:" + colourOf(cp.group);
+          chip.appendChild(dot);
+          const c = document.createElement("span");
+          c.className = "c";
+          c.textContent = (cp.commodity ? cp.commodity + " " : "") + num(cp.scu) + " SCU  ·  aboard";
+          chip.title = cp.title || "";
+          chip.appendChild(c);
+          acts.appendChild(chip);
+          const rt = document.createElement("div");
+          rt.className = "rt";
+          rt.textContent = "—";
+          mid.append(nm, acts);
+          row.append(numEl, mid, rt);
+          body.appendChild(row);
+        }
+      }
+      trip.stops.forEach((s, i) => {
+        const groups = [
+          { kind: "dropoff", verb: "DROP OFF", acts: s.actions.filter((a) => a.kind === "dropoff") },
+          { kind: "pickup", verb: "PICK UP", acts: s.actions.filter((a) => a.kind === "pickup") },
+        ].filter((g) => g.acts.length);
+        groups.forEach((g, gi) => {
+          // Only the first row of a landing owns the flight time; a second action at the same
+          // place is not another journey.
+          const sameLanding = (s.sameSpot && i > 0) || gi > 0;
+          step++;
+          const row = document.createElement("div");
+          row.className = "stop " + g.kind + (sameLanding ? " same" : "");
+          const numEl = document.createElement("div");
+          numEl.className = "num";
+          numEl.textContent = g.kind === "dropoff" ? "↓" : "↑";
+          numEl.title = g.kind === "dropoff" ? "Unload here" : "Load here";
+          const mid = document.createElement("div");
+          mid.className = "mid";
+          const nm = document.createElement("div");
+          nm.className = "nm";
+          nm.textContent = step + ". " + g.verb + " — " + s.name;
+          if (sameLanding) nm.textContent += "  (same landing)";
+          const acts = document.createElement("div");
+          acts.className = "acts";
+          for (const a of g.acts) {
+            const chip = document.createElement("span");
+            const dot = document.createElement("i");
+            dot.style.cssText = "display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:4px;background:" + colourOf(a.group);
+            chip.appendChild(dot);
+            const c = document.createElement("span");
+            c.className = "c";
+            // An untracked contract does not name its commodity, so the tonnage carries the row and
+            // the contract's title goes in the tooltip rather than swamping the line.
+            c.textContent = (a.commodity ? a.commodity + " " : "") + num(a.scu) + " SCU";
+            chip.title = a.title || "";
+            chip.appendChild(c);
+            acts.appendChild(chip);
+            acts.appendChild(document.createTextNode("   "));
+          }
+          const rt = document.createElement("div");
+          rt.className = "rt";
+          rt.textContent = sameLanding ? "—" : fmtMins(s.minutes);
+          // 🔴 THE STEP'S OWN TONNAGE. A step headed DROP OFF states how much comes off; a step
+          // headed PICK UP states how much goes on. See the .ld note in the stylesheet.
+          const moved = g.acts.reduce((n, a) => n + (a.scu || 0), 0);
+          const ld = document.createElement("div");
+          ld.className = "ld";
+          ld.textContent = num(moved) + " SCU";
+          ld.title = g.kind === "dropoff" ? "Comes off here." : "Goes on here.";
+          rt.appendChild(ld);
+          // Where the hold ends up is a fact about the LANDING, not about this action, so it is
+          // stated once, quietly, on the landing's last row.
+          if (gi === groups.length - 1) {
+            const hold = document.createElement("div");
+            hold.className = "hold";
+            hold.textContent = "hold " + num(s.loadAfterScu);
+            hold.title = "In the hold when you leave this stop.";
+            rt.appendChild(hold);
+          }
+          mid.append(nm, acts);
+          row.append(numEl, mid, rt);
+          body.appendChild(row);
+        });
+      });
+    });
+    if (plan.stranded.length) {
+      const d = document.createElement("div");
+      d.className = "note";
+      d.textContent = plan.stranded.length + " contract(s) will not fit this ship even on their own.";
+      body.appendChild(d);
+    }
+    /* 🔴 Legs that must be carried but could not be routed. Never folded away: a route that is
+       missing legs while presenting itself as THE route is the one failure that would make this
+       widget worse than no widget. */
+    if (plan.unrouted.length) {
+      const names = locNames();
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      const h = document.createElement("span"); h.textContent = "Not in the route";
+      const n = document.createElement("span"); n.className = "n"; n.textContent = plan.unrouted.length + " leg(s)";
+      sec.append(h, n);
+      body.appendChild(sec);
+      for (const u of plan.unrouted) {
+        const d = document.createElement("div");
+        d.className = "note";
+        const leg = legOf(u.group);
+        d.textContent = (u.destination || destOf(leg, names)) + " · " + num(u.scu) + " SCU — " + u.reason + ".";
+        body.appendChild(d);
+      }
+    }
+    renderContracts(body);
+  }
+
+  /** The board itself: what is accepted, how much it is, and how sure we are. */
+  function renderContracts(body) {
+    const list = plan.contracts.filter((c) => showDone || !c.ended);
+    if (!list.length) return;
+    const sec = document.createElement("div");
+    sec.className = "sec fold" + (foldContracts ? " closed" : "");
+    const caret = document.createElement("span"); caret.className = "caret"; caret.textContent = foldContracts ? "▸" : "▾";
+    const h = document.createElement("span"); h.textContent = "Contracts";
+    const n = document.createElement("span"); n.className = "n"; n.textContent = list.length + " on the board";
+    sec.append(caret, h, n);
+    sec.title = "Show or hide the contract details.";
+    sec.addEventListener("click", () => {
+      foldContracts = !foldContracts;
+      try { localStorage.setItem(FOLD_KEY, foldContracts ? "1" : "0"); } catch { /* private mode */ }
+      render();
+    });
+    body.appendChild(sec);
+    if (foldContracts) return;
+    for (const c of list) {
+      const card = document.createElement("div");
+      card.className = "card" + (c.ended ? " done" : "") + (c.hidden ? " setaside" : "");
+      const top = document.createElement("div");
+      top.className = "top";
+      const t = document.createElement("div"); t.className = "t"; t.textContent = c.title || c.contractKey;
+      // 🔴 The figure carries its own provenance, in its colour. The badge that used to sit beside
+      // it is gone — see the .amt.src-* note in the stylesheet — but the reason it existed has not
+      // changed, so the same wording is still on the number as a tooltip.
+      const amt = document.createElement("div");
+      amt.className = "amt src-" + (c.source || "unknown");
+      amt.textContent = fmtScu(c);
+      amt.title = (BADGE[c.source] || BADGE.unknown)[1];
+      top.append(t, amt);
+      /* 🔴 SET ASIDE. A player decides to skip a contract long before they open mobiGlas to abandon
+         it, and until then it drags the route and the hold around with it. The game reports a real
+         abandon on its own (`CompletionType[Abandon]`), which ends the contract outright — this is
+         only the gap before that, and it is reversible: track it in mobiGlas and it comes straight
+         back. Not offered on an ended contract, which is already out of the plan. */
+      if (!c.ended) {
+        const x = document.createElement("button");
+        x.type = "button";
+        x.className = "cardx";
+        x.textContent = c.hidden ? "＋" : "✕";
+        x.title = c.hidden
+          ? "Put this contract back in the plan."
+          : "Set aside — drop it from the route and the hold. Track it in mobiGlas to bring it back.";
+        x.addEventListener("click", (e) => {
+          e.stopPropagation();
+          hidden = c.hidden ? hidden.filter((id) => id !== c.missionId) : hidden.concat([c.missionId]);
+          saveHidden();
+          load();
+        });
+        top.appendChild(x);
+      }
+      const sub = document.createElement("div");
+      sub.className = "sub";
+      const where = [];
+      if (c.giver) where.push(c.giver);
+      if (c.missionType) where.push(c.missionType);
+      const done = c.legs.filter((l) => l.dropoffState === "completed").length;
+      where.push(done + "/" + c.legs.length + " delivered");
+      if (c.ended) where.push(c.completion || "ended");
+      if (c.payout != null) where.push(num(c.payout) + " aUEC");
+      for (const w of where) { const s = document.createElement("span"); s.textContent = w; sub.appendChild(s); }
+      card.append(top, sub);
+      // Box chips per leg. ⚠️ A partitioned split is a MODEL of what the game will hand you, not a
+      // reading of it — the engine partitions server-side and logs nothing for SCU hauls.
+      for (const l of c.legs) {
+        if (!l.boxLabel && !l.boxCount) continue;
+        const chips = document.createElement("div");
+        chips.className = "chips";
+        const dot = document.createElement("i");
+        dot.style.cssText = "display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:5px;background:" + colourOf(l.group);
+        chips.appendChild(dot);
+        const txt = document.createElement("span");
+        const parts = [];
+        if (l.destination) parts.push("→ " + l.destination);
+        if (l.commodity) parts.push(l.commodity);
+        txt.textContent = parts.join("  ·  ");
+        chips.appendChild(txt);
+        // 🔴 ONE PILL PER BOX SIZE — the SIZE reads large, the COUNT is a small multiplier beside it.
+        // As a run of text, "12 × 8" was read as a box DIMENSION, and a row of four of them was the
+        // most cluttered thing on the card. A box has one shape, so its size is its whole identity;
+        // how many of them is secondary. Falls back to the flat label when a leg has no breakdown.
+        if (l.boxes && l.boxes.length) {
+          for (const b of l.boxes) {
+            const pill = document.createElement("span");
+            pill.className = "boxpill src-" + (l.boxSource || "partition");
+            const size = document.createElement("b");
+            size.textContent = b.scu + " SCU";
+            const mult = document.createElement("i");
+            mult.textContent = "×" + b.count;
+            pill.append(size, mult);
+            pill.title = b.count + " box" + (b.count > 1 ? "es" : "") + " of " + b.scu + " SCU";
+            chips.appendChild(pill);
+          }
+        } else if (l.boxCount) {
+          const pill = document.createElement("span");
+          pill.className = "boxpill src-" + (l.boxSource || "partition");
+          pill.textContent = l.boxCount + " boxes";
+          chips.appendChild(pill);
+        }
+        if (l.maxContainerScu != null) {
+          const cap = document.createElement("span");
+          cap.className = "boxcap";
+          cap.textContent = "max " + l.maxContainerScu + (l.capSource === "assumed" ? "?" : "");
+          cap.title = l.capSource === "assumed"
+            ? "No cap declared for this contract — the largest box that exists was assumed."
+            : "The largest box size this contract declares.";
+          chips.appendChild(cap);
+        }
+        if (l.boxSource === "partition") {
+          chips.title = "Provisional: the game never logs the box split for a cargo haul, so this is the"
+            + " largest-box-first model against this contract's own container cap.";
+        } else if (l.boxSource === "manifest") {
+          chips.title = "Read from the log — the game enumerated every box for this contract.";
+        }
+        if (l.dropoffState === "completed") {
+          const tick = document.createElement("span"); tick.className = "tick"; tick.textContent = "  ✓";
+          chips.appendChild(tick);
+        }
+        card.appendChild(chips);
+      }
+      body.appendChild(card);
+    }
+    body.appendChild(sourceKey(list));
+  }
+
+  /** The key for the provenance colours. Built from what is actually on screen — a legend listing
+   *  states no card is in is a legend nobody reads twice. */
+  function sourceKey(list) {
+    const key = document.createElement("div");
+    key.className = "srckey";
+    const seen = new Set(list.map((c) => c.source || "unknown"));
+    for (const l of list.flatMap((c) => c.legs)) if (l.boxLabel || l.boxCount) seen.add("box:" + (l.boxSource || "partition"));
+    const ROWS = [
+      ["log", "var(--green)", "SCU stated by the game"],
+      ["manifest", "var(--green)", "SCU listed box by box"],
+      ["pinned", "var(--cyan-bright)", "SCU you typed in"],
+      ["dataset", "var(--cyan-dim)", "SCU from the game files"],
+      ["range", "var(--gold)", "SCU only bounded"],
+      ["unknown", "var(--red)", "SCU unknown"],
+      ["box:manifest", "var(--green)", "boxes listed by the game"],
+      ["box:partition", "var(--gold)", "boxes worked out here"],
+    ];
+    for (const [id, colour, label] of ROWS) {
+      if (!seen.has(id)) continue;
+      const s = document.createElement("span");
+      const i = document.createElement("i"); i.style.background = colour;
+      s.append(i, document.createTextNode(label));
+      key.appendChild(s);
+    }
+    return key;
+  }
+
+  /**
+   * 🔴 THE STOWAGE VIEW — what to load first, and where every box goes.
+   *
+   * The order comes first and the picture second, because the picture is not the instruction. The
+   * instruction is "go to the elevator and lift THIS mission", and the freight elevator UI does not
+   * name missions — it lists cargo. So each step leads with its BOX SIGNATURE (commodity + the
+   * exact split) which is the only handle the player has on which lift is which.
+   *
+   * Focus is the answer to the many-grid problem. A Caterpillar has 14 grids, a Carrack 9, an Idris
+   * 25; drawing every box on every grid at once is wallpaper. Step 1 is focused on open, so the
+   * first thing on screen is the first thing to do, and everything else is still visible behind it.
+   */
+  function renderStow() {
+    const body = $("body");
+    body.textContent = "";
+    if (!plan.ship) {
+      const d = document.createElement("div"); d.className = "empty";
+      d.textContent = "Pick the ship you are flying and the stowage plan appears here.";
+      body.appendChild(d);
+      return;
+    }
+    const m = StowView.model(plan, { autoLoadClasses: autoLoadClasses });
+
+    /* ⛔ Open haulers load themselves — the station's arm places every box and the player never
+       touches one. A stowage diagram for a Hull C describes work that does not exist, so it is not
+       drawn at all rather than drawn and ignored. */
+    if (m.autoLoad) {
+      const d = document.createElement("div");
+      d.className = "noplan";
+      const k = document.createElement("div"); k.className = "k";
+      k.textContent = (plan.ship.displayName || plan.ship.className) + " loads itself.";
+      const why = document.createElement("div"); why.className = "why";
+      why.textContent = "It is an open hauler, so the station's loading arm places every box for you"
+        + " — there is nothing to stow by hand and no order to load in. Use the Route tab for where"
+        + " to fly.";
+      d.append(k, why);
+      body.appendChild(d);
+      return;
+    }
+
+    if (!m.boxes.length) {
+      const d = document.createElement("div"); d.className = "empty";
+      d.textContent = plan.pack
+        ? "Nothing to load — no accepted contract has a known load yet."
+        : "Waiting for the packer.";
+      body.appendChild(d);
+      return;
+    }
+
+    // Focus survives a re-render, but only while its mission is still on the board.
+    if (!m.steps.some((s) => s.missionId === focusMission)) focusMission = m.steps[0].missionId;
+
+    body.appendChild(renderSteps(m));
+    body.appendChild(renderGrids(m));
+  }
+
+  /** The ordered load list. Step 1 is what to lift first — its boxes end up deepest in the hold. */
+  function renderSteps(m) {
+    const wrap = document.createElement("div");
+    wrap.className = "steps";
+    const sec = document.createElement("div");
+    sec.className = "sec";
+    const h = document.createElement("span"); h.textContent = "Load in this order";
+    const n = document.createElement("span"); n.className = "n";
+    n.textContent = m.steps.length + " lift" + (m.steps.length > 1 ? "s" : "") + " · "
+      + m.boxes.length + " boxes";
+    n.title = m.derivedOrder
+      ? "Read off the packer's own placement order — the last drop-off sits deepest, so it is lifted first."
+      : "Stated by the stowage planner.";
+    sec.append(h, n);
+    wrap.appendChild(sec);
+
+    m.steps.forEach((s, i) => {
+      const row = document.createElement("div");
+      row.className = "step" + (s.missionId === focusMission ? " on" : "") + (s.ambiguous ? " clash" : "");
+      row.style.borderLeftColor = StowView.shade(s.missionId, 0);
+      row.title = "Show only this lift in the diagram.";
+      const ord = document.createElement("div");
+      ord.className = "ord";
+      ord.style.background = StowView.shade(s.missionId, 0);
+      ord.textContent = String(s.n);
+      const mid = document.createElement("div");
+      mid.className = "mid";
+
+      /* 🔴 The signature. Commodity first, because that is the column the elevator shows, then the
+         exact box split, because two Processed Food hauls are told apart by 10x8+1x1 vs 4x16. */
+      const sig = document.createElement("div");
+      sig.className = "sig";
+      const what = document.createElement("span"); what.className = "what";
+      const parts = s.signature.split(" — ");
+      what.textContent = parts[0];
+      sig.append(what);
+      if (parts[1]) sig.appendChild(document.createTextNode("  " + parts[1]));
+      sig.title = "Find this at the freight elevator — it does not name missions, so its contents"
+        + " are how you identify it." + (s.title ? "  (" + s.title + ")" : "");
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const bits = [num(s.scu) + " SCU"];
+      if (i === 0 && m.steps.length > 1) bits.push("deepest in the hold");
+      if (i === m.steps.length - 1 && m.steps.length > 1) bits.push("last on, first off");
+      if (s.grids.length) bits.push(s.grids.map((g) => StowView.gridLabel(g, plan.ship && plan.ship.className)).join(" + "));
+      meta.textContent = bits.join("  ·  ");
+      mid.append(sig, meta);
+
+      /* Within one mission, which destination's boxes go in first. Same rule one level down: the
+         last drop-off is loaded first, so the drops are listed in load order too. */
+      if (s.drops.length > 1) {
+        const drops = document.createElement("div");
+        drops.className = "drops";
+        s.drops.forEach((d, di) => {
+          const r = document.createElement("div");
+          r.className = "drop";
+          const dot = document.createElement("i"); dot.style.background = d.colour;
+          const nm = document.createElement("span"); nm.className = "d";
+          nm.textContent = "→ " + (d.destination || "drop-off");
+          const bx = document.createElement("span"); bx.className = "b";
+          bx.textContent = d.boxes.map((b) => b.count + "×" + b.scu).join(" · ");
+          r.append(dot, nm, bx);
+          if (di === 0) {
+            const dp = document.createElement("span"); dp.className = "deep"; dp.textContent = "first in";
+            dp.title = "This destination is delivered last, so its boxes are loaded deepest.";
+            r.appendChild(dp);
+          }
+          drops.appendChild(r);
+        });
+        mid.appendChild(drops);
+      }
+
+      /* ⚠️ An instruction the player cannot act on is worse than no instruction — but so is the
+         same paragraph six times. One line, naming the lifts it collides with, and the reasoning
+         in the tooltip. */
+      if (s.ambiguous) {
+        const c = document.createElement("div");
+        c.className = "clash-why";
+        c.textContent = "Same signature as lift " + list(s.clashWith) + " — any order between them"
+          + (s.clashFixable ? ", or track them to learn the commodity." : ".");
+        c.title = "The freight elevator lists cargo, not missions, so two lifts with the same"
+          + " commodity and the same box split are indistinguishable there.";
+        mid.appendChild(c);
+      }
+
+      row.append(ord, mid);
+      row.addEventListener("click", () => { focusMission = s.missionId; render(); });
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
+  /** The isometric holds. Only grids that received cargo are drawn; the rest are counted. */
+  function renderGrids(m) {
+    const names = locNames();
+    const wrap = document.createElement("div");
+    wrap.className = "gridwrap";
+    const svgs = [];
+    const focused = m.steps.find((s) => s.missionId === focusMission);
+    const sec = document.createElement("div");
+    sec.className = "sec";
+    const h = document.createElement("span"); h.textContent = "Where it goes";
+    const n = document.createElement("span"); n.className = "n";
+    n.textContent = focused ? "lift " + focused.n + " lit up" : "";
+    sec.append(h, n);
+    wrap.appendChild(sec);
+
+    for (const g of m.grids) {
+      const mine = focused ? g.boxes.filter((b) => b.missionId === focusMission).length : 0;
+      const lbl = document.createElement("div");
+      lbl.className = "glabel";
+      const gn = document.createElement("span"); gn.className = "gn";
+      gn.textContent = g.label;
+      const meta = document.createElement("span");
+      meta.textContent = g.spec.w + "×" + g.spec.l + "×" + g.spec.h + " · "
+        + num(g.spec.usedScu) + "/" + num(g.spec.capacityScu) + " SCU · " + g.boxes.length + " boxes";
+      lbl.append(gn, meta);
+      if (mine) {
+        const here = document.createElement("span");
+        here.className = "here";
+        here.textContent = "· " + mine + " from this lift";
+        lbl.appendChild(here);
+      }
+      wrap.appendChild(lbl);
+
+      const box = document.createElement("div");
+      box.className = "isowrap";
+      const svg = StowView.iso(g.spec, g.boxes, { focus: focusMission, depthOf: depthOf, spin: stowSpin });
+      box.appendChild(svg);
+      /* 🔑 The turn-around sits ON the picture, bottom-left, because that is the only thing it acts
+         on and a whole toolbar row for one control was wasted space. Sub asked for rotation twice
+         while a header button for it was already shipping — he never found it up there. */
+      const turn = document.createElement("button");
+      turn.type = "button";
+      turn.className = "spincorner" + (stowSpin ? " on" : "");
+      turn.innerHTML = "&#8635;";
+      turn.title = stowSpin
+        ? "Looking from the far end — the door is behind you. Click to turn back."
+        : "Turn the hold around. A fixed camera always hides the boxes behind the front row.";
+      turn.addEventListener("click", () => {
+        stowSpin = !stowSpin;
+        try { localStorage.setItem(SPIN_KEY, stowSpin ? "1" : "0"); } catch { /* private mode */ }
+        render();
+      });
+      box.appendChild(turn);
+      svgs.push(svg);
+      wrap.appendChild(box);
+    }
+    /* 🔑 ONE SCALE ACROSS THE PAGE. Each drawing takes the share of the panel width its own footprint
+       deserves against the biggest hold on the ship, so a cell is a cell everywhere and the C2's
+       6x9 cubby visibly IS the smaller hold. Sized by ratio rather than by measuring the panel, so
+       it survives a resize with no relayout. */
+    const widest = Math.max.apply(null, svgs.map((s) => Number(s.dataset.vbw)));
+    for (const s of svgs) s.style.width = (Number(s.dataset.vbw) / widest * 100) + "%";
+
+    // Which colour is which drop — without it the diagram is pretty and unreadable.
+    const legend = document.createElement("div");
+    legend.className = "legend";
+    for (const s of m.steps) {
+      for (const d of s.drops) {
+        const leg = legOf(d.group);
+        const el = document.createElement("span");
+        const i = document.createElement("i"); i.style.background = d.colour;
+        el.appendChild(i);
+        el.appendChild(document.createTextNode(cargoOf(leg) + " → " + destOf(leg, names)));
+        legend.appendChild(el);
+      }
+    }
+    wrap.appendChild(legend);
+
+    if (m.emptyGrids > 0) {
+      const d = document.createElement("div");
+      d.className = "note";
+      d.style.color = "var(--faint)";
+      d.textContent = m.emptyGrids + " more grid" + (m.emptyGrids > 1 ? "s" : "")
+        + " on this hull got nothing, so " + (m.emptyGrids > 1 ? "they are" : "it is") + " not drawn.";
+      wrap.appendChild(d);
+    }
+    for (const w of m.warnings) {
+      const d = document.createElement("div"); d.className = "note"; d.textContent = w;
+      wrap.appendChild(d);
+    }
+    if (m.unplaced.length) {
+      const d = document.createElement("div");
+      d.className = "note";
+      d.textContent = m.unplaced.length + " boxes ("
+        + num(m.unplaced.reduce((s, u) => s + u.scu, 0)) + " SCU) do not fit — this is more than one trip.";
+      wrap.appendChild(d);
+    }
+    return wrap;
+  }
+
+  /** Find the leg a packed box belongs to, for its label. */
+  function legOf(group) {
+    if (!group || !plan) return null;
+    for (const c of plan.contracts) for (const l of c.legs) if (l.group === group) return l;
+    return null;
+  }
+  /** locationId -> the name the plan settled on, so the route, the layout legend and the unrouted
+   *  list all call a place the same thing — including places the route deliberately never visits. */
+  const locNames = () => (plan && plan.locationNames) || {};
+  /** Where a leg is going, in the same words the route uses. */
+  function destOf(leg, names) {
+    if (!leg) return "drop-off";
+    return leg.destination || names[leg.toLocation] || "drop-off";
+  }
+  /** What a leg is carrying. Untracked contracts do not name their commodity, so fall back to the
+   *  tonnage rather than printing "cargo" five times in a row. */
+  const cargoOf = (leg) => leg && leg.commodity ? leg.commodity : leg && leg.scu != null ? num(leg.scu) + " SCU" : "cargo";
+
+  function render() {
+    $("tabRoute").classList.toggle("on", view === "route");
+    $("tabLayout").classList.toggle("on", view === "layout");
+    $("tabAdvisor").classList.toggle("on", view === "advisor");
+    $("objBtn").textContent = objective === "fewest-stops" ? "Fewest stops" : "Fastest run";
+    $("doneBtn").textContent = showDone ? "Hide finished" : "Show finished";
+    $("spinBtn").textContent = stowSpin ? "Turned around" : "Turn around";
+    $("spinBtn").classList.toggle("on", stowSpin);
+    $("doneBtn").classList.toggle("on", showDone);
+    if (!plan) return;
+    // 🔴 The auto option NAMES the detected hull, so it has to be redrawn when the plan changes.
+    // It was only ever built once, from the ship-list load at startup — before any plan existed —
+    // so it printed "nothing detected yet" and stayed that way for the session. Sub boarded his C2,
+    // watched the skin turn Crusader, and the picker still claimed nothing was detected.
+    renderShipPicker();
+    renderSummary();
+    renderStartPicker();
+    renderTrack();
+    renderPlaces();
+    /* 🔑 AFTER those two, because each sets its own display. The naming and load checklists belong
+       to the board you are flying; the advisor is about contracts you have NOT taken. Leaving them
+       up opened the Rank tab two screens below its own heading. */
+    if (view === "advisor") { $("track").style.display = "none"; $("places").style.display = "none"; }
+    if (view === "advisor") renderAdvisor();
+    else if (view === "layout") renderStow();
+    else renderRoute();
+  }
+
+  // ── wiring ────────────────────────────────────────────────────────────────
+  $("tabRoute").addEventListener("click", () => { view = "route"; render(); });
+  $("tabLayout").addEventListener("click", () => { view = "layout"; render(); });
+  $("tabAdvisor").addEventListener("click", () => { view = "advisor"; if (!advisor) loadAdvisor(); render(); });
+  $("objBtn").addEventListener("click", () => {
+    objective = objective === "fewest-stops" ? "auec-per-hour" : "fewest-stops";
+    load();
+  });
+  $("doneBtn").addEventListener("click", () => { showDone = !showDone; render(); });
+  $("shipPick").addEventListener("change", () => {
+    shipPick = $("shipPick").value;
+    saveShip(shipPick);
+    load();
+  });
+  $("spinBtn").addEventListener("click", () => {
+    stowSpin = !stowSpin;
+    try { localStorage.setItem(SPIN_KEY, stowSpin ? "1" : "0"); } catch { /* private mode */ }
+    render();
+  });
+  $("startPick").addEventListener("change", () => {
+    startPick = $("startPick").value;
+    saveStart();
+    load();
+  });
+  // The heading is the toggle, BOTH ways. It only opened before, so once Sub expanded a finished
+  // card he could never put it away again. Bound to the heading, not the whole strip, so clicking
+  // a row or typing in a box never collapses the thing you are working in.
+  $("trackHead").addEventListener("click", () => {
+    if ($("track").classList.contains("done")) { trackOpen = true; render(); return; }
+    if (allPinnedNow()) { trackOpen = false; render(); }   // only collapsible once nothing is owed
+  });
+  // Any interaction summons the parent's global cog (settings/arrange reachable), matching mining.
+  document.addEventListener("pointerdown", () => { try { host()?.summonCog?.(); } catch { /* not embedded */ } });
+
+  /* Live contract state. The SSE channel is a CHANGE SIGNAL, not the payload — the plan is
+     re-solved server-side on every push because it depends on the player's overrides too. */
+  let es = null;
+  function connect() {
+    try { es?.close(); } catch { /* already gone */ }
+    es = new EventSource("/hauling/events");
+    es.onmessage = () => refresh();
+    // EventSource retries on its own, but a sidecar restart can leave a dead stream — re-arm.
+    es.onerror = () => { try { es.close(); } catch { /* ignore */ } setTimeout(connect, 4000); };
+  }
+
+  (async () => {
+    await loadConfig();
+    await loadShips();
+    await load();
+    connect();
+  })();
+
+  try { host()?.ready?.(); } catch { /* not embedded */ }
+  // Per-widget settings, opened by the bar's cog. The parent injects its Text size row here too.
+  window.__widgetSettings = () => $("wsettings").classList.add("open");
+  window.__widgetSettingsRoot = () => $("wsettings");
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#wsettings")) $("wsettings").classList.remove("open");
+  });
+  /* 🔴 Hiding the widget mid-edit would strand the canvas-wide keyboard grab: the panel goes away,
+     the interact key stays suspended, and every click on every display stops reaching the game with
+     nothing on screen to explain it. Same rule as notepad/party/chat. */
+  window.__haulingExitTyping = () => {
+    try { document.activeElement?.blur?.(); } catch { /* nothing focused */ }
+    try { host()?.editEnd?.(); } catch { /* not embedded */ }
+  };
+  // The shell's hand-back after it takes window focus. 🔴 This used to be
+  // `querySelector("input")` — ALWAYS the first box — so every attempt to reach box 2 or 3 was
+  // dragged back to box 1. Aim at the box the player is actually in; fall back to the first only
+  // when we have no idea, which is the cold-start case this was written for.
+  window.__haulingFocus = () => {
+    try {
+      const target = wantFocus && wantFocus.isConnected ? wantFocus : $("trackList").querySelector("input");
+      target?.focus();
+    } catch { /* none */ }
+  };
+</script>
+</body>
+</html>

@@ -57,10 +57,10 @@ const GROUPING = `(async () => {
     saveWidget: (id, l) => saved.push([id, JSON.parse(JSON.stringify(l))]),
   });
 
-  // 11 = the 9 canvas widgets + the Blueprint panel (a local, non-iframe widget) + Settings.
+  // 13 = the 11 canvas widgets + the Blueprint panel (a local, non-iframe widget) + Settings.
   // Bump this deliberately when a widget is added — it is the one assertion that notices a
   // registry entry going missing, which would otherwise just look like a widget quietly absent.
-  ok("registry has 12 widgets (incl. the Blueprint panel and Settings)", typeof WIDGETS !== "undefined" && WIDGETS.length === 12, typeof WIDGETS !== "undefined" ? WIDGETS.length : "unreachable");
+  ok("registry has 13 widgets (incl. the Blueprint panel and Settings)", typeof WIDGETS !== "undefined" && WIDGETS.length === 13, typeof WIDGETS !== "undefined" ? WIDGETS.length : "unreachable");
   ok("starts ungrouped", GROUPS.length === 0, GROUPS.length);
   const party = WBY.party, mining = WBY.mining, notepad = WBY.notepad;
   ok("test widgets shown", shown(party) && shown(mining) && shown(notepad));
@@ -551,12 +551,33 @@ const SWEEPS = `(async () => {
   ok("every skin's trinket art resolves", missingArt.length === 0, [...new Set(missingArt)].slice(0, 6).join(" | "));
 
   // ── size sweep: both ends of every widget's clamp range ─────────────────────
+  // Resolves once the frame's own document reports it is embedded. Falls through after ~1.5s and
+  // measures anyway — a widget that NEVER embeds is a real failure worth surfacing, not a wait.
+  const embeddedReady = async (w) => {
+    if (w.local) return true;
+    for (let i = 0; i < 60; i++) {
+      try {
+        const fr = frameEl(w);
+        const d = fr && fr.contentDocument;
+        if (d && d.body && d.body.classList.contains("embedded")) return true;
+      } catch { /* cross-document timing */ }
+      await sleep(25);
+    }
+    return false;
+  };
   const sizeBad = [];
   for (const w of WIDGETS) {
     for (const [lbl, ww, hh] of [["min", w.size.minW, w.size.minH], ["max", w.size.maxW, w.size.maxH]]) {
       if (ww == null) continue;
       w.s.w = Math.min(ww, 1600); w.s.h = Math.min(hh, 1200); // keep it inside the test viewport
-      applyFrame(w); await sleep(20);
+      // 🔴 WAIT FOR THE PAGE TO BE EMBEDDED — a fixed sleep is a flake generator here. An embedded
+      // widget page only fills its frame once it has read ?embedded=1 and set body.embedded; until
+      // then webview and bindingwidget render at their STANDALONE fixed size (420x520 / 620x340),
+      // overflowing a min-size frame by exactly that difference. Measured mid-load, the check
+      // reports a failure that says nothing about the widget. It showed up as the LAST widgets in
+      // the registry failing together the moment missions.html grew — the tail of the sweep is
+      // where a fixed budget runs out first.
+      applyFrame(w); await embeddedReady(w); await sleep(20);
       if (!fits(w)) sizeBad.push(w.key + "@" + lbl + " " + JSON.stringify(innerFit(w)));
       const b = frameBox(w);
       if (b.width < 40 || b.height < 30) sizeBad.push(w.key + "@" + lbl + " collapsed to " + Math.round(b.width) + "x" + Math.round(b.height));
@@ -1168,11 +1189,20 @@ const MIDRAWERS = `(async () => {
   // The fixture paints during canvas init, which can land after this suite starts. Wait for the
   // drawers rather than assuming they are there — the alternative is a suite that fails as a
   // harness ERROR (reading .querySelectorAll of undefined) and says nothing about the feature.
-  for (let i = 0; i < 40 && pool.querySelectorAll(".mi").length < 2; i++) await sleep(50);
-  ok("both drawers rendered", pool.querySelectorAll(".mi").length === 2,
-     String(pool.querySelectorAll(".mi").length));
-  const chipsOf = (i) => [...pool.querySelectorAll(".mi")[i].querySelectorAll(".mi-chip")];
-  const label = (c) => (c.querySelector(".ck") ? c.querySelector(".ck").textContent : "");
+  // 🔑 ONE group is now the correct answer for a fixture with no standing bar. Rank and
+  // Reputation moved into the MAIN row (Sub's PILL_ORDER, 2026-08-14), so the faction group has
+  // nothing left to draw unless there is a standing bar — and it self-hides rather than render an
+  // empty heading. This used to wait for two and then index [1] blindly, which turned the change
+  // into a bare "reading .querySelectorAll of undefined" harness error naming no feature: exactly
+  // the failure mode the comment below was written to prevent, reintroduced by indexing.
+  for (let i = 0; i < 20 && pool.querySelectorAll(".mi").length < 1; i++) await sleep(50);
+  const groups = pool.querySelectorAll(".mi").length;
+  ok("the mission group rendered", groups >= 1, String(groups));
+  const chipsOf = (i) => {
+    const g = pool.querySelectorAll(".mi")[i];
+    return g ? [...g.querySelectorAll(".mi-chip")] : [];
+  };
+  const label = (c) => (c && c.querySelector(".ck") ? c.querySelector(".ck").textContent : "");
   const value = (c) => (c.querySelector(".cv") ? c.querySelector(".cv").textContent.replace(/\\s+/g, " ").trim() : c.textContent.trim());
 
   const mi = chipsOf(0);
@@ -1187,14 +1217,17 @@ const MIDRAWERS = `(async () => {
   const other = mi.find((c) => label(c) === "Other pools");
   ok("'Other pools' says what the number COUNTS", /only there/.test(value(other)), value(other));
 
-  const fac = chipsOf(1);
-  ok("the faction is a heading, not a chip repeating the drawer's own title",
-     document.querySelector(".mi-faction").textContent === "Headhunters" &&
-     !fac.some((c) => label(c) === "Faction"),
+  // 🔑 RE-POINTED: Rank and Reputation are MAIN-ROW pills now (PILL_ORDER, 2026-08-14), so they
+  // are found in group 0, not in a faction group. The faction still leads its own group when
+  // there is a standing bar to show, and is never repeated as a chip.
+  const fac = chipsOf(0);
+  const facHead = document.querySelector(".mi-faction");
+  ok("the faction is a heading, not a chip repeating the group's own title",
+     (!facHead || facHead.textContent === "Headhunters") && !fac.some((c) => label(c) === "Faction"),
      fac.map(label).join(","));
   // 🔑 The rank the giver wants, by NAME. The ladders are bundled; 93% of ranked missions resolve.
   const rank = fac.find((c) => label(c) === "Rank needed");
-  ok("the required rank is NAMED, not a bare index", value(rank) === "Contractor", value(rank));
+  ok("the required rank is NAMED, not a bare index", !!rank && value(rank) === "Contractor", rank && value(rank));
   // 🔴 The whole point. Two awards, same faction, DIFFERENT scopes — separate tracks, which is
   // why they do not add to 250. Rendered as bare numbers this read as a bug.
   const rep = fac.find((c) => label(c) === "Reputation");
@@ -1202,6 +1235,38 @@ const MIDRAWERS = `(async () => {
   ok("faction reputation is labelled as such", rep && /\\+200/.test(value(rep)), rep && value(rep));
   ok("...and AFFINITY is named rather than shown as a second mystery number",
      aff && /\\+50/.test(value(aff)), aff && value(aff));
+
+  // ── The standing bar on a contract that pays a track we do not rank ──────────────────────
+  // 🔴 THE BAR USED TO VANISH. Sub accepted a Headhunters contract and his Headhunters standing
+  // disappeared: that contract awards reputation only on ShipCombat_HeadHunters, which
+  // REP_SCOPE_DENY excludes, so primaryRep returned null and took the whole bar with it. 384 of
+  // 4,075 contracts pay only denied scopes and 88 of those are Headhunters, so it was most of a
+  // faction's board. It now falls back to the giver's own tracked standing.
+  // Driven through repBarHtml directly — the shape is the contract, and building a whole mission
+  // fixture to reach it would test the fixture.
+  const barOff = document.createElement("div");
+  barOff.innerHTML = repBarHtml({ scope: "FactionReputation", faction: "Headhunters",
+    standing: "Sr. Contractor", estimate: 7825, curMin: 5000, nextMin: 15000,
+    nextName: "Veteran Contractor", nextRank: 4, nextRewards: [], max: false, noData: false,
+    offTrack: true });
+  ok("a contract paying an unranked track still shows the giver's standing",
+     /Sr. Contractor/.test(barOff.textContent), barOff.textContent.slice(0, 60));
+  // 🔑 ...and says so, because the bar sits beside that mission's own reputation pill. Silence
+  // there would read as "finishing this advances it", which is exactly what it will not do.
+  ok("...marked as not coming from THIS contract",
+     /not from this one/.test(barOff.textContent), barOff.textContent.slice(0, 90));
+  const offTip = barOff.querySelector(".mi-info");
+  ok("...with the reason in the same affordance as the rest of the caveats",
+     !!offTip && /will not move this bar/.test(offTip.getAttribute("data-tip") || ""),
+     (offTip && offTip.getAttribute("data-tip") || "").slice(-80));
+
+  // The ordinary case must NOT carry the marker, or it stops meaning anything.
+  const barOn = document.createElement("div");
+  barOn.innerHTML = repBarHtml({ scope: "FactionReputation", faction: "Headhunters",
+    standing: "Sr. Contractor", estimate: 7825, curMin: 5000, nextMin: 15000,
+    nextName: "Veteran Contractor", nextRank: 4, nextRewards: [], max: false, noData: false });
+  ok("...and a contract that DOES advance the bar is not marked",
+     !/not from this one/.test(barOn.textContent), barOn.textContent.slice(0, 60));
   return out;
 })()`;
 
@@ -1217,27 +1282,137 @@ const MIDRAWERS = `(async () => {
 const IDLEPANEL = `(async () => {
   ${PRELUDE}
   const pool = document.getElementById("pool");
-  const heads = [...pool.querySelectorAll(".ra-h")].map((e) => e.textContent);
-  // Three sections, not four: the per-hour rates were folded INTO "This session" on 2026-08-13.
+
+
+  // ── The picker's third state ────────────────────────────────────────────────────────────
+  // 🔑 Sub, 2026-08-15: there was no way BACK to this panel once a mission was accepted. Clearing
+  // the pick means AUTO, and auto immediately re-picks — so "deselect" was not expressible and
+  // needed a state of its own. Driven through renderPicker with a stubbed view rather than the
+  // live tracker, so the suite never changes what Sub's own app is tracking.
+  renderPicker({ missions: [{ id: "m1", title: "Turf War", hasPool: true }], selectedId: null, title: "Turf War" });
+  const opts = () => [...document.querySelectorAll("#missionMenu .opt")].map((o) => o.dataset.id);
+  ok("the picker offers a way back to the idle screen", opts().indexOf("__idle__") >= 0, opts().join(" | "));
+  ok("...as a third choice beside auto and a pinned mission", opts().length === 3, opts().join(" | "));
+  ok("...listed under Auto, since both mean 'not a specific mission'",
+     opts()[0] === "" && opts()[1] === "__idle__", opts().join(" | "));
+  renderPicker({ missions: [{ id: "m1", title: "Turf War", hasPool: true }], selectedId: "__idle__", title: null });
+  const active = [...document.querySelectorAll("#missionMenu .opt.active")].map((o) => o.dataset.id);
+  ok("...and shows as the live choice when it is the one selected",
+     active.join(",") === "__idle__", active.join(",") || "(none active)");
+  ok("...while Auto stops claiming to be active",
+     !document.querySelector('#missionMenu .opt[data-id=""]').classList.contains("active"));
+
+  // ⚠️ Read the heading's TITLE CELL, not its whole text: two headings now carry a circled-i
+  // button inside them, so raw textContent reads "Standingi" and the assertion would be about
+  // punctuation rather than order.
+  const heads = [...pool.querySelectorAll(".ra-h")].map((e) => {
+    const first = e.querySelector("span");
+    return (first ? first.textContent : e.textContent).trim();
+  });
+  // The per-hour rates are folded INTO "This session" (2026-08-13). "Latest" split in two
+  // (2026-08-15) and the blueprint half then became a row of PICTURES sized by the widget's
+  // WIDTH, so only the missions list still competes for leftover height. Standing sits directly
+  // under Closest to done, because it is the same question asked a second way.
   ok("the idle panel is in the documented order",
-     heads.join(" | ") === "Closest to done | This session | Latest",
+     heads.join(" | ") === "Closest to done | Next rank | This session | Latest blueprints | Latest missions",
      heads.join(" | "));
   ok("...with a rule between what to do next and what the session was worth",
      !!pool.querySelector(".ra-rule"));
 
-  // Closest to done: the half that answers "what should I go do".
-  const cp = [...pool.querySelectorAll(".cp")];
-  ok("it lists what you are closest to finishing", cp.length === 2, String(cp.length));
-  ok("...naming the pool, the count and what is left",
-     cp[0].querySelector(".cp-n").textContent === "Turf War" &&
-     cp[0].querySelector(".cp-c").textContent === "5 of 7" &&
-     /2/.test(cp[0].querySelector(".cp-l").textContent),
-     cp[0].textContent.trim().slice(0, 60));
+  // Closest to done: the half that answers "what should I go do". Pinned to the SHORTLIST layout
+  // (Sub settled on it 2026-08-15), so the switcher no longer touches this section at all.
+  const sl = [...pool.querySelectorAll(".sl-r")];
+  ok("it lists what you are closest to finishing", sl.length === 4, String(sl.length));
+  // 🔴 THE ROW NAMES THE POOL, NOT ONE OF ITS CONTRACTS. This list used to iterate contracts, so
+  // one pool fed by many of them filled the panel with itself — Sub saw four rows that were four
+  // titles of the SAME pool, all reading 5/8. 65 of the 89 pools span more than one title, so it
+  // was the normal case. The fixture's first pool is 26 variants across 3 titles.
+  ok("...naming the POOL rather than one of its contracts",
+     sl[0].querySelector(".sl-n").textContent === "Mercenary · Headhunters" &&
+     sl[0].querySelector(".sl-c").textContent === "5/7",
+     sl[0].querySelector(".sl-n").textContent);
+  // 🔑 TYPE FIRST, GIVER SECOND (Sub): what kind of work it is, is what you decide on.
+  ok("...type first, giver second",
+     sl[0].querySelector(".sl-n").textContent.indexOf("Mercenary ·") === 0,
+     sl[0].querySelector(".sl-n").textContent);
   ok("...with a bar that matches the fraction, not a guess",
-     cp[0].querySelector(".cp-bar i").style.width === "71%",
-     cp[0].querySelector(".cp-bar i").style.width);
+     sl[0].querySelector(".sl-bar i").style.width === "71%",
+     sl[0].querySelector(".sl-bar i").style.width);
+  const sub0 = sl[0].nextElementSibling;
   ok("...and where to pick it up, because a suggestion you cannot act on is a statistic",
-     /Rat's Nest/.test(cp[0].querySelector(".cp-w").textContent));
+     /Rat's Nest/.test(sub0.textContent), sub0.textContent.trim());
+  // What you still need leads the sub-line: the row's most useful fact, and the only thing that
+  // separates two pools sharing a giver and a type.
+  const need0 = sub0.querySelector(".cp-need");
+  ok("...and what you still need to finish it",
+     !!need0 && need0.textContent.indexOf("need Karna Rifle") === 0,
+     need0 ? need0.textContent.trim() : "(no .cp-need)");
+  ok("...with a count rather than the whole list, which the popover carries",
+     !!need0 && need0.textContent.indexOf("+1") > 0, need0 ? need0.textContent.trim() : "");
+  // 🔴 NO HORIZONTAL SCROLLBAR. The pool box is overflow:auto, so a sub-line that cannot shrink pushes
+  // the panel wider than the widget and grows one across the bottom. Sub hit exactly that with a
+  // third element on this row. Asserted at the widget's NARROWEST, which is where it shows first.
+  const scroller = document.querySelector("#panel .pool") || pool;
+  // ⚠️ Its own handle: the shared panel const is declared further down, in the picture-row
+  // section, and a suite body is one scope — reaching for it here is a temporal-dead-zone throw,
+  // which the harness reports as a bare error naming no feature.
+  const panelEl = document.getElementById("panel");
+  panelEl.style.width = "300px";
+  await sleep(120);
+  ok("...and the row never grows a horizontal scrollbar, even at the narrowest width",
+     scroller.scrollWidth - scroller.clientWidth === 0,
+     (scroller.scrollWidth - scroller.clientWidth) + "px over");
+  panelEl.style.width = "380px";
+  await sleep(120);
+  // A pool fed by several contracts says so — Sub asked for an indicator that the one name on
+  // screen is not the only way to farm it. The circled i, not an eye: an eye was tried on
+  // 2026-08-12 and "read as something else entirely".
+  const cpInfo = sl[0].querySelector(".mi-info");
+  ok("...and flags that other contracts fill the same pool", !!cpInfo, sl[0].textContent.trim());
+  ok("...naming them in the popover rather than on the row",
+     !!cpInfo && /3 different contracts/.test(cpInfo.getAttribute("data-tip") || ""),
+     (cpInfo && cpInfo.getAttribute("data-tip") || "").slice(0, 70));
+  // The way out to the pool's own page. The uuid IS the address.
+  const cpLink = sub0.querySelector(".cp-link");
+  ok("...and offers the pool's own page", !!cpLink && cpLink.dataset.pool.length === 36,
+     cpLink ? cpLink.dataset.pool : "(no link)");
+
+  // 🔴 TWO POOLS CAN SHARE A NAME. Sub has two "Ship Mining · Shubin Interstellar" pools open at
+  // once — same giver, same type, overlapping contract titles, both mining lasers and radars.
+  // Appending the missing blueprint to the NAME was tried and measured useless: the combined
+  // string does not fit a 380px row, so both ellipsised to the same thing and the disambiguator
+  // was exactly the part that got cut. The sub-line is where it has room.
+  const slNames = [...pool.querySelectorAll(".sl-n")].map((e) => e.textContent);
+  const dupe = slNames.filter((x) => x === "Ship Mining · Shubin Interstellar");
+  ok("two pools sharing a giver and a type both still appear", dupe.length === 2, slNames.join(" | "));
+  const slNeeds = [...pool.querySelectorAll(".sl-sub .cp-need")].map((e) => e.textContent.trim());
+  ok("...told apart by what you still need, not by a truncated name",
+     slNeeds[1] !== slNeeds[3] && slNeeds[1].length > 0, slNeeds.join(" | "));
+
+  // ── Standing with your mission givers ──────────────────────────────────────────────────
+  // 🔴 THE REP NUMBER IS A FLOOR in every layout: the game never reports reputation anywhere the
+  // app can read, so it is reconstructed from the player's own completions and cannot count what
+  // happened before the app existed. Each layout must carry the circled i that says so.
+  {
+    const h = [...pool.querySelectorAll(".ra-h")].map((e) => {
+      const first = e.querySelector("span");
+      return (first ? first.textContent : e.textContent).trim();
+    });
+    ok("the standings segment is on screen", h.length >= 2 && h[0] === "Closest to done", h.join(" | "));
+    ok("...directly under what to go do next, above the scoreboard", h.indexOf("This session") > 1, h.join(" | "));
+    const seg = [...pool.querySelectorAll(".ra-sec")][1];
+    ok("...saying the rep total is an estimate", !!seg.querySelector(".mi-info"),
+       seg.querySelector(".ra-h") ? seg.querySelector(".ra-h").textContent.trim() : "");
+    // Max-rank givers are dropped: there is no next rank to incentivise.
+    ok("...and never lists a giver with nothing left to earn",
+       seg.textContent.indexOf("Maxed Faction") < 0, seg.textContent.slice(0, 60));
+  }
+  // The chosen layout's own claim.
+  const st0 = pool.querySelector(".st-go");
+  ok("rep is expressed as contracts, which is the actionable number",
+     !!st0 && /contract/.test(st0.textContent), st0 ? st0.textContent.trim() : "");
+  ok("...and approximate, because rep per contract varies with rank",
+     !!st0 && st0.textContent.indexOf("~") === 0, st0 ? st0.textContent.trim() : "");
 
   // The session half.
   const ss = [...pool.querySelectorAll(".ss > div")].map((d) => d.querySelector(".ss-l").textContent);
@@ -1253,11 +1428,110 @@ const IDLEPANEL = `(async () => {
      && getComputedStyle(ssRows[0]).gridTemplateColumns === getComputedStyle(ssRows[1]).gridTemplateColumns,
      ssRows.length + " rows");
 
-  // The size-driven list.
+  // 🔑 THE PACE IS ON SCREEN, not only in a tooltip. It was demoted into a title attribute when
+  // the old two-column "Per hour · this grind" block was folded in on 2026-08-13, and Sub
+  // asked for exactly that number back on 2026-08-15 ("what you're trending at at the rate that
+  // you're going"). The fixture's rep pace is 1480 against 1240 in the last hour.
+  const repStat = ssRows[1].children[0];
+  const pace = repStat.querySelector(".ss-pace");
+  ok("the rate shows what the grind is TRENDING at, not just the last hour",
+     !!pace, repStat.textContent.trim());
+  ok("...as a suffix on the figure it qualifies, inside the same stat",
+     !!pace && repStat.querySelector(".ss-n").contains(pace)
+     && repStat.querySelector(".ss-n").textContent.trim().indexOf("1.2k") === 0,
+     repStat.querySelector(".ss-n").textContent.trim());
+  ok("...set smaller than the measured figure it hangs off, being an extrapolation",
+     !!pace && parseFloat(getComputedStyle(pace).fontSize)
+        < parseFloat(getComputedStyle(repStat.querySelector(".ss-n")).fontSize),
+     pace ? getComputedStyle(pace).fontSize : "");
+  // A rate the game never reported must stay a dash — a pace suffix on nothing would invent one.
+  ok("...and a rate with no data is still a plain dash",
+     !!ssRows[1].children[1].querySelector(".rt-na"),
+     ssRows[1].children[1].textContent.trim());
+
+  // ── Latest blueprints, as pictures ──────────────────────────────────────────────────────
+  // Sized by the widget's WIDTH (how many fit across), not its height, so unlike the missions
+  // list it takes a fixed slice of the panel.
   const panel = document.getElementById("panel");
-  const ul = document.getElementById("raLatest");
-  const rows = () => ul.querySelectorAll("li:not(.ra-more)").length;
-  const at = (h) => { panel.style.height = h + "px"; window.__fitLatest(); return rows(); };
+  const artRow = document.getElementById("raLatestArt");
+  const tiles = () => artRow.querySelectorAll(".bt").length;
+  // 🔑 DRIVE THE FIT, do not resize and hope. Same reasoning as the row-count assertions below:
+  // layout callbacks are unreliable in a window the compositor considers hidden, so a suite that
+  // waits on a ResizeObserver is measuring the harness. (A real drag WAS verified separately, in
+  // both directions.) The panel width is set, the fit is called, then it is measured.
+  const across = (w) => { panel.style.width = w + "px"; window.__fitLatest(); return tiles(); };
+  ok("recent blueprints are shown as pictures", !!artRow && tiles() >= 2, String(artRow && tiles()));
+  // The tracker's registry entry is { w: 380, minW: 300 }. Sub put his widget at "about the
+  // smallest size that someone will reasonably set it to" and asked for TWO there, so 380 => 2
+  // is the anchor the 160px minimum tile was solved for — not a taste call.
+  ok("...two across at the widget's default width", across(380) === 2, String(across(380)));
+  ok("...still two at the narrowest the widget can go", across(300) === 2, String(across(300)));
+  ok("...more as it gets wider", across(640) > 2 && across(900) > across(640),
+     across(380) + " -> " + across(640) + " -> " + across(900));
+  ok("...capped at ten however wide it gets", across(3000) <= 10, String(across(3000)));
+  across(380);
+  ok("...with a bigger tile when there are fewer of them",
+     parseFloat(getComputedStyle(artRow.querySelector(".bt-art")).height) > 90,
+     getComputedStyle(artRow.querySelector(".bt-art")).height);
+  across(900);
+  ok("...and a smaller one when there are more",
+     parseFloat(getComputedStyle(artRow.querySelector(".bt-art")).height) < 90,
+     getComputedStyle(artRow.querySelector(".bt-art")).height);
+  across(380);
+  // 🔑 The capture is tried FIRST and the clay render is the fallback — the render is grey,
+  // untextured and shared between items that reuse a model, so it shows a shape, not an identity.
+  const CAP = "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
+  const REN = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  const firstImg = artRow.querySelector(".bt-i");
+  ok("...leading with the crowdsourced fabricator capture",
+     !!firstImg && firstImg.getAttribute("src") === CAP,
+     firstImg ? firstImg.getAttribute("src") : "(no img)");
+  ok("...carrying the render as a fallback for when that 404s",
+     !!firstImg && !!firstImg.getAttribute("data-fb"),
+     firstImg ? String(firstImg.getAttribute("data-fb")) : "");
+  // ⚠️ The fixture's every-third entry has no capture, so the row must not be all-captures.
+  across(900);   // index 2 is the render-only fixture entry, so widen until it is on screen
+  const srcs = [...artRow.querySelectorAll(".bt-i")].map((i) => i.getAttribute("src"));
+  ok("...and going straight to the render when there is no capture at all",
+     srcs.some((s) => s === REN), srcs.map((s) => (s === CAP ? "capture" : s === REN ? "render" : s)).join(" | "));
+  ok("...naming each one, because the render alone cannot identify an item",
+     artRow.querySelectorAll(".bt-n").length === tiles(), String(tiles()));
+
+  const mul = document.getElementById("raLatestMissions");
+  const mrows = () => mul.querySelectorAll("li:not(.ra-more)").length;
+  const at = (h) => { panel.style.height = h + "px"; window.__fitLatest(); return mrows(); };
+
+  // ⚠️ Size the panel FIRST. At the harness's default height this list holds one row, and that
+  // row happens to be one carrying an aUEC figure — so the "some rows have no figure" assertion
+  // below passed or failed on which mission sorted first, not on the behaviour.
+  at(900);
+  ok("the last completed missions are listed again", !!mul && mrows() >= 1, String(mul && mrows()));
+  ok("...with the aUEC the game actually logged, where it logged one",
+     !!mul.querySelector(".ra-val"), mul.textContent.slice(0, 50));
+  // 🔑 A calculated-reward contract logs no payout. Omit the figure; never print a zero, which
+  // would read as "this paid nothing" rather than "the game did not say".
+  ok("...and no figure at all on the ones it did not",
+     mrows() > mul.querySelectorAll(".ra-val").length,
+     mrows() + " rows, " + mul.querySelectorAll(".ra-val").length + " with a value");
+
+  // 🔑 The picture row is fixed-height, so the missions list is what absorbs the leftover — and
+  // it must still GROW with the widget rather than being squeezed out by the art above it.
+  // (The two lists briefly SHARED the leftover height; the blueprint half became a width-driven
+  // picture row on 2026-08-15, so only this one is height-driven now.)
+  ok("...growing as the widget gets taller", at(900) > at(420), at(420) + " -> " + at(900));
+  // 🔴 The "+N more" line is a full 21px row, not the 15px it was first guessed at — it is an li
+  // in the same list and inherits the same padding. Nothing reserved it, so a truncated list
+  // rendered its last row and had the more-line sliced in half by the section's overflow. It read
+  // as a rendering fault. Whenever a list is truncated, its rows plus that line must FIT.
+  const fits = (u) => {
+    const more = u.querySelector(".ra-more");
+    if (!more) return true;
+    return Math.round(more.getBoundingClientRect().bottom) <= Math.round(u.getBoundingClientRect().bottom) + 1;
+  };
+  at(640);
+  ok("a truncated list leaves room for its own '+N more' line", fits(mul),
+     String((mul.querySelector(".ra-more") || {}).textContent));
+
   const tall = at(900), mid = at(500), small = at(300), tiny = at(120);
   ok("a tall widget shows more rows than a short one", tall > small, tall + " vs " + small);
   ok("...capped at ten however tall it gets", tall <= 10, String(tall));
@@ -1265,9 +1539,64 @@ const IDLEPANEL = `(async () => {
   // 🔴 The bug this suite exists for. Sub, collapsing the panel to its minimum: "it doesn't show
   // anything under Latest. It's just nothing." A heading over a void is worse than one row.
   ok("NEVER empty, however small the widget gets", tiny >= 1, String(tiny));
-  ok("...and it says how many it is not showing", !!ul.querySelector(".ra-more"),
-     ul.textContent.slice(0, 60));
+  // ⚠️ A height where there is something to truncate AND room to say so. Measured: 700-800 shows
+  // one row and drops the line (correctly — it would be clipped), 900 shows 2 with the count,
+  // 1000 shows 7 with it, and by 1100 all ten fit so there is no count to show at all. Both ends
+  // are legitimate, which is exactly why this needs a measured height rather than a big number.
+  at(1000);
+  // 🔑 ASSERT THE RULE, NOT A HAND-PICKED HEIGHT. Both outcomes are legitimate here — a list that
+  // shows everything has no count to give, and one squeezed to a single row DROPS the count
+  // rather than let the overflow slice it in half — so pinning this to one pixel height made the
+  // assertion about my choice of number instead of about the behaviour. It failed twice that way
+  // at heights that were behaving perfectly. The contract is: if rows are hidden AND another row
+  // would fit, the count must be there.
+  {
+    const shown = mrows();
+    const room = mul.getBoundingClientRect().height;
+    const hidden = shown < (current.recentMissions || []).length;
+    const roomForCount = (shown + 1) * 21 <= room + 1;
+    ok("...and it says how many it is not showing, whenever there is room to say it",
+       !hidden || !roomForCount || !!mul.querySelector(".ra-more"),
+       shown + " shown, room " + Math.round(room) + "px, hidden=" + hidden
+       + ", counted=" + !!mul.querySelector(".ra-more"));
+  }
   at(560);
+
+  // What is worth guarding here is not styling but the two things the panel can get wrong:
+  // printing an aUEC figure without saying it is an estimate, and inventing a number for a
+  // contract that carries none. The fixture's fourth pool ("Deep space hit") has no payout and
+  // no run length precisely so that second case is exercised.
+  // 🔴 NO ECONOMICS IN THIS SECTION. Sub, 2026-08-15: the per-hour figure was only ever meant for
+  // the session tracker, "NOT with the closest to done". A first pass hung each pool's aUEC/hr,
+  // payout and run length off these rows and it was wrong about what the section is for. The
+  // assertion is kept pointed at the ABSENCE, because the fields are still on the view model and
+  // rendering them is a one-line temptation.
+  const slText = [...pool.querySelectorAll(".sl")].map((e) => e.textContent).join(" ");
+  ok("closest-to-done carries no rate, payout or run length",
+     slText.indexOf("/hr") < 0 && slText.indexOf("aUEC") < 0 && slText.indexOf("~") < 0,
+     slText.slice(0, 80));
+  ok("...each row with its count, its bar and what is left",
+     !!sl[0].querySelector(".sl-c") && !!sl[0].querySelector(".sl-bar i") && !!sl[0].querySelector(".sl-left"),
+     sl[0].textContent.trim());
+  ok("...ordered closest-first, as the view already sorted them",
+     sl[0].querySelector(".sl-left").textContent.trim() === "2 to go", sl[0].textContent.trim());
+
+  // The sections Sub asked to keep are there, and in his order.
+  const headTitles = () => [...pool.querySelectorAll(".ra-h")].map((e) => {
+    const first = e.querySelector("span");
+    return (first ? first.textContent : e.textContent).trim();
+  });
+  {
+    const h = headTitles();
+    ok("the scoreboard and both Latest sections survive",
+       h.length === 5 && h[2] === "This session"
+       && h[3] === "Latest blueprints" && h[4] === "Latest missions", h.join(" | "));
+    ok("...and what to go do next still leads",
+       h[0] === "Closest to done" && !!pool.querySelector(".ss") && !!document.getElementById("raLatestArt"),
+       h[0]);
+  }
+
+  panel.style.width = "";
   return out;
 })()`;
 
@@ -1903,6 +2232,52 @@ const LIFECYCLE = `(async () => {
   return out;
 })()`;
 
+// ── Suite: hiding a typing widget releases the keyboard grab ──────────────────
+// editStart() arms a canvas-WIDE grab (notepadEditing → canHover everywhere) and hiding a widget
+// UNLOADS its iframe — so a widget hidden mid-typing must release the grab on the way out, or it
+// leaks with no page left to lower it. notepad/party/chat always did this via onHide; twitchChat
+// and webView defined the release function and the canvas never called it. Negative-controlled:
+// removing twitchChat's onHide turns "hiding it releases the grab" red.
+const TYPINGGRAB = `(async () => {
+  ${PRELUDE}
+  window.__editing = false;
+  for (const key of ["twitchChat", "webView"]) {
+    const w = WBY[key];
+    setWidgetVisible(w, true);
+    await sleep(250);
+    let btn = null;
+    try { btn = document.getElementById("wf-" + key).contentWindow.document.getElementById("typeBtn"); } catch { /* frame never loaded */ }
+    ok(key + ": the page has a type-mode button", !!btn);
+    if (!btn) continue;
+    btn.click();
+    await sleep(60);
+    ok(key + ": typing arms the canvas grab", window.__editing === true);
+    setWidgetVisible(w, false);
+    await sleep(150);
+    ok(key + ": hiding it releases the grab", window.__editing === false);
+  }
+  return out;
+})()`;
+
+// ── Suite: a page error reaches the sidecar ───────────────────────────────────
+// The canvas forwards window error events to POST /api/client-error (its own console does not
+// exist packaged). Drive it with a synthetic ErrorEvent and read it back from diagnostics —
+// end to end through the real route. Negative-controlled: with the forwarding hook removed
+// from missions.html, "a page error reaches the sidecar" goes red.
+const CLIENTERR = `(async () => {
+  ${PRELUDE}
+  const tag = "harness-synthetic-error-" + Date.now();
+  window.dispatchEvent(new ErrorEvent("error", { message: tag }));
+  await sleep(400);
+  let d = null;
+  try { d = await (await fetch("/api/diagnostics", { cache: "no-store" })).json(); } catch { d = null; }
+  const errs = (d && d.recentClientErrors) || [];
+  ok("a page error reaches the sidecar", errs.some((e) => e.msg === tag), JSON.stringify(errs.slice(-3)).slice(0, 140));
+  ok("...tagged with where it came from", errs.some((e) => e.msg === tag && (e.from === "canvas" || e.from === "tracker-page")));
+  ok("the diagnostics log tail is present or says why not", !!(d && d.logTail && (d.logTail.lines.length || d.logTail.note)));
+  return out;
+})()`;
+
 // ── Suite 11: per-widget angle ────────────────────────────────────────────────
 // Sub's report: "people can't change the angle of the widget, and the newer ones don't even have
 // the option." Both were real. The angle was written to --wangle inside the `scaled` branch of
@@ -2224,6 +2599,47 @@ const IDLEPAINT = `(async () => {
 // observation at all and most come from a single player, so the failure mode is not a missing
 // row — it is a lone reading rendered as though it were a settled fact. The site takes the same
 // line, and the two must not disagree about what counts as known.
+const UNRECOGNIZED = `(async () => {
+  ${PRELUDE}
+  // 🔑 No regex escape here on purpose. This whole suite is a template literal, so a "\\s+"
+  // written by a scripted edit arrives as "s+" and the strip helper silently eats every letter
+  // s — which reads as a broken FEATURE ("2 blueprint  could not be identified", "Colo u")
+  // rather than a broken test. Split/join needs no escapes and cannot fail that way.
+  const strip = (h) => h.replace(/<[^>]+>/g, " ").split(" ").filter(Boolean).join(" ").trim();
+  const view = (names, packActive) => ({ unrecognized: { names: names, packActive: packActive } });
+
+  ok("nothing unplaceable draws no banner at all",
+     unrecognizedHtml(view([], false)) === "" && unrecognizedHtml({}) === "",
+     JSON.stringify(unrecognizedHtml(view([], false))));
+
+  // 🔑 THE RAW STRING IS THE FEATURE. A count alone ("3 unknown") is a shrug; seeing the literal
+  // the game wrote is what makes the cause self-evident and turns a support report from
+  // "your app is broken" into "my language file renames things".
+  const packH = unrecognizedHtml(view(["Glacier Military A", "B10 Colossus"], true));
+  ok("the raw name the game logged is shown verbatim",
+     packH.indexOf("Glacier Military A") >= 0 && packH.indexOf("B10 Colossus") >= 0, strip(packH));
+  ok("...and it is counted in the headline", strip(packH).indexOf("2 blueprints could not be identified") >= 0, strip(packH));
+  ok("one of them reads as singular", strip(unrecognizedHtml(view(["Solo"], true))).indexOf("1 blueprint could not be identified") >= 0);
+
+  // Calibrate is only reachable when there is something to recalibrate AGAINST. Offering it on a
+  // stock install would be a button that cannot help, which is worse than no button.
+  ok("a modified language file offers Recalibrate", packH.indexOf("unrecCal") >= 0);
+  const stockH = unrecognizedHtml(view(["Whatever This Is"], false));
+  ok("a stock install does NOT offer Recalibrate — there is nothing to read", stockH.indexOf("unrecCal") < 0, strip(stockH));
+  ok("...but still names what it could not place", stockH.indexOf("Whatever This Is") >= 0);
+
+  // Same rule as every other explanation on this panel: the prose lives in the info affordance,
+  // not on the face of the banner, or the panel becomes a paragraph.
+  ok("the explanation is carried by the info affordance", packH.indexOf("mi-info") >= 0);
+  ok("...and the reason names the language file", packH.indexOf("language file renames items") >= 0);
+
+  // A name is arbitrary text out of a log file and goes straight into innerHTML.
+  const evil = unrecognizedHtml(view(["<img src=x onerror=alert(1)>"], false));
+  ok("a hostile name is escaped, not injected",
+     evil.indexOf("<img") < 0 && evil.indexOf("&lt;img") >= 0, evil.slice(0, 120));
+  return out;
+})();`;
+
 const MISSIONINFO = `(async () => {
   ${PRELUDE}
   const strip = (h) => h.replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim();
@@ -2391,11 +2807,20 @@ const MISSIONINFO = `(async () => {
   ok("mission and faction details are still two groups",
      (full.match(/class="mi"/g) || []).length === 2, (full.match(/class="mi"/g) || []).length);
   ok("...with no collapsible header chrome left", full.indexOf("mi-head") < 0);
-  // Sub's order: reputation belongs under the faction it is with, not beside the contract.
+  // 🔑 RE-POINTED 2026-08-14, not deleted. These used to assert that Rank and Reputation lived in
+  // the FACTION group — true until Sub reordered the row and put both in the main row at
+  // positions 7 and 8. An assertion that outlives the design it describes has to be aimed at the
+  // new truth or dropped; leaving it red teaches people to ignore the suite, and deleting it
+  // leaves the move unguarded. So it now pins where they actually belong.
   const facHalf = full.slice(full.indexOf("mi-faction"));
-  ok("faction, rank and reputation are all in the FACTION group",
-     facHalf.indexOf("Headhunters") >= 0 && facHalf.indexOf("Rank needed") >= 0 && facHalf.indexOf("Reputation") >= 0);
-  ok("...and reputation comes after the faction's name", facHalf.indexOf("Reputation") > facHalf.indexOf("Headhunters"));
+  const missionHalfEarly = full.slice(0, full.indexOf("mi-faction"));
+  ok("rank and reputation ride the MAIN row, not the faction group",
+     missionHalfEarly.indexOf("Rank needed") >= 0 && missionHalfEarly.indexOf("Reputation") >= 0
+     && facHalf.indexOf("Rank needed") < 0,
+     "main=" + (missionHalfEarly.indexOf("Reputation") >= 0));
+  ok("...and reputation comes before the rank gate, per PILL_ORDER",
+     missionHalfEarly.indexOf("Reputation") < missionHalfEarly.indexOf("Rank needed"));
+  ok("...leaving the faction group its name and your standing", facHalf.indexOf("Headhunters") >= 0);
   const missionHalf = full.slice(0, full.indexOf("mi-faction"));
   ok("the contract's own details stay in the MISSION group",
      missionHalf.indexOf("Pick up") >= 0 && missionHalf.indexOf("Illegal") >= 0);
@@ -3970,6 +4395,318 @@ async function writeScanRegion(region) {
   } catch { /* the sidecar went away; nothing we can do from here */ }
 }
 
+// 🔴 The Hauling widget's honesty rules, which are the reason it exists.
+//
+// 57% of the orders in the shipped dataset give an SCU RANGE rather than a number, and the only
+// thing that pins the real figure is the game's `Deliver 0/N SCU` line — which it emits ONLY for a
+// contract the player has TRACKED in mobiGlas. So the two failures that would make this widget
+// worse than nothing are printing a range as if it were a number, and quietly leaving a leg out of
+// a route that still presents itself as the route. Both are asserted here.
+//
+// Driven by ASSIGNING the page's own `plan` binding rather than by seeding the sidecar: these are
+// rendering rules, and a fabricated plan makes them deterministic on any machine, with or without
+// a game running. (`plan` is a top-level `let` in a classic script, so it is reachable by name.)
+const HAULING = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500); // let the page's own first load settle before overwriting it
+
+  ok("the ship picker is populated from ships.json", document.getElementById("shipPick").options.length > 20,
+     document.getElementById("shipPick").options.length);
+  ok("...and offers the log as the default", document.getElementById("shipPick").options[0].value === "");
+
+  const leg = (group, over) => Object.assign({
+    key: "k", index: 0, group, commodity: null, destination: null, unit: "scu",
+    scu: 56, min: 40, max: 56, source: "range", exact: false, maxContainerScu: 8, capSource: "dataset",
+    boxes: [{ scu: 8, count: 7 }], boxLabel: "7x8", boxCount: 7, boxSource: "partition",
+    pickupState: "pending", dropoffState: "pending", delivered: null,
+    fromLocation: "@1,1,1", toLocation: "@2,2,2",
+  }, over || {});
+
+  plan = {
+    updatedAt: Date.now(),
+    ship: { className: "CRUS_Starlifter_C2", displayName: "Crusader C2 Hercules Starlifter", totalScu: 696,
+      source: "log",
+      grids: [{ name: "hardpoint_cargo_large", w: 8, l: 15, h: 4, capacityScu: 480, usedScu: 24 },
+              { name: "hardpoint_cargo_small", w: 6, l: 9, h: 4, capacityScu: 216, usedScu: 0 }] },
+    contracts: [
+      { missionId: "m-tracked", title: "Tracked Haul", contractKey: "K1", generator: "Covalex_Hauling",
+        giver: "Covalex", missionType: "Hauling - Planetary", deliverSeen: true, trackedNow: false,
+        board: { rank: "Rookie", size: "Medium", direct: true }, ended: false, completion: null,
+        payout: null, scu: 81, minScu: 81, maxScu: 81, source: "log", exact: true, plannable: true,
+        legs: [leg("g-tracked", { scu: 81, min: 81, max: 81, source: "log", exact: true,
+          commodity: "Stims", destination: "Baijini Point", boxes: [{ scu: 8, count: 10 }, { scu: 1, count: 1 }],
+          boxLabel: "10x8 · 1x1", boxCount: 11 })] },
+      { missionId: "m-range", title: "Untracked Haul", contractKey: "K2", generator: "Covalex_Hauling",
+        giver: "Covalex", missionType: "Hauling - Planetary", deliverSeen: false, trackedNow: false,
+        board: { rank: "Junior", size: "Extra Small", direct: true }, ended: false, completion: null,
+        payout: null, scu: 56, minScu: 40, maxScu: 56, source: "range", exact: false, plannable: true,
+        legs: [leg("g-range")] },
+      { missionId: "m-orphan", title: "Orphan Haul", contractKey: "K3", generator: "Covalex_Hauling",
+        giver: "Covalex", missionType: "Hauling - Planetary", deliverSeen: true, trackedNow: false,
+        board: null, ended: false, completion: null,
+        payout: null, scu: 16, minScu: 16, maxScu: 16, source: "log", exact: true, plannable: true,
+        legs: [leg("g-orphan", { scu: 16, min: 16, max: 16, source: "log", exact: true,
+          commodity: "Waste", destination: "Riker Memorial Spaceport", fromLocation: null,
+          boxes: [{ scu: 8, count: 2 }], boxLabel: "2x8", boxCount: 2 })] },
+    ],
+    untracked: [{ missionId: "m-range", title: "Untracked Haul", minScu: 40, maxScu: 56, trackedNow: false }],
+    trackedMissionId: null,
+    trips: [{ landings: 2, totalMinutes: 12, peakScu: 137, method: "exact", stops: [
+      { id: "@1,1,1:pickup", name: "Baijini Point", kind: "pickup", minutes: 4, loadAfterScu: 137, sameSpot: false,
+        actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked" },
+                  { missionId: "m-range", title: "Untracked Haul", commodity: null, scu: 56, group: "g-range" }] },
+      { id: "@1,1,1:dropoff", name: "Baijini Point", kind: "dropoff", minutes: 0, loadAfterScu: 0, sameSpot: true,
+        actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked" }] },
+    ] }],
+    stranded: [],
+    locationNames: { "@1,1,1": "Baijini Point", "@2,2,2": "Site 1" },
+    unrouted: [{ group: "g-orphan", missionId: "m-orphan", title: "Orphan Haul", scu: 16,
+      destination: "Riker Memorial Spaceport", toLocation: "@2,2,2",
+      reason: "the log carries no pickup marker for this leg" }],
+    pack: { fits: true, loadedScu: 24, capacityScu: 696, unplaced: [], byGrid: [],
+      placements: [
+        { grid: "hardpoint_cargo_large", item: "a", group: "g-tracked", scu: 8, x: 0, y: 0, z: 0, dx: 2, dy: 2, dz: 2 },
+        { grid: "hardpoint_cargo_large", item: "b", group: "g-range", scu: 8, x: 2, y: 0, z: 0, dx: 2, dy: 2, dz: 2 },
+        { grid: "hardpoint_cargo_large", item: "c", group: "g-range", scu: 8, x: 0, y: 2, z: 2, dx: 2, dy: 2, dz: 2 },
+      ] },
+    aboardScu: 0,
+    totals: { scu: 153, capacityScu: 696, liveContracts: 3, unknownContracts: 0, recentPayout: 0, totalMinutes: 12 },
+    notes: ["1 contract planned at the TOP of the dataset's range."],
+  };
+  render();
+  await sleep(60);
+
+  // ── 🔴 a range is never printed as a number ──────────────────────────────
+  const cards = [...document.querySelectorAll(".card")];
+  const byTitle = (t) => cards.find((c) => c.querySelector(".t").textContent === t);
+  ok("three contracts on the board", cards.length === 3, cards.length);
+  ok("🔴 a RANGED contract prints both ends, never the worst case alone",
+     byTitle("Untracked Haul").querySelector(".amt").textContent === "40–56 SCU",
+     byTitle("Untracked Haul").querySelector(".amt").textContent);
+  ok("...and says where that came from", byTitle("Untracked Haul").querySelector(".badge").textContent === "range");
+  ok("a TRACKED contract prints the game's own figure",
+     byTitle("Tracked Haul").querySelector(".amt").textContent === "81 SCU",
+     byTitle("Tracked Haul").querySelector(".amt").textContent);
+  ok("...badged as coming from the log", byTitle("Tracked Haul").querySelector(".badge").textContent === "stated");
+  ok("every contract carries a provenance badge", cards.every((c) => c.querySelector(".badge")));
+  ok("a modelled box split is labelled modelled",
+     [...byTitle("Tracked Haul").querySelectorAll(".chips .badge")].some((b) => b.textContent === "modelled"));
+
+  // ── 🔴 the please-track prompt ───────────────────────────────────────────
+  const track = document.getElementById("track");
+  const rows = [...document.querySelectorAll(".trow")];
+  ok("the track prompt is up while anything is unpinned", track.style.display !== "none");
+  ok("...listing only what is not pinned", rows.length === 1 && /Untracked Haul/.test(rows[0].textContent),
+     rows.map((r) => r.textContent).join(" | "));
+  ok("...showing the bounds we do have", /40–56 SCU/.test(rows[0].textContent), rows[0].textContent);
+  ok("...with somewhere to type the real figure", !!rows[0].querySelector("input"));
+  ok("...and the rank tier and size band it is listed under on the board",
+     rows[0].querySelector(".bd").textContent === "Junior · Extra Small",
+     rows[0].querySelector(".bd").textContent);
+
+  // 🔴 THE THREE STATES. This contract is not tracked, so tracking it is worth doing and the
+  // panel says so.
+  ok("an UNTRACKED contract is told to be tracked",
+     rows[0].querySelector(".badge").textContent === "track it",
+     rows[0].querySelector(".badge").textContent);
+  ok("...and the heading is the instruction",
+     document.getElementById("trackK").textContent === "Track these in mobiGlas",
+     document.getElementById("trackK").textContent);
+
+  // 🔴 Now track it. The tonnage is STILL unknown — the game states it at objective assignment
+  // and re-tracking replays nothing — so the panel must stop asking for something already done.
+  // This is Sub's live 2026-08-17 board, and the exact state the old prompt got wrong.
+  plan.contracts[1].trackedNow = true;
+  plan.trackedMissionId = "m-range";
+  render();
+  await sleep(60);
+  const trow = document.querySelector(".trow");
+  ok("🔴 a TRACKED contract with no tonnage is not told to track it again",
+     trow.querySelector(".badge").textContent === "tracked",
+     trow.querySelector(".badge").textContent);
+  ok("🔴 ...and the heading stops being an instruction nothing can satisfy",
+     document.getElementById("trackK").textContent === "Load not confirmed",
+     document.getElementById("trackK").textContent);
+  ok("🔴 ...and the explanation says why there is nothing left to do",
+     /re-tracking does not replay/.test(document.getElementById("trackWhy").textContent),
+     document.getElementById("trackWhy").textContent);
+  ok("...while the row still offers the box to type the figure into",
+     !!trow.querySelector("input"));
+  ok("...and the contract is still listed, not hidden",
+     document.querySelectorAll(".trow").length === 1);
+  plan.contracts[1].trackedNow = false;
+  plan.trackedMissionId = null;
+  render();
+  await sleep(60);
+
+  // ── 🔴 nothing is dropped from the route in silence ──────────────────────
+  const notes = [...document.querySelectorAll(".note")].map((n) => n.textContent).join(" | ");
+  ok("🔴 an unroutable leg is reported, not omitted",
+     /Riker Memorial Spaceport/.test(notes) && /no pickup marker/.test(notes), notes);
+
+  // ── the route ────────────────────────────────────────────────────────────
+  const stops = [...document.querySelectorAll(".stop")];
+  ok("both visits are drawn", stops.length === 2, stops.length);
+  ok("a second visit to the same place is marked as one landing", /same landing/.test(stops[1].textContent));
+  ok("...and is not charged a minute it does not cost",
+     stops[1].querySelector(".rt").textContent.startsWith("—"),
+     stops[1].querySelector(".rt").textContent);
+
+  // ── the stow tab ─────────────────────────────────────────────────────────
+  document.getElementById("tabLayout").click();
+  await sleep(80);
+  ok("every placement is drawn", document.querySelectorAll(".iso-box").length === 3,
+     document.querySelectorAll(".iso-box").length);
+  ok("the empty grid is not drawn at all", !document.body.textContent.includes("cargo small"));
+  const body = document.getElementById("body");
+  ok("the diagram never scrolls the panel sideways", body.scrollWidth <= body.clientWidth,
+     body.scrollWidth + " vs " + body.clientWidth);
+  ok("the legend says which colour is which drop", document.querySelectorAll(".legend span").length === 2,
+     document.querySelectorAll(".legend span").length);
+
+  return out;
+})()`;
+
+// 🔴 The STOWAGE view, which exists to answer one question: which mission do I lift first, and how
+// do I recognise it at the freight elevator.
+//
+// The elevator UI does NOT name missions — it lists cargo. So "load the Covalex one first" is an
+// instruction the player cannot follow, and the only usable handle is the BOX SIGNATURE: commodity
+// plus the exact split. Every assertion below is about that, about the two orderings that follow
+// from it (missions deepest-first, destinations deepest-first inside a mission), and about the one
+// case where the whole view must disappear — an open hauler, whose boxes the station's arm places.
+//
+// Same technique as HAULING above: the page's own `plan` binding is assigned directly, so these are
+// rendering rules tested deterministically with no game and no sidecar state.
+const STOW = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  const leg = (group, over) => Object.assign({
+    key: "k", index: 0, group, commodity: null, destination: null, unit: "scu",
+    scu: 16, min: 16, max: 16, source: "log", exact: true, maxContainerScu: 8, capSource: "dataset",
+    boxes: [{ scu: 8, count: 2 }], boxLabel: "2x8", boxCount: 2, boxSource: "partition",
+    pickupState: "pending", dropoffState: "pending", delivered: null,
+    fromLocation: "@1,1,1", toLocation: "@2,2,2",
+  }, over || {});
+  const box = (group, x, y, z, over) => Object.assign({
+    grid: "hardpoint_cargo_large", item: group + ":" + x + "," + y + "," + z, group,
+    scu: 8, x, y, z, dx: 2, dy: 2, dz: 2,
+  }, over || {});
+
+  // Two missions. FOOD has two drop-offs and is packed FIRST by the packer (so it comes off first,
+  // which means it is loaded LAST); ORE is packed last, so it is loaded first and sits deepest.
+  const grids = [{ name: "hardpoint_cargo_large", w: 8, l: 15, h: 4, capacityScu: 480, usedScu: 96 },
+                 { name: "hardpoint_cargo_small", w: 6, l: 9, h: 4, capacityScu: 216, usedScu: 0 }];
+  const basePlan = () => ({
+    updatedAt: Date.now(),
+    ship: { className: "CRUS_Starlifter_C2", displayName: "Crusader C2 Hercules Starlifter",
+            totalScu: 696, source: "log", grids: JSON.parse(JSON.stringify(grids)) },
+    contracts: [
+      { missionId: "m-food", title: "Food Haul", contractKey: "K1", generator: "G", giver: "Covalex",
+        missionType: "Hauling - Planetary", tracked: true, ended: false, completion: null, payout: null,
+        scu: 81, minScu: 81, maxScu: 81, source: "log", exact: true, plannable: true,
+        legs: [
+          leg("g-food-a", { commodity: "Processed Food", destination: "Port Tressler", scu: 65,
+            boxes: [{ scu: 8, count: 8 }, { scu: 1, count: 1 }], boxCount: 9 }),
+          leg("g-food-b", { commodity: "Processed Food", destination: "Baijini Point", scu: 16,
+            boxes: [{ scu: 8, count: 2 }], boxCount: 2 }),
+        ] },
+      { missionId: "m-ore", title: "Ore Haul", contractKey: "K2", generator: "G", giver: "Covalex",
+        missionType: "Hauling - Planetary", tracked: true, ended: false, completion: null, payout: null,
+        scu: 16, minScu: 16, maxScu: 16, source: "log", exact: true, plannable: true,
+        legs: [leg("g-ore", { commodity: "Titanium", destination: "Everus Harbour" })] },
+    ],
+    untracked: [], trips: [], stranded: [], locationNames: {}, unrouted: [],
+    // Packer output is in UNLOAD order: g-food-a comes off first, so it sits nearest the ramp.
+    pack: { fits: true, loadedScu: 96, capacityScu: 696, unplaced: [], byGrid: [], placements: [
+      box("g-food-a", 0, 0, 0), box("g-food-a", 2, 0, 0),
+      box("g-food-b", 4, 0, 0),
+      box("g-ore", 0, 2, 0), box("g-ore", 2, 2, 0),
+    ] },
+    aboardScu: 0,
+    totals: { scu: 97, capacityScu: 696, liveContracts: 2, unknownContracts: 0, recentPayout: 0, totalMinutes: 0 },
+    notes: [],
+  });
+
+  plan = basePlan();
+  render();
+  document.getElementById("tabLayout").click();
+  await sleep(100);
+
+  // ── 🔴 the load order, and the signature that makes it followable ─────────
+  const steps = [...document.querySelectorAll(".step")];
+  ok("one lift per mission, not one per drop-off", steps.length === 2, steps.length);
+  ok("🔴 the mission delivered LAST is loaded FIRST",
+     /Titanium/.test(steps[0].textContent), steps[0].textContent.replace(/\\s+/g, " ").slice(0, 60));
+  ok("...and it is numbered 1", steps[0].querySelector(".ord").textContent === "1",
+     steps[0].querySelector(".ord").textContent);
+  ok("...and said to be the deepest", /deepest in the hold/.test(steps[0].textContent));
+
+  const sig = steps[1].querySelector(".sig").textContent.replace(/\\s+/g, " ").trim();
+  ok("🔴 a lift is identified by its BOX SIGNATURE, because the elevator does not name missions",
+     sig === "Processed Food 10× 8 SCU + 1× 1 SCU", sig);
+  ok("...built from the CONTRACT's boxes, not just the ones that fit in the drawing",
+     /10× 8 SCU/.test(sig), sig);
+  ok("every lift carries a signature", steps.every((s) => s.querySelector(".sig")));
+
+  // ── 🔴 within a mission, which destination goes in first ─────────────────
+  const drops = [...steps[1].querySelectorAll(".drop")];
+  ok("a multi-stop lift lists its destinations", drops.length === 2, drops.length);
+  ok("🔴 the destination delivered LAST is loaded first",
+     /Baijini Point/.test(drops[0].textContent), drops[0].textContent);
+  ok("...and is labelled as such", /first in/.test(drops[0].textContent));
+  ok("a single-stop lift does not spell out its one destination",
+     steps[0].querySelectorAll(".drop").length === 0);
+
+  // ── the drawing ──────────────────────────────────────────────────────────
+  ok("only the grid that got cargo is drawn", document.querySelectorAll("svg.iso").length === 1,
+     document.querySelectorAll("svg.iso").length);
+  ok("the empty grid is counted rather than silently dropped",
+     /1 more grid on this hull got nothing/.test(document.getElementById("body").textContent));
+  ok("every placement is a box", document.querySelectorAll(".iso-box").length === 5,
+     document.querySelectorAll(".iso-box").length);
+  // Ghosting is per MISSION: with lift 1 (Titanium) focused, the two ore boxes stay lit.
+  ok("the focused lift is the one lit up",
+     document.querySelectorAll(".iso-box:not(.ghost)").length === 2,
+     document.querySelectorAll(".iso-box:not(.ghost)").length);
+  ok("...and the rest of the load is still drawn, not hidden",
+     document.querySelectorAll(".iso-box.ghost").length === 3,
+     document.querySelectorAll(".iso-box.ghost").length);
+  steps[1].click();
+  await sleep(80);
+  ok("clicking a lift moves the focus to it",
+     document.querySelectorAll(".iso-box:not(.ghost)").length === 3,
+     document.querySelectorAll(".iso-box:not(.ghost)").length);
+  const body = document.getElementById("body");
+  ok("the drawing never scrolls the panel sideways", body.scrollWidth <= body.clientWidth,
+     body.scrollWidth + " vs " + body.clientWidth);
+
+  // ── ⛔ an open hauler gets NO stowage plan at all ─────────────────────────
+  // Hull A/B/C, Ironclad, Railen, RAFT, Nomad, Syulen, Golem: the station's arm places every box,
+  // so a stowage diagram describes work that does not exist. autoLoadClasses comes from /api/ships,
+  // which is the live sidecar — so this also proves that plumbing is wired end to end.
+  ok("the sidecar told the widget which hulls auto-load", autoLoadClasses.size > 0, autoLoadClasses.size);
+  plan = basePlan();
+  plan.ship.className = "MISC_Hull_C";
+  plan.ship.displayName = "MISC Hull C";
+  render();
+  await sleep(80);
+  ok("⛔ an auto-loading hull is drawn NO diagram", document.querySelectorAll("svg.iso").length === 0,
+     document.querySelectorAll("svg.iso").length);
+  ok("...and is given NO load order either", document.querySelectorAll(".step").length === 0,
+     document.querySelectorAll(".step").length);
+  ok("...it is told the loader handles it", /loads itself/.test(document.getElementById("body").textContent),
+     document.getElementById("body").textContent.slice(0, 90));
+
+  return out;
+})()`;
+
+
 app.whenReady().then(async () => {
   let fails = 0;
   const region0 = await readScanRegion();
@@ -3984,10 +4721,13 @@ app.whenReady().then(async () => {
     fails += await run("layout restore", RESTORE, path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("chrome anchoring + latches", ANCHOR, path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("lifecycle: closed = idle", LIFECYCLE, null);
+    fails += await run("typing grab: hiding releases it", TYPINGGRAB, path.join(__dirname, "widget-dom-stub-preload.cjs"));
+    fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);
     fails += await run("split fade: panel vs text", SPLITFADE, null);
     fails += await run("nothing animates at rest", IDLEPAINT, null);
     fails += await run("mission info from community data", MISSIONINFO, null);
+    fails += await run("unrecognized blueprint names", UNRECOGNIZED, null);
     fails += await run("cog auto-hide on game focus", COGHIDE,
       path.join(__dirname, "widget-dom-stub-preload.cjs"), "coghide=250");
     fails += await run("unlock notifier", UNLOCK, null, null, "unlockalert.html");
@@ -4023,6 +4763,8 @@ app.whenReady().then(async () => {
     fails += await run("chrome over the native view", VIEWMASK, null);
     fails += await run("mining call-outs by verdict", MININGSAY, null, null, "mining.html");
     fails += await run("chat links + slash menu", CHATLINKS, null, null, "chat.html");
+    fails += await run("hauling: honest loads, whole route", HAULING, null, null, "hauling.html");
+    fails += await run("hauling: stowage order + signature", STOW, null, null, "hauling.html");
     fails += await run("completion card holds while you use it", REPORTHOLD, null);
   } catch (e) {
     // The message alone ("Cannot read properties of null") doesn't say WHICH suite or line, and
