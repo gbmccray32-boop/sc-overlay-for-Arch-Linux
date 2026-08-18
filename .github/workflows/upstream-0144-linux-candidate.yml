@@ -208,6 +208,7 @@ jobs:
           grep -Fq '["pipewire", "electron", "gamescope", "spectacle"]' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -q 'method: "gamescope-pipewire"' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -q 'sourceName: `Gamescope PipeWire node ${got.node.id}`' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'bound Star Citizen session has no Gamescope ancestor' "$STAGE_ROOT/app/electron/capture.cjs"
           test -s "$STAGE_ROOT/app/electron/native-linux-gamescope-pipewire.cjs"
           grep -q 'ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_CAPTURE' "$STAGE_ROOT/app/electron/native-linux-gamescope-pipewire.cjs"
           grep -q 'pipewiresrc' "$STAGE_ROOT/app/electron/native-linux-gamescope-pipewire.cjs"
