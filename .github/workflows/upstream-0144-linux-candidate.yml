@@ -57,7 +57,10 @@ jobs:
           npm run test:location
 
       - name: Exercise widget DOM and hotkey surfaces under Xvfb
-        run: xvfb-run -a npm run test:widgets
+        run: |
+          set -euo pipefail
+          node --check tools/widget-dom-test.cjs
+          xvfb-run -a ./node_modules/.bin/electron --no-sandbox tools/widget-dom-test.cjs
 
       - name: Build current upstream sidecar with Linux semantic contracts
         run: |
