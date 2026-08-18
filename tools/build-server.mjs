@@ -2,13 +2,14 @@
  * Build the current upstream sidecar for ArchVerse Linux.
  *
  * Upstream owns mission/hauling/mining business logic and the high-churn pages. ArchVerse applies
- * Linux-only contracts to an in-memory server source and to staged HTML, so source stays rebaseable.
+ * Linux-only contracts in-memory and to staged HTML so upstream source stays rebaseable.
  */
 import { build } from "esbuild";
 import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { applyArchVerseOverlayPatches } from "./archverse-overlay-patches.mjs";
 import { applyArchVerseServerSourcePatches } from "./archverse-server-patches.mjs";
+import { applyArchVerseScreenReadSourcePatches } from "./archverse-screen-read-patches.mjs";
 
 const out = "build/server";
 rmSync(out, { recursive: true, force: true });
@@ -23,6 +24,15 @@ await build({
     sourcefile: "src/overlay-server.ts",
     loader: "ts",
   },
+  plugins: [{
+    name: "archverse-screen-read-contract",
+    setup(ctx) {
+      ctx.onLoad({ filter: /screen-read\.ts$/ }, (args) => ({
+        contents: applyArchVerseScreenReadSourcePatches(readFileSync(args.path, "utf8")),
+        loader: "ts",
+      }));
+    },
+  }],
   bundle: true,
   platform: "node",
   format: "esm",
@@ -40,6 +50,9 @@ for (const dir of ["overlay", "data"]) {
   console.log(`copied ${dir}/ -> ${out}/${dir}/`);
 }
 
+// This is Linux platform code, not an upstream page fork. Keep one canonical implementation and
+// inject only its loader into the staged current missions page.
+cpSync("packaging/common/linux-ocr-region-manager.js", `${out}/overlay/linux-ocr-region-manager.js`);
 applyArchVerseOverlayPatches(out);
 
 // Check emitted semantics rather than source comments: esbuild is free to discard comments.
@@ -48,9 +61,19 @@ for (const marker of [
   "SC_TRACKER_CONFIG_DIR",
   "Shift+F6",
   "ArchVerse Linux RapidOCR (Electron capture)",
+  "linuxOcrRegions",
   "logbackups",
   "startPosition",
 ]) {
   if (!server.includes(marker)) throw new Error(`built server lost required Linux/upstream contract: ${marker}`);
+}
+const missions = readFileSync(`${out}/overlay/missions.html`, "utf8");
+for (const marker of [
+  "ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI_LOADER",
+  "ARCHVERSE_LINUX_DYNAMIC_WIDGET_REGIONS",
+  ".ocr-capture-box.shown",
+  "linuxOcrRegions: { resourceSignature: f }",
+]) {
+  if (!missions.includes(marker)) throw new Error(`built missions UI lost Linux contract: ${marker}`);
 }
 console.log("server bundle ->", out);
