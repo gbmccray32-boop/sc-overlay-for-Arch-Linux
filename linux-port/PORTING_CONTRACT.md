@@ -34,20 +34,29 @@ The following are ArchVerse platform contracts:
 - The one-native-cursor design remains; a synthetic second visible cursor must not return.
 - KDE/X11/Gamescope focus handoff and verified pointer handoff remain.
 - Exact `StarCitizen.exe` session binding remains the privacy/foreground gate for capture.
-- **Direct Gamescope PipeWire capture is the mandatory first-choice Linux OCR capture backend.**
-  The runtime must expose the capture method as `gamescope-pipewire`, identify the selected source
-  as `Gamescope PipeWire node <id>`, and retain the direct `pipewiresrc` implementation bound to
-  the Gamescope process that owns the active Star Citizen session. This source identity is a
-  permanent Linux contract because it is the field-proven low-latency path required by the Mining
-  Scanner. A generic Electron/portal capture path that happens to use PipeWire internally is **not**
-  an equivalent replacement.
+- **Direct Gamescope PipeWire capture is the mandatory first-choice Linux OCR capture backend when
+  the active Star Citizen session has a Gamescope ancestor and matching PipeWire source.** The
+  runtime must expose the capture method as `gamescope-pipewire`, identify the selected source as
+  `Gamescope PipeWire node <id>`, and retain the direct `pipewiresrc` implementation bound to the
+  Gamescope process that owns the active Star Citizen session. This source identity is a permanent
+  Linux contract because it is the field-proven low-latency path required by the Mining Scanner. A
+  generic Electron/portal capture path that happens to use PipeWire internally is **not** an
+  equivalent replacement for this optimized path.
+- **Gamescope is not a runtime requirement for ArchVerse.** A normal Star Citizen launch without a
+  Gamescope ancestor is a supported Linux configuration. Absence of a bound Gamescope PID or
+  `gamescope` PipeWire node must be treated as an unavailable optional fast path, not as a fatal OCR
+  error. The PipeWire backend must reject that case immediately, before expensive PipeWire discovery
+  or frame capture, and the same capture request must continue through the normal fallback chain.
 - On Linux Wayland the normal capture order is
   `pipewire -> gamescope -> spectacle -> electron`.
 - On Linux X11 the normal capture order is
   `pipewire -> electron -> gamescope -> spectacle`.
-  The later entries are fallbacks only; an upstream rebase may not silently promote them ahead of
-  direct Gamescope PipeWire capture.
-- Linux capture backends/fallbacks remain available after the PipeWire-first path.
+  The later entries are fallbacks when the direct Gamescope PipeWire source is unavailable; an
+  upstream rebase may not promote them ahead of direct Gamescope PipeWire when that source exists.
+- Linux capture backends/fallbacks remain available after the PipeWire-first path. Users who launch
+  Star Citizen with default/non-Gamescope settings must retain functional OCR and Mining Scanner
+  operation through those fallbacks, although the direct Gamescope PipeWire path remains the
+  preferred low-latency configuration.
 - RapidOCR remains isolated in a disposable Node child process with bounded queue/thread resources.
 - OpenGL remains the normal Linux renderer, with software Safe Mode as the fallback.
 
@@ -174,7 +183,11 @@ Re-run the still-applicable proven Alpha 17 tests against the new candidate, inc
 - the packaged helper still uses direct `pipewiresrc` and binds the node to the active Gamescope
   process rather than accepting an ambiguous desktop source;
 - PipeWire remains first in both Linux backend-order vectors, with Gamescope-window, Spectacle and
-  Electron capture retained only as fallbacks.
+  Electron capture retained as fallbacks;
+- a simulated active Star Citizen session with **no Gamescope PID** rejects the direct PipeWire path
+  immediately and successfully continues to the next backend rather than disabling OCR;
+- a real default/non-Gamescope Star Citizen launch is part of the pre-release field-test matrix in
+  addition to the Gamescope launch used for low-latency Mining Scanner validation.
 
 The four labeled Alpha 17 Scan Mode fixtures are part of the permanent detector regression corpus.
 
