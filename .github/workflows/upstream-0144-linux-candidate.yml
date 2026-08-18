@@ -19,12 +19,12 @@ concurrency:
 
 env:
   APP_VERSION: 0.1.44-r31.alpha22.candidate1
-  VERIFIED_ALPHA21_RUN_ID: '31901404904'
-  VERIFIED_ALPHA21_ARTIFACT_ID: '9251185299'
-  VERIFIED_ALPHA21_ARTIFACT: ArchVerse-Alpha21-native-payload
-  VERIFIED_ALPHA21_ARTIFACT_DIGEST: sha256:6a6e05eeb8f7a91e06d5a60fb1b93230a3d6564c66741a71642926191815bbca
-  VERIFIED_ALPHA21_HEAD_SHA: 9f3c095b74c5220b7720717c5bb8d6ed2bc28382
-  VERIFIED_ALPHA21_PAYLOAD: ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz
+  VERIFIED_ALPHA21_CORE_RUN_ID: '31901404904'
+  VERIFIED_ALPHA21_CORE_ARTIFACT_ID: '9251185299'
+  VERIFIED_ALPHA21_CORE_ARTIFACT: ArchVerse-Alpha21-native-payload
+  VERIFIED_ALPHA21_CORE_DIGEST: sha256:6a6e05eeb8f7a91e06d5a60fb1b93230a3d6564c66741a71642926191815bbca
+  VERIFIED_ALPHA21_CORE_HEAD_SHA: 9f3c095b74c5220b7720717c5bb8d6ed2bc28382
+  VERIFIED_ALPHA21_CORE_PAYLOAD: ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz
   ELECTRON_ASSET: electron-v42.7.1-linux-x64.zip
   ELECTRON_SHA256: e85b28245deaa75c3c4f2cf5da084f4c7fbedd5af1630c59a827c41ac1f5e1af
 
@@ -103,7 +103,7 @@ jobs:
           compression-level: 0
 
   linux-runtime:
-    name: Verified Alpha21 runtime + current upstream behavior
+    name: Verified Alpha21 Linux core + later OCR contract + current upstream behavior
     needs: upstream-logic
     runs-on: ubuntu-24.04
     steps:
@@ -118,37 +118,55 @@ jobs:
           name: upstream-0144-linux-sidecar
           path: build/server
 
-      - name: Verify pinned Alpha21 payload provenance
+      - name: Verify pinned Alpha21 core provenance
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$VERIFIED_ALPHA21_ARTIFACT_ID")"
-          test "$(jq -r .name <<<"$meta")" = "$VERIFIED_ALPHA21_ARTIFACT"
+          meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$VERIFIED_ALPHA21_CORE_ARTIFACT_ID")"
+          test "$(jq -r .name <<<"$meta")" = "$VERIFIED_ALPHA21_CORE_ARTIFACT"
           test "$(jq -r .expired <<<"$meta")" = "false"
-          test "$(jq -r .digest <<<"$meta")" = "$VERIFIED_ALPHA21_ARTIFACT_DIGEST"
-          test "$(jq -r .workflow_run.id <<<"$meta")" = "$VERIFIED_ALPHA21_RUN_ID"
-          run_head="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_ALPHA21_RUN_ID" --jq .head_sha)"
-          test "$run_head" = "$VERIFIED_ALPHA21_HEAD_SHA"
-          echo "Verified Alpha21 payload artifact $VERIFIED_ALPHA21_ARTIFACT_ID from run $VERIFIED_ALPHA21_RUN_ID"
+          test "$(jq -r .digest <<<"$meta")" = "$VERIFIED_ALPHA21_CORE_DIGEST"
+          test "$(jq -r .workflow_run.id <<<"$meta")" = "$VERIFIED_ALPHA21_CORE_RUN_ID"
+          run_head="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_ALPHA21_CORE_RUN_ID" --jq .head_sha)"
+          test "$run_head" = "$VERIFIED_ALPHA21_CORE_HEAD_SHA"
+          echo "Verified Alpha21 core artifact $VERIFIED_ALPHA21_CORE_ARTIFACT_ID from run $VERIFIED_ALPHA21_CORE_RUN_ID"
 
-      - name: Download verified Alpha21 payload from successful August 15 run
+      - name: Download pinned Alpha21 Linux core from successful August 15 payload job
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.VERIFIED_ALPHA21_ARTIFACT }}
-          path: ${{ runner.temp }}/verified-alpha21
+          name: ${{ env.VERIFIED_ALPHA21_CORE_ARTIFACT }}
+          path: ${{ runner.temp }}/verified-alpha21-core
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ env.VERIFIED_ALPHA21_RUN_ID }}
+          run-id: ${{ env.VERIFIED_ALPHA21_CORE_RUN_ID }}
 
-      - name: Validate verified Alpha21 payload archive
+      - name: Validate Alpha21 core before deterministic OCR finalization
         run: |
           set -euo pipefail
-          test -s "$RUNNER_TEMP/verified-alpha21/$VERIFIED_ALPHA21_PAYLOAD"
-          tar -tzf "$RUNNER_TEMP/verified-alpha21/$VERIFIED_ALPHA21_PAYLOAD" > "$RUNNER_TEMP/alpha21-files.txt"
-          grep -q 'ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/main.cjs' "$RUNNER_TEMP/alpha21-files.txt"
-          grep -q 'ArchVerse-Overlay-0.1.42-r31-alpha.21/app/electron/native-linux-ocr.cjs' "$RUNNER_TEMP/alpha21-files.txt"
-          grep -q 'ArchVerse-Overlay-0.1.42-r31-alpha.21/app/server/overlay/linux-ocr-region-manager.js' "$RUNNER_TEMP/alpha21-files.txt"
+          archive="$RUNNER_TEMP/verified-alpha21-core/$VERIFIED_ALPHA21_CORE_PAYLOAD"
+          test -s "$archive"
+          rm -rf "$RUNNER_TEMP/core-inspect"
+          mkdir -p "$RUNNER_TEMP/core-inspect"
+          tar --no-same-owner -xzf "$archive" -C "$RUNNER_TEMP/core-inspect"
+          core="$(find "$RUNNER_TEMP/core-inspect" -mindepth 1 -maxdepth 1 -type d -name 'ArchVerse-Overlay-0.1.42-r31-alpha.21*' -print -quit)"
+          test -n "$core"
+          test -s "$core/app/electron/main.cjs"
+          test -s "$core/app/electron/capture.cjs"
+          test -s "$core/app/electron/preload.cjs"
+          test -s "$core/app/electron/rapidocr-client.cjs"
+          grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$core/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_GAME_FOCUS_HANDOFF' "$core/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_DRAG_LOCK_WATCHDOG' "$core/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_REALTIME_OVERLAY_RENDERER' "$core/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_AUTHORITY' "$core/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_BOUND_MINING_CADENCE' "$core/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_EXACT_SC_SESSION_BINDING' "$core/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_RAPIDOCR_FAILURE_REPORT' "$core/app/electron/capture.cjs"
+          # This exact pinned artifact is intentionally the pre-five-region core. A changed artifact
+          # must not silently skip or double-apply the deterministic later Alpha21 OCR policy.
+          ! grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGIONS' "$core/app/electron/capture.cjs"
+          test ! -e "$core/app/electron/native-linux-ocr.cjs"
 
       - name: Download and verify pinned Electron
         run: |
@@ -164,7 +182,7 @@ jobs:
           set -euo pipefail
           STAGE_ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
           bash packaging/native/stage-upstream-0144-candidate.sh \
-            "$RUNNER_TEMP/verified-alpha21/$VERIFIED_ALPHA21_PAYLOAD" \
+            "$RUNNER_TEMP/verified-alpha21-core/$VERIFIED_ALPHA21_CORE_PAYLOAD" \
             "$RUNNER_TEMP/sources/$ELECTRON_ASSET" \
             "$STAGE_ROOT"
 
@@ -174,13 +192,17 @@ jobs:
           grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$STAGE_ROOT/app/electron/main.cjs"
           grep -q 'ARCHVERSE_LINUX_GAME_FOCUS_HANDOFF' "$STAGE_ROOT/app/electron/main.cjs"
           grep -q 'ARCHVERSE_LINUX_DRAG_LOCK_WATCHDOG' "$STAGE_ROOT/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_OCR_CAPTURE_INFO' "$STAGE_ROOT/app/electron/main.cjs"
           grep -q 'ARCHVERSE_UPSTREAM_0144_HAULING' "$STAGE_ROOT/app/electron/main.cjs"
           grep -q 'ARCHVERSE_UPSTREAM_0144_WIDGET_HOTKEYS' "$STAGE_ROOT/app/electron/main.cjs"
           grep -q 'ARCHVERSE_UPSTREAM_0144_FOCUS_BEHAVIOR' "$STAGE_ROOT/app/electron/main.cjs"
           ! grep -q 'overlay\.setFocusable(false)' "$STAGE_ROOT/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGIONS' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_NO_FULL_FRAME_OCR_ARCHIVE' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -qi 'gamescope' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -qi 'pipewire' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -qi 'rapidocr' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_OCR_CONTRACT_V1' "$STAGE_ROOT/app/electron/native-linux-ocr.cjs"
           grep -q 'linuxOcrRegions' "$STAGE_ROOT/app/server/server.mjs"
           grep -q 'logbackups' "$STAGE_ROOT/app/server/server.mjs"
 
