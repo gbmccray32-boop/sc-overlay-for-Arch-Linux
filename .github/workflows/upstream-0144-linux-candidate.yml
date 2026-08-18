@@ -56,6 +56,9 @@ jobs:
           npm run test:clienterror
           npm run test:location
 
+      - name: Exercise widget DOM and hotkey surfaces under Xvfb
+        run: xvfb-run -a npm run test:widgets
+
       - name: Build current upstream sidecar with Linux semantic contracts
         run: |
           set -euo pipefail
@@ -69,6 +72,8 @@ jobs:
           grep -q 'ARCHVERSE_LINUX_SETTINGS_CONTRACT' build/server/overlay/config.html
           grep -q 'ARCHVERSE_LINUX_DYNAMIC_WIDGET_REGIONS' build/server/overlay/missions.html
           grep -q 'ARCHVERSE_RESOURCE_SCANNER_V1' build/server/overlay/mining.html
+          grep -q 'WIDGET_HOTKEYS' build/server/overlay/config.html
+          grep -q '"hauling"' build/server/overlay/config.html
           test -s build/server/overlay/hauling.html
           test -s build/server/overlay/hauling-stow.js
 
@@ -129,7 +134,15 @@ jobs:
           grep -q -- '--ozone-platform=x11' "$STAGE_ROOT/bin/sc-blueprint-tracker"
           grep -q 'SC_TRACKER_HOST_WAYLAND_DISPLAY' "$STAGE_ROOT/bin/sc-blueprint-tracker"
           grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$STAGE_ROOT/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_GAME_FOCUS_HANDOFF' "$STAGE_ROOT/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_DRAG_LOCK_WATCHDOG' "$STAGE_ROOT/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_UPSTREAM_0144_HAULING' "$STAGE_ROOT/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_UPSTREAM_0144_WIDGET_HOTKEYS' "$STAGE_ROOT/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_UPSTREAM_0144_FOCUS_BEHAVIOR' "$STAGE_ROOT/app/electron/main.cjs"
           ! grep -q 'overlay\.setFocusable(false)' "$STAGE_ROOT/app/electron/main.cjs"
+          grep -qi 'gamescope' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -qi 'pipewire' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -qi 'rapidocr' "$STAGE_ROOT/app/electron/capture.cjs"
 
           mkdir -p dist
           tar -C "$RUNNER_TEMP/native" -czf "dist/ArchVerse-Native-$APP_VERSION.tar.gz" \
