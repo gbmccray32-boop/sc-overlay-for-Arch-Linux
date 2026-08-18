@@ -163,8 +163,6 @@ jobs:
           grep -q 'ARCHVERSE_LINUX_BOUND_MINING_CADENCE' "$core/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_EXACT_SC_SESSION_BINDING' "$core/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_RAPIDOCR_FAILURE_REPORT' "$core/app/electron/capture.cjs"
-          # This exact pinned artifact is intentionally the pre-five-region core. A changed artifact
-          # must not silently skip or double-apply the deterministic later Alpha21 OCR policy.
           ! grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGIONS' "$core/app/electron/capture.cjs"
           test ! -e "$core/app/electron/native-linux-ocr.cjs"
 
@@ -199,8 +197,8 @@ jobs:
           ! grep -q 'overlay\.setFocusable(false)' "$STAGE_ROOT/app/electron/main.cjs"
           grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGIONS' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_NO_FULL_FRAME_OCR_ARCHIVE' "$STAGE_ROOT/app/electron/capture.cjs"
-          grep -qi 'gamescope' "$STAGE_ROOT/app/electron/capture.cjs"
-          grep -qi 'pipewire' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'electron-gamescope-window' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'spectacle-wayland' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -qi 'rapidocr' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_OCR_CONTRACT_V1' "$STAGE_ROOT/app/electron/native-linux-ocr.cjs"
           grep -q 'linuxOcrRegions' "$STAGE_ROOT/app/server/server.mjs"
