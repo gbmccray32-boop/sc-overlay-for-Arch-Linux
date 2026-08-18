@@ -166,8 +166,11 @@ grep -q 'ARCHVERSE_LINUX_BOUND_MINING_CADENCE' "$OUT/app/electron/capture.cjs"
 grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGIONS' "$OUT/app/electron/capture.cjs"
 grep -q 'ARCHVERSE_LINUX_NO_FULL_FRAME_OCR_ARCHIVE' "$OUT/app/electron/capture.cjs"
 grep -q 'ARCHVERSE_LINUX_EXACT_SC_SESSION_BINDING' "$OUT/app/electron/capture.cjs"
-grep -qi 'gamescope' "$OUT/app/electron/capture.cjs"
-grep -qi 'pipewire' "$OUT/app/electron/capture.cjs"
+# These are the actual verified Linux capture implementations. On KDE Wayland Electron's desktop
+# capture may use PipeWire internally, but PipeWire is not a direct ArchVerse API and therefore is
+# not a stable source-string contract. Gate the Gamescope window path + Spectacle Wayland fallback.
+grep -q 'electron-gamescope-window' "$OUT/app/electron/capture.cjs"
+grep -q 'spectacle-wayland' "$OUT/app/electron/capture.cjs"
 grep -qi 'rapidocr' "$OUT/app/electron/capture.cjs"
 grep -q 'ARCHVERSE_LINUX_OCR_CONTRACT_V1' "$OUT/app/electron/native-linux-ocr.cjs"
 grep -q 'getOcrCaptureInfo' "$OUT/app/electron/preload.cjs"
