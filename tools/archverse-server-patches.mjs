@@ -2,7 +2,7 @@
  * Linux-only semantic patches applied to the CURRENT upstream overlay-server source before esbuild.
  *
  * Keep this file small and fail-loud. It owns only platform contracts that upstream Windows code
- * cannot know about; mission/hauling/mining business logic remains byte-for-byte upstream.
+ * cannot know about; mission/hauling/mining business logic remains upstream.
  */
 
 function must(cond, msg) {
@@ -37,13 +37,25 @@ export function applyArchVerseServerSourcePatches(source) {
   );
   s = replaceOnce(
     s,
+    '  scanRegion: ScanRegion | null;',
+    '  scanRegion: ScanRegion | null;\n  /** ARCHVERSE_LINUX_OCR_REGION_CONFIG: independent normalized crops on the bound Star Citizen frame. */\n  linuxOcrRegions: Partial<Record<"resourceSignature" | "fabricator" | "mission" | "claimContext" | "refinery", ScanRegion | null>>;',
+    'Linux OCR region Config type',
+  );
+  s = replaceOnce(
+    s,
     '  interactHotkey: "F",\n  holdToInteract: false,\n  moveHotkey: "Ctrl+Alt+M",',
     '  interactHotkey: "F",\n  holdToInteract: false,\n  screenReaderProfile: "lightweight",\n  moveHotkey: "Ctrl+Alt+M",',
     'screen-reader profile default',
   );
+  s = replaceOnce(
+    s,
+    '  scanRegion: null,\n  payoutScan: false,',
+    '  scanRegion: null,\n  linuxOcrRegions: { resourceSignature: null, fabricator: null, mission: null, claimContext: null, refinery: null },\n  payoutScan: false,',
+    'Linux OCR region defaults',
+  );
 
   const loadAnchor = 'const freshInstall = !existsSync(configPath);\nlet config: Config = loadConfig();';
-  const repairBlock = `// ARCHVERSE_LINUX_CONFIG_CONTRACT\nfunction deriveScreenReaderProfile(c: Pick<Config, "fabCapture" | "missionOcr" | "miningAssistant">): Config["screenReaderProfile"] {\n  if (!c.fabCapture && !c.missionOcr && !c.miningAssistant) return "lightweight";\n  if (!c.fabCapture && c.missionOcr && !c.miningAssistant) return "balanced";\n  if (!c.fabCapture && !c.missionOcr && c.miningAssistant) return "mining";\n  return "custom";\n}\nfunction repairArchVerseLinuxConfig(c: Config): void {\n  c.screenReaderProfile = deriveScreenReaderProfile(c);\n  if (process.platform !== "linux") return;\n  // These are reachability/interaction invariants on Linux, not ordinary preferences.\n  c.interactHotkey = "F";\n  c.holdToInteract = true;\n  c.moveHotkey = "Shift+F6";\n}\n\nconst freshInstall = !existsSync(configPath);\nlet config: Config = loadConfig();\nrepairArchVerseLinuxConfig(config);`;
+  const repairBlock = `// ARCHVERSE_LINUX_CONFIG_CONTRACT\nfunction deriveScreenReaderProfile(c: Pick<Config, "fabCapture" | "missionOcr" | "miningAssistant">): Config["screenReaderProfile"] {\n  if (!c.fabCapture && !c.missionOcr && !c.miningAssistant) return "lightweight";\n  if (!c.fabCapture && c.missionOcr && !c.miningAssistant) return "balanced";\n  if (!c.fabCapture && !c.missionOcr && c.miningAssistant) return "mining";\n  return "custom";\n}\nfunction repairArchVerseLinuxConfig(c: Config): void {\n  c.screenReaderProfile = deriveScreenReaderProfile(c);\n  if (!c.linuxOcrRegions || typeof c.linuxOcrRegions !== "object") c.linuxOcrRegions = {};\n  // Alpha20/21 used scanRegion for Resource Scanner. Mirror it into the independent-region map\n  // unless a newer config already has an explicit resourceSignature entry.\n  if (!("resourceSignature" in c.linuxOcrRegions) && c.scanRegion) c.linuxOcrRegions.resourceSignature = c.scanRegion;\n  if (process.platform !== "linux") return;\n  // These are reachability/interaction invariants on Linux, not ordinary preferences.\n  c.interactHotkey = "F";\n  c.holdToInteract = true;\n  c.moveHotkey = "Shift+F6";\n}\n\nconst freshInstall = !existsSync(configPath);\nlet config: Config = loadConfig();\nrepairArchVerseLinuxConfig(config);`;
   s = replaceOnce(s, loadAnchor, repairBlock, 'Linux config repair helper');
 
   s = replaceOnce(
@@ -68,6 +80,21 @@ export function applyArchVerseServerSourcePatches(source) {
     'config GET platform marker',
   );
 
+  // Keep Resource Scanner's legacy scanRegion and the Linux multi-region map synchronized. The
+  // four other regions remain independent and may be reset individually to their native defaults.
+  const oldScanBlock = `    if (body.scanRegion === null) config.scanRegion = null;\n    else if (body.scanRegion && typeof body.scanRegion === "object") {\n      const r = body.scanRegion as ScanRegion;\n      const ok = [r.x, r.y, r.w, r.h].every((n) => typeof n === "number" && Number.isFinite(n))\n        && r.w > 0.02 && r.h > 0.01 && r.x >= 0 && r.y >= 0 && r.x + r.w <= 1.001 && r.y + r.h <= 1.001;\n      if (ok) config.scanRegion = { x: r.x, y: r.y, w: r.w, h: r.h };\n    }\n    if (typeof body.miningAutoShow === "boolean") config.miningAutoShow = body.miningAutoShow;`;
+  const newScanBlock = `    if (body.scanRegion === null) {\n      config.scanRegion = null;\n      config.linuxOcrRegions = { ...(config.linuxOcrRegions || {}), resourceSignature: null };\n    } else if (body.scanRegion && typeof body.scanRegion === "object") {\n      const r = body.scanRegion as ScanRegion;\n      const ok = [r.x, r.y, r.w, r.h].every((n) => typeof n === "number" && Number.isFinite(n))\n        && r.w > 0.02 && r.h > 0.01 && r.x >= 0 && r.y >= 0 && r.x + r.w <= 1.001 && r.y + r.h <= 1.001;\n      if (ok) {\n        config.scanRegion = { x: r.x, y: r.y, w: r.w, h: r.h };\n        config.linuxOcrRegions = { ...(config.linuxOcrRegions || {}), resourceSignature: config.scanRegion };\n      }\n    }\n    if (body.linuxOcrRegions && typeof body.linuxOcrRegions === "object") {\n      const allowed = new Set(["resourceSignature", "fabricator", "mission", "claimContext", "refinery"]);\n      const next = { ...(config.linuxOcrRegions || {}) };\n      for (const [key, value] of Object.entries(body.linuxOcrRegions as Record<string, unknown>)) {\n        if (!allowed.has(key)) continue;\n        if (value === null) { next[key as keyof typeof next] = null; continue; }\n        if (!value || typeof value !== "object") continue;\n        const r = value as ScanRegion;\n        const ok = [r.x, r.y, r.w, r.h].every((n) => typeof n === "number" && Number.isFinite(n))\n          && r.w > 0.02 && r.h > 0.01 && r.x >= 0 && r.y >= 0 && r.x + r.w <= 1.001 && r.y + r.h <= 1.001;\n        if (ok) next[key as keyof typeof next] = { x: r.x, y: r.y, w: r.w, h: r.h };\n      }\n      config.linuxOcrRegions = next;\n      if (Object.prototype.hasOwnProperty.call(body.linuxOcrRegions, "resourceSignature"))\n        config.scanRegion = next.resourceSignature ?? null;\n    }\n    if (typeof body.miningAutoShow === "boolean") config.miningAutoShow = body.miningAutoShow;`;
+  s = replaceOnce(s, oldScanBlock, newScanBlock, 'independent Linux OCR region persistence');
+
+  // Linux never enters the Windows.Media.Ocr / PowerShell image-path branch. Electron has already
+  // cropped and RapidOCR'd the exact Star Citizen region before POSTing lines here.
+  s = replaceOnce(
+    s,
+    '    } else if (typeof body.path === "string" && body.path) {\n      const ocr = await ocrImage(body.path);',
+    '    } else if (process.platform === "win32" && typeof body.path === "string" && body.path) {\n      // ARCHVERSE_LINUX_NO_WINDOWS_MEDIA_OCR\n      const ocr = await ocrImage(body.path);',
+    'Windows OCR platform gate',
+  );
+
   // Scope the POST response replacement to the config route so another {ok:true} endpoint cannot
   // accidentally become the target after upstream adds a route.
   const routeStart = '  if (url === "/api/config" && req.method === "POST") {';
@@ -82,8 +109,7 @@ export function applyArchVerseServerSourcePatches(source) {
   s = s.slice(0, a) + route + s.slice(b);
 
   // Upstream's health self-test is WinRT/PowerShell. Linux OCR is the isolated RapidOCR worker in
-  // capture.cjs. Preserve a REAL RapidOCR failure (the block immediately above), then skip only the
-  // irrelevant Windows probe so Linux never shows a permanent false OCR warning.
+  // capture.cjs. Preserve a REAL RapidOCR failure, then skip only the irrelevant Windows probe.
   s = replaceOnce(
     s,
     '  if (ocrHealth && Date.now() - ocrHealthAt < maxAgeMs) return ocrHealth;',
@@ -99,6 +125,8 @@ export function applyArchVerseServerSourcePatches(source) {
 
   must(s.includes('ARCHVERSE_LINUX_CONFIG_ROOT'), 'canonical config marker missing');
   must(s.includes('ARCHVERSE_LINUX_CONFIG_CONTRACT'), 'Linux config contract marker missing');
+  must(s.includes('ARCHVERSE_LINUX_OCR_REGION_CONFIG'), 'Linux OCR region config marker missing');
+  must(s.includes('ARCHVERSE_LINUX_NO_WINDOWS_MEDIA_OCR'), 'Windows OCR is not hard-gated off Linux');
   must(s.includes('ARCHVERSE_LINUX_OCR_HEALTH'), 'Linux OCR health marker missing');
   return s;
 }
