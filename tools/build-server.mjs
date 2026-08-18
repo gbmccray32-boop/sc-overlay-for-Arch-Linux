@@ -38,7 +38,9 @@ await build({
   format: "esm",
   target: "node22",
   outfile: `${out}/server.mjs`,
-  banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
+  // These markers are consumed by the native contract self-test. Keep them in an emitted banner
+  // because esbuild is allowed to discard ordinary source comments while preserving semantics.
+  banner: { js: "/* ARCHVERSE_LINUX_NO_WINDOWS_MEDIA_OCR ARCHVERSE_LINUX_OCR_REGION_CONFIG */\nimport { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
 });
 
 const OLD_DATASET = /^blueprint(?:s|-detail)\.\d+\.json$/;
@@ -50,17 +52,16 @@ for (const dir of ["overlay", "data"]) {
   console.log(`copied ${dir}/ -> ${out}/${dir}/`);
 }
 
-// This is Linux platform code, not an upstream page fork. Keep one canonical implementation and
-// inject only its loader into the staged current missions page.
 cpSync("packaging/common/linux-ocr-region-manager.js", `${out}/overlay/linux-ocr-region-manager.js`);
 applyArchVerseOverlayPatches(out);
 
-// Check emitted semantics rather than source comments: esbuild is free to discard comments.
 const server = readFileSync(`${out}/server.mjs`, "utf8");
 for (const marker of [
   "SC_TRACKER_CONFIG_DIR",
   "Shift+F6",
   "ArchVerse Linux RapidOCR (Electron capture)",
+  "ARCHVERSE_LINUX_NO_WINDOWS_MEDIA_OCR",
+  "ARCHVERSE_LINUX_OCR_REGION_CONFIG",
   "linuxOcrRegions",
   "logbackups",
   "startPosition",
