@@ -207,7 +207,7 @@ jobs:
           mkdir -p dist
           tar -C "$RUNNER_TEMP/native" -czf "dist/ArchVerse-Native-$APP_VERSION.tar.gz" \
             "ArchVerse-Native-$APP_VERSION"
-          sha256sum "dist/ArchVerse-Native-$APP_VERSION.tar.gz" | tee dist/SHA256SUMS
+          (cd dist && sha256sum "ArchVerse-Native-$APP_VERSION.tar.gz" > SHA256SUMS)
 
       - name: Upload quarantined native candidate
         uses: actions/upload-artifact@v4
