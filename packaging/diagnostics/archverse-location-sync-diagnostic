@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ARCHVERSE_LOCATION_SYNC_PIPEWIRE_DIAGNOSTIC_LAUNCHER_V1
+SELF="$(readlink -f -- "$0")"
+ROOT="$(cd -- "$(dirname -- "$SELF")/.." && pwd)"
+ELECTRON_BIN="${SC_TRACKER_ELECTRON_BIN:-$ROOT/runtime/electron/electron}"
+DIAG="$ROOT/app/electron/location-sync-diagnostic.cjs"
+
+[[ -x "$ELECTRON_BIN" ]] || {
+  printf 'ArchVerse diagnostic: Electron runtime is missing at %s\n' "$ELECTRON_BIN" >&2
+  exit 127
+}
+[[ -s "$DIAG" ]] || {
+  printf 'ArchVerse diagnostic: %s is missing\n' "$DIAG" >&2
+  exit 127
+}
+
+# Preserve the host compositor/session values before forcing the diagnostic Electron process onto
+# X11/XWayland, matching the normal ArchVerse shell. The direct PipeWire capture does not depend on
+# Electron's portal capture, but the comparison window source must run under the same conditions as
+# the real overlay.
+export SC_TRACKER_HOST_XDG_SESSION_TYPE="${SC_TRACKER_HOST_XDG_SESSION_TYPE:-${XDG_SESSION_TYPE:-}}"
+export SC_TRACKER_HOST_WAYLAND_DISPLAY="${SC_TRACKER_HOST_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
+export SC_TRACKER_HOST_DISPLAY="${SC_TRACKER_HOST_DISPLAY:-${DISPLAY:-}}"
+export SC_TRACKER_HOST_XDG_RUNTIME_DIR="${SC_TRACKER_HOST_XDG_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}"
+export SC_TRACKER_HOST_DBUS_SESSION_BUS_ADDRESS="${SC_TRACKER_HOST_DBUS_SESSION_BUS_ADDRESS:-${DBUS_SESSION_BUS_ADDRESS:-}}"
+
+cat <<'EOF'
+ArchVerse Location Sync PipeWire Diagnostic
+
+Before capture:
+  1. Launch Star Citizen normally through your current Gamescope setup.
+  2. Open the Star Citizen console and enter: r_DisplayInfo 1
+  3. Return to the game when the countdown begins.
+
+The diagnostic saves ONLY bounded top-right CamPos search crops and a JSON timing/result file.
+It does not change hauling state, config, or the normal overlay capture loop.
+EOF
+
+exec "$ELECTRON_BIN" --ozone-platform=x11 "$DIAG" "$@"
