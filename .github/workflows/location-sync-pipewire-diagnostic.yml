@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/location-sync-pipewire-diagnostic-v1
+  pull_request:
+    branches:
+      - agent/upstream-0.1.44-linux-port
   workflow_dispatch:
 
 permissions:
@@ -103,8 +106,6 @@ jobs:
             "$RUNNER_TEMP/sources/$ELECTRON_ASSET" \
             "$STAGE_ROOT"
 
-          # The known-good low-latency capture layer must be applied after the OCR architecture
-          # rewrite, exactly as required by the permanent Linux porting contract.
           node packaging/common/enforce-native-linux-pipewire-capture.cjs "$STAGE_ROOT"
 
           install -m 0644 packaging/diagnostics/location-sync-diagnostic.cjs \
@@ -128,7 +129,6 @@ jobs:
           grep -q 'XDG_STATE_HOME' "$STAGE_ROOT/app/electron/location-sync-diagnostic.cjs"
           ! grep -q 'types:.*screen' "$STAGE_ROOT/app/electron/location-sync-diagnostic.cjs"
 
-          # Keep this artifact self-identifying and impossible to confuse with a normal candidate.
           python3 - "$STAGE_ROOT/app/package.json" "$DIAG_VERSION" <<'PY'
           from pathlib import Path
           import json, sys
