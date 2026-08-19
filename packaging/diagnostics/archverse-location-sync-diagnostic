@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ARCHVERSE_LOCATION_SYNC_PIPEWIRE_DIAGNOSTIC_LAUNCHER_V1
+SELF="$(readlink -f -- "$0")"
+ROOT="$(cd -- "$(dirname -- "$SELF")/.." && pwd)"
+ELECTRON_BIN="${SC_TRACKER_ELECTRON_BIN:-$ROOT/runtime/electron/electron}"
+DIAG="$ROOT/app/electron/location-sync-diagnostic.cjs"
+
+[[ -x "$ELECTRON_BIN" ]] || {
+  printf 'ArchVerse diagnostic: Electron runtime is missing at %s\n' "$ELECTRON_BIN" >&2
+  exit 127
+}
+[[ -s "$DIAG" ]] || {
+  printf 'ArchVerse diagnostic: %s is missing\n' "$DIAG" >&2
+  exit 127
+}
+
+# Match the tested ArchVerse Linux session/runtime environment. The diagnostic is deliberately
+# separate from the normal overlay, but its session binder and RapidOCR worker must see the same
+# Wine prefix and bounded native-thread policy as the real application.
+export SC_TRACKER_WINEPREFIX="${SC_TRACKER_WINEPREFIX:-${WINEPREFIX:-$HOME/Games/star-citizen}}"
+export VIPS_CONCURRENCY="${VIPS_CONCURRENCY:-1}"
+export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
+export SC_TRACKER_OCR_THREADS="${SC_TRACKER_OCR_THREADS:-2}"
+export SC_TRACKER_RAPIDOCR_MAX_QUEUE="${SC_TRACKER_RAPIDOCR_MAX_QUEUE:-2}"
+export OMP_THREAD_LIMIT="${OMP_THREAD_LIMIT:-1}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MAGICK_THREAD_LIMIT="${MAGICK_THREAD_LIMIT:-1}"
+
+# Preserve the real compositor/session values before forcing Electron itself onto X11/XWayland,
+# exactly like the normal ArchVerse launcher. Direct pw-dump/pw-cli/GStreamer still talk to the
+# host PipeWire session; Electron's explicit window source is the fallback comparison only.
+export SC_TRACKER_HOST_XDG_SESSION_TYPE="${SC_TRACKER_HOST_XDG_SESSION_TYPE:-${XDG_SESSION_TYPE:-}}"
+export SC_TRACKER_HOST_WAYLAND_DISPLAY="${SC_TRACKER_HOST_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
+export SC_TRACKER_HOST_DISPLAY="${SC_TRACKER_HOST_DISPLAY:-${DISPLAY:-}}"
+export SC_TRACKER_HOST_XDG_RUNTIME_DIR="${SC_TRACKER_HOST_XDG_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}"
+export SC_TRACKER_HOST_DBUS_SESSION_BUS_ADDRESS="${SC_TRACKER_HOST_DBUS_SESSION_BUS_ADDRESS:-${DBUS_SESSION_BUS_ADDRESS:-}}"
+
+export ELECTRON_OZONE_PLATFORM_HINT=x11
+export GDK_BACKEND=x11
+export XDG_SESSION_TYPE=x11
+unset WAYLAND_DISPLAY
+export MANGOHUD=0
+export MANGOHUD_DLSYM=0
+unset ELECTRON_RUN_AS_NODE
+
+# Use the same OpenGL/ANGLE route as the known-good ArchVerse launcher. The direct PipeWire capture
+# itself is external GStreamer; these flags keep Electron's comparison source away from RADV/Vulkan.
+electron_flags=(
+  --ozone-platform=x11
+  --disable-vulkan
+  --use-gl=angle
+  --use-angle=gl
+  --disable-accelerated-video-decode
+  --disable-accelerated-video-encode
+  --disable-features=WebRTCPipeWireCapturer,Vulkan,VulkanFromANGLE,DefaultANGLEVulkan,AcceleratedVideoDecoder,AcceleratedVideoEncoder
+)
+
+# A tarball extracted by a normal user cannot preserve chrome-sandbox as root:root 4755. This is a
+# quarantined local diagnostic with no web content; if the helper is not correctly root-owned, use
+# --no-sandbox for THIS diagnostic only. Installed ArchVerse packages retain the normal sandbox.
+if [[ -e "$ROOT/runtime/electron/chrome-sandbox" ]]; then
+  sandbox_owner="$(stat -c '%u' "$ROOT/runtime/electron/chrome-sandbox" 2>/dev/null || printf '?')"
+  sandbox_mode="$(stat -c '%a' "$ROOT/runtime/electron/chrome-sandbox" 2>/dev/null || printf '?')"
+  if [[ "$sandbox_owner" != 0 || "$sandbox_mode" != 4755 ]]; then
+    printf '[location-diag] extracted Electron sandbox is %s:%s; using --no-sandbox for this diagnostic only.\n' "$sandbox_owner" "$sandbox_mode" >&2
+    electron_flags+=(--no-sandbox)
+  fi
+fi
+
+cat <<'EOF'
+ArchVerse Location Sync PipeWire Diagnostic
+
+Before capture:
+  1. Launch Star Citizen normally through your current Gamescope setup.
+  2. Open the Star Citizen console and enter: r_DisplayInfo 1
+  3. Return to the game when the countdown begins.
+
+The diagnostic saves ONLY bounded top-right CamPos search crops and a JSON timing/result file.
+It does not change hauling state, config, or the normal overlay capture loop.
+EOF
+
+exec "$ELECTRON_BIN" "${electron_flags[@]}" "$DIAG" "$@"
