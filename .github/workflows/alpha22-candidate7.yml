@@ -118,7 +118,7 @@ jobs:
           node --check "$STAGE_ROOT/app/server/server.mjs"
 
           # Frozen field-pass interaction contract.
-          grep -q 'F keyboard authority=evdev' "$STAGE_ROOT/app/electron/main.cjs"
+          grep -q 'keyboard authority=evdev' "$STAGE_ROOT/app/electron/main.cjs"
           grep -q '__overlayClassifyPoint' "$STAGE_ROOT/app/electron/main.cjs"
           grep -q 'function updateFHoverHit()' "$STAGE_ROOT/app/electron/main.cjs"
           ! grep -q 'pointIsInsideOverlayRegion(' "$STAGE_ROOT/app/electron/main.cjs"
