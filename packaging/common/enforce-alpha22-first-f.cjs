@@ -49,6 +49,17 @@ if (!main.includes('ARCHVERSE_LINUX_FIRST_F_DIRECT_PROBE')) {
     'F-down refreshed direct probe');
 }
 
+// Candidate 5 field test exposed one stale helper call in the post-F hover latch timer. The
+// canonical geometry helper is overlayRegionAtPoint(); pointIsInsideOverlayRegion never existed in
+// this runtime and caused a main-process ReferenceError as soon as F was released over a latched
+// widget. Use the canonical helper directly and make the obsolete symbol a build-time failure.
+if (!main.includes('ARCHVERSE_LINUX_F_LATCH_REGION_HELPER')) {
+  main = replaceOnce(main,
+    `      const insideWidget = pointIsInsideOverlayRegion(lastGlobalPointer);`,
+    `      const insideWidget = !!overlayRegionAtPoint(lastGlobalPointer); // ARCHVERSE_LINUX_F_LATCH_REGION_HELPER`,
+    'post-F latch region helper');
+}
+
 // Two Linux keyboard backends were generating competing F transitions in the field log. When
 // evdev is available it is the key-state authority; uIOhook remains active for pointer/buttons and
 // remains the F fallback on systems where evdev cannot be opened.
@@ -71,6 +82,8 @@ must(missions.includes('ARCHVERSE_LINUX_FIRST_F_DOM_CLASSIFIER'), 'DOM classifie
 must(missions.includes('window.__overlayClassifyPoint = classifyOverlayPoint'), 'Electron renderer-classifier bridge missing');
 must(main.includes('ARCHVERSE_LINUX_FIRST_F_DIRECT_PROBE'), 'direct first-F probe marker missing');
 must(main.includes('ARCHVERSE_LINUX_F_KEY_SOURCE_ARBITRATION'), 'keyboard-source arbitration marker missing');
+must(main.includes('ARCHVERSE_LINUX_F_LATCH_REGION_HELPER'), 'post-F latch helper marker missing');
+must(!main.includes('pointIsInsideOverlayRegion('), 'obsolete undefined pointIsInsideOverlayRegion helper remains');
 must(!main.includes('      updateFHoverHit();\n') || main.includes('function updateFHoverHit()'), 'updateFHoverHit call exists without implementation');
 
 fs.writeFileSync(mainPath, main);
