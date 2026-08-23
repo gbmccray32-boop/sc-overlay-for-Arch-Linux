@@ -65,15 +65,39 @@ function inferSystem(texts, zones) {
   return null;
 }
 
-function inferPlanet(texts) {
+function canonicalBodyFromLabel(value) {
+  let text = cleanText(value)
+    .replace(/\((?:working|load\s+complete)[^)]*\)/ig, ' ')
+    .replace(/^(?:ooc|00c|0oc|o0c)\s+/i, '')
+    .trim();
+  const n = norm(text);
+  for (const body of Object.values(LIVE_BODY_CODES)) {
+    if (n.includes(norm(body))) return body;
+  }
+  text = text.replace(/^(?:stanton|pyro|nyx)\s*/i, '').trim();
+  text = text.replace(/^(?:\d+[a-z]?|[ivx]+)\s+/i, '').trim();
+  text = text.replace(/^\d{5,}\s+/, '').trim();
+  if (!text || /^(?:root|ro0t|solarsystem)$/i.test(text)) return null;
+  return text.slice(0, 48);
+}
+
+function inferPlanet(texts, zones) {
   const joined = texts.join(' ');
   if (/\bno\s+current\s+planet\b/i.test(joined)) return { body: null, explicitNone: true };
-  const direct = /\b(?:current\s+)?planet\s*:\s*([A-Za-z][A-Za-z0-9 _'-]{1,40}?)(?=\s{2,}|\b(?:entities|component|game|zone|server|render|graphics|current\s+player)\b|$)/i.exec(joined);
-  if (direct) return { body: cleanText(direct[1]), explicitNone: false };
+  const direct = /\b(?:current\s+)?planet\s*:\s*(.+?)(?=\s+\((?:working|load\s+complete)\)|\s{2,}|\b(?:entities|component|game|zone|server|render|graphics|current\s+player)\b|$)/i.exec(joined);
+  if (direct) {
+    const body = canonicalBodyFromLabel(direct[1]);
+    if (body) return { body, explicitNone: false };
+  }
   const loc = /\bcurrent\s+player\s+location\s*:\s*((?:stanton\d[a-z]?)[a-z0-9_-]*)/i.exec(joined);
   if (loc) {
     const code = /^((?:stanton\d[a-z]?))/i.exec(loc[1])?.[1]?.toLowerCase();
     if (code && LIVE_BODY_CODES[code]) return { body: LIVE_BODY_CODES[code], explicitNone: false };
+  }
+  const bodyZones = (zones || []).filter((z) => !/^r[o0]{2}t$/i.test(z.label) && !/solarsystem/i.test(z.label) && z.units.includes('km'));
+  if (bodyZones.length === 1) {
+    const body = canonicalBodyFromLabel(bodyZones[0].label);
+    if (body) return { body, explicitNone: false };
   }
   return { body: null, explicitNone: false };
 }
@@ -110,7 +134,7 @@ function parseDisplayInfoLines(lines) {
     .map((row) => cleanText(row && typeof row === 'object' ? row.text : row))
     .filter(Boolean);
   const zones = texts.map(parseZoneLine).filter(Boolean);
-  const planet = inferPlanet(texts);
+  const planet = inferPlanet(texts, zones);
   const system = inferSystem(texts, zones);
   const currentLocationMatch = /\bcurrent\s+player\s+location\s*:\s*([^\n]+?)(?=\s{2,}|\b(?:entities|component|game|no\s+current\s+planet|planet|zone|server|render|graphics)\b|$)/i.exec(texts.join(' '));
   const currentLocation = currentLocationMatch ? cleanText(currentLocationMatch[1]) : null;
@@ -140,7 +164,7 @@ function parseDisplayInfoLines(lines) {
     };
   }
 
-  const root = zones.find((z) => /^root$/i.test(z.label));
+  const root = zones.find((z) => /^r[o0]{2}t$/i.test(z.label));
   const solar = zones.find((z) => /solarsystem/i.test(z.label));
   const systemZone = root || solar;
   if (systemZone && (planet.explicitNone || !planet.body)) {
