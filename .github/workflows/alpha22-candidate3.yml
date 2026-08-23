@@ -1,0 +1,235 @@
+name: Alpha22 Candidate 3
+
+on:
+  push:
+    branches:
+      - agent/alpha22-performance-repair-candidate3
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: alpha22-candidate3-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_VERSION: 0.1.44-r31.alpha22.candidate3
+  VERIFIED_ALPHA21_CORE_RUN_ID: '31901404904'
+  VERIFIED_ALPHA21_CORE_ARTIFACT_ID: '9251185299'
+  VERIFIED_ALPHA21_CORE_ARTIFACT: ArchVerse-Alpha21-native-payload
+  VERIFIED_ALPHA21_CORE_DIGEST: sha256:6a6e05eeb8f7a91e06d5a60fb1b93230a3d6564c66741a71642926191815bbca
+  VERIFIED_ALPHA21_CORE_HEAD_SHA: 9f3c095b74c5220b7720717c5bb8d6ed2bc28382
+  VERIFIED_ALPHA21_CORE_PAYLOAD: ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz
+  ELECTRON_ASSET: electron-v42.7.1-linux-x64.zip
+  ELECTRON_SHA256: e85b28245deaa75c3c4f2cf5da084f4c7fbedd5af1630c59a827c41ac1f5e1af
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Validate integration logic
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm run test:localization
+          npm run test:handover
+          npm run test:contracts
+          npm run test:hauling
+          npm run test:solver
+          npm run test:haulplan
+          npm run test:advisor
+          npm run test:mining
+          npm run test:screenocr
+          npm run test:clienterror
+          npm run test:location
+          node --check tools/widget-dom-test.cjs
+          xvfb-run -a ./node_modules/.bin/electron --no-sandbox tools/widget-dom-test.cjs
+
+      - name: Build current Linux sidecar
+        run: |
+          set -euo pipefail
+          npm run build:server
+          node --check build/server/server.mjs
+          grep -q 'SC_TRACKER_CONFIG_DIR' build/server/server.mjs
+          grep -q 'ARCHVERSE_LINUX_NO_WINDOWS_MEDIA_OCR' build/server/server.mjs
+          grep -q 'ARCHVERSE_LINUX_OCR_REGION_CONFIG' build/server/server.mjs
+          grep -q 'ARCHVERSE_LINUX_SETTINGS_CONTRACT' build/server/overlay/config.html
+          grep -q 'ARCHVERSE_LINUX_DYNAMIC_WIDGET_REGIONS' build/server/overlay/missions.html
+          grep -q 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI_LOADER' build/server/overlay/missions.html
+          grep -q 'ARCHVERSE_RESOURCE_SCANNER_V1' build/server/overlay/mining.html
+
+      - name: Verify pinned Alpha21 core provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$VERIFIED_ALPHA21_CORE_ARTIFACT_ID")"
+          test "$(jq -r .name <<<"$meta")" = "$VERIFIED_ALPHA21_CORE_ARTIFACT"
+          test "$(jq -r .expired <<<"$meta")" = "false"
+          test "$(jq -r .digest <<<"$meta")" = "$VERIFIED_ALPHA21_CORE_DIGEST"
+          test "$(jq -r .workflow_run.id <<<"$meta")" = "$VERIFIED_ALPHA21_CORE_RUN_ID"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_ALPHA21_CORE_RUN_ID" --jq .head_sha)" = "$VERIFIED_ALPHA21_CORE_HEAD_SHA"
+
+      - name: Download pinned Alpha21 core
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.VERIFIED_ALPHA21_CORE_ARTIFACT }}
+          path: ${{ runner.temp }}/verified-alpha21-core
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.VERIFIED_ALPHA21_CORE_RUN_ID }}
+
+      - name: Download pinned Electron
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sources"
+          curl --fail --location --retry 4 \
+            "https://github.com/electron/electron/releases/download/v42.7.1/$ELECTRON_ASSET" \
+            --output "$RUNNER_TEMP/sources/$ELECTRON_ASSET"
+          echo "$ELECTRON_SHA256  $RUNNER_TEMP/sources/$ELECTRON_ASSET" | sha256sum -c -
+
+      - name: Reconstruct Candidate 3 runtime
+        run: |
+          set -euo pipefail
+          STAGE_ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          bash packaging/native/stage-upstream-0144-candidate.sh \
+            "$RUNNER_TEMP/verified-alpha21-core/$VERIFIED_ALPHA21_CORE_PAYLOAD" \
+            "$RUNNER_TEMP/sources/$ELECTRON_ASSET" \
+            "$STAGE_ROOT"
+          node packaging/common/enforce-native-linux-pipewire-capture.cjs "$STAGE_ROOT"
+          node --check packaging/common/enforce-alpha22-performance-repair.cjs
+          node packaging/common/enforce-alpha22-performance-repair.cjs "$STAGE_ROOT"
+
+          python3 - "$STAGE_ROOT/app/package.json" "$STAGE_ROOT/app/server/overlay/changelog.json" "$APP_VERSION" <<'PY'
+          import json, sys
+          from pathlib import Path
+          package_path = Path(sys.argv[1]); changelog_path = Path(sys.argv[2]); version = sys.argv[3]
+          package = json.loads(package_path.read_text())
+          package['version'] = version
+          package['description'] = 'ArchVerse Alpha22 Candidate 3: Linux capture/OCR performance and verified Settings persistence repair'
+          package_path.write_text(json.dumps(package, indent=2) + '\n')
+          changes = json.loads(changelog_path.read_text())
+          old = next(iter(changes), None)
+          entry = changes.pop(old) if old and old.startswith('0.1.44-r31.alpha22.candidate') else {'notes': []}
+          entry['date'] = '2026-08-23T04:00:00Z'
+          entry['notes'] = [
+              {'kind':'fixed','label':'Mining latency pipeline','text':'Independent Linux OCR lanes, corrected signature-lock coordinates, bounded OCR scaling and non-blocking mining telemetry.'},
+              {'kind':'fixed','label':'PipeWire recovery','text':'Fallback capture no longer permanently masks a Gamescope PipeWire source that appears or recovers later.'},
+              {'kind':'fixed','label':'Settings persistence','text':'Manual Settings saves are written, read back and verified before the UI reports success.'},
+          ] + list(entry.get('notes') or [])
+          changelog_path.write_text(json.dumps({version: entry, **changes}, indent=2) + '\n')
+          PY
+
+      - name: Assert final Linux contracts
+        run: |
+          set -euo pipefail
+          STAGE_ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          find "$STAGE_ROOT/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          node --check "$STAGE_ROOT/app/server/server.mjs"
+
+          grep -q 'ARCHVERSE_LINUX_HOVER_SCOPED_LATCH' "$STAGE_ROOT/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_GAME_FOCUS_HANDOFF' "$STAGE_ROOT/app/electron/main.cjs"
+          grep -q 'ARCHVERSE_LINUX_DRAG_LOCK_WATCHDOG' "$STAGE_ROOT/app/electron/main.cjs"
+          ! grep -q 'overlay\.setFocusable(false)' "$STAGE_ROOT/app/electron/main.cjs"
+
+          grep -q 'ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_CAPTURE' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'pipewire: captureWithGamescopePipeWire' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -Fq '["pipewire", "gamescope", "spectacle", "electron"]' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -Fq '["pipewire", "electron", "gamescope", "spectacle"]' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'method: "gamescope-pipewire"' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'bound Star Citizen session has no Gamescope ancestor' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'pipewiresrc' "$STAGE_ROOT/app/electron/native-linux-gamescope-pipewire.cjs"
+
+          for marker in \
+            ARCHVERSE_ALPHA22_PERFORMANCE_REPAIR \
+            ARCHVERSE_LINUX_PIPEWIRE_REPROBE \
+            ARCHVERSE_LINUX_OCR_INDEPENDENT_LANES \
+            ARCHVERSE_LINUX_OCR_BACKGROUND_LANES \
+            ARCHVERSE_LINUX_MINING_COORDINATE_AUTHORITY \
+            ARCHVERSE_LINUX_MINING_SCALE_GUARD \
+            ARCHVERSE_LINUX_ASYNC_MINING_TELEMETRY; do
+            grep -q "$marker" "$STAGE_ROOT/app/electron/capture.cjs"
+          done
+          grep -q 'ARCHVERSE_LINUX_PIPEWIRE_RECOVERY_PROBE' "$STAGE_ROOT/app/electron/native-linux-gamescope-pipewire.cjs"
+          grep -q 'linuxOcrLaneClients' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'Promise.all' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'backgroundOcr = "deferred-for-mining"' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'sigBox = rr3.text' "$STAGE_ROOT/app/electron/capture.cjs"
+          ! grep -q 'sigBox = shift(rr3.text)' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'const tightLock = locked' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'queueMiningScanPost' "$STAGE_ROOT/app/electron/capture.cjs"
+
+          grep -q 'ARCHVERSE_CONFIG_STRICT_VERIFICATION' "$STAGE_ROOT/app/server/server.mjs"
+          grep -q 'saveConfigVerified' "$STAGE_ROOT/app/server/server.mjs"
+          grep -q 'config_save_failed' "$STAGE_ROOT/app/server/server.mjs"
+          grep -q 'ARCHVERSE_CONFIG_SAVE_VERIFIED_UI' "$STAGE_ROOT/app/server/overlay/config.html"
+          grep -q 'savedReply?.verified' "$STAGE_ROOT/app/server/overlay/config.html"
+
+          ! grep -REq 'taskset|sched_setaffinity|SCHED_FIFO|SCHED_RR' "$STAGE_ROOT/app/electron" "$STAGE_ROOT/bin"
+          test "$(node -p "require('$STAGE_ROOT/app/package.json').version")" = "$APP_VERSION"
+
+      - name: Prove Settings persistence and failure reporting
+        run: |
+          set -euo pipefail
+          STAGE_ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          CFG="$RUNNER_TEMP/candidate3-config"; PORT=18778
+          mkdir -p "$CFG"
+          SC_TRACKER_CONFIG_DIR="$CFG" PORT="$PORT" node "$STAGE_ROOT/app/server/server.mjs" >"$RUNNER_TEMP/candidate3-server.log" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 100); do curl -fsS "http://127.0.0.1:$PORT/api/config" >/dev/null 2>&1 && break; sleep .1; done
+          curl -fsS "http://127.0.0.1:$PORT/api/config" >/dev/null
+
+          cat >"$RUNNER_TEMP/save.json" <<'JSON'
+          {"interactHotkey":"Alt+X","holdToInteract":false,"moveHotkey":"Alt+Y","miningAssistant":true,"fabCapture":true,"missionOcr":true,"linuxOcrRegions":{"resourceSignature":{"x":0.21,"y":0.31,"w":0.22,"h":0.13},"fabricator":{"x":0.60,"y":0.10,"w":0.30,"h":0.70},"mission":{"x":0.10,"y":0.10,"w":0.35,"h":0.50},"claimContext":{"x":0.55,"y":0.15,"w":0.35,"h":0.60},"refinery":{"x":0.25,"y":0.20,"w":0.50,"h":0.55}}}
+          JSON
+          curl -fsS -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/save.json" "http://127.0.0.1:$PORT/api/config" >"$RUNNER_TEMP/save-result.json"
+          jq -e '.ok == true and .verified == true and .platform == "linux"' "$RUNNER_TEMP/save-result.json"
+          jq -e '.applied.interactHotkey == "F" and .applied.holdToInteract == true and .applied.moveHotkey == "Shift+F6"' "$RUNNER_TEMP/save-result.json"
+          jq -e '.interactHotkey == "F" and .holdToInteract == true and .moveHotkey == "Shift+F6"' "$CFG/config.json"
+          jq -e '.linuxOcrRegions.resourceSignature.x == 0.21 and .linuxOcrRegions.refinery.w == 0.5' "$CFG/config.json"
+          grep -q '\[config\] saved and verified path=' "$RUNNER_TEMP/candidate3-server.log"
+
+          chmod 400 "$CFG/config.json"
+          status="$(curl -sS -o "$RUNNER_TEMP/save-fail.json" -w '%{http_code}' -H 'Content-Type: application/json' --data '{"miningAssistant":false}' "http://127.0.0.1:$PORT/api/config")"
+          test "$status" = 500
+          jq -e '.ok == false and .verified == false and .error == "config_save_failed"' "$RUNNER_TEMP/save-fail.json"
+          chmod 600 "$CFG/config.json"
+
+      - name: Run final native OCR self-tests
+        run: |
+          set -euo pipefail
+          STAGE_ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          node packaging/common/native-linux-ocr-selftest.mjs "$STAGE_ROOT"
+          (cd "$STAGE_ROOT/app" && node "$GITHUB_WORKSPACE/packaging/common/rapidocr-native-selftest.mjs")
+
+      - name: Package Candidate 3
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -C "$RUNNER_TEMP/native" -czf "dist/ArchVerse-Native-$APP_VERSION.tar.gz" "ArchVerse-Native-$APP_VERSION"
+          (cd dist && sha256sum "ArchVerse-Native-$APP_VERSION.tar.gz" > SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-0.1.44-Alpha22-Candidate3-Performance
+          path: |
+            dist/ArchVerse-Native-${{ env.APP_VERSION }}.tar.gz
+            dist/SHA256SUMS
+            ${{ runner.temp }}/candidate3-server.log
+          if-no-files-found: error
+          compression-level: 0

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ARCHVERSE_LOCATION_SYNC_PIPEWIRE_DIAGNOSTIC_LAUNCHER_V1
+# ARCHVERSE_LOCATION_SYNC_PIPEWIRE_DIAGNOSTIC_LAUNCHER_V2
 SELF="$(readlink -f -- "$0")"
 ROOT="$(cd -- "$(dirname -- "$SELF")/.." && pwd)"
 ELECTRON_BIN="${SC_TRACKER_ELECTRON_BIN:-$ROOT/runtime/electron/electron}"
@@ -30,7 +30,7 @@ export MAGICK_THREAD_LIMIT="${MAGICK_THREAD_LIMIT:-1}"
 
 # Preserve the real compositor/session values before forcing Electron itself onto X11/XWayland,
 # exactly like the normal ArchVerse launcher. Direct pw-dump/pw-cli/GStreamer still talk to the
-# host PipeWire session; Electron's explicit window source is the fallback comparison only.
+# host PipeWire session; KDE Spectacle is the fallback comparison and receives the preserved host Wayland/DBus session.
 export SC_TRACKER_HOST_XDG_SESSION_TYPE="${SC_TRACKER_HOST_XDG_SESSION_TYPE:-${XDG_SESSION_TYPE:-}}"
 export SC_TRACKER_HOST_WAYLAND_DISPLAY="${SC_TRACKER_HOST_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
 export SC_TRACKER_HOST_DISPLAY="${SC_TRACKER_HOST_DISPLAY:-${DISPLAY:-}}"
@@ -46,7 +46,7 @@ export MANGOHUD_DLSYM=0
 unset ELECTRON_RUN_AS_NODE
 
 # Use the same OpenGL/ANGLE route as the known-good ArchVerse launcher. The direct PipeWire capture
-# itself is external GStreamer; these flags keep Electron's comparison source away from RADV/Vulkan.
+# itself is external GStreamer; these flags keep the diagnostic Electron shell away from RADV/Vulkan.
 electron_flags=(
   --ozone-platform=x11
   --disable-vulkan
@@ -70,14 +70,15 @@ if [[ -e "$ROOT/runtime/electron/chrome-sandbox" ]]; then
 fi
 
 cat <<'EOF'
-ArchVerse Location Sync PipeWire Diagnostic
+ArchVerse Location Sync PipeWire Diagnostic v2
 
 Before capture:
   1. Launch Star Citizen normally through your current Gamescope setup.
   2. Open the Star Citizen console and enter: r_DisplayInfo 1
   3. Return to the game when the countdown begins.
 
-The diagnostic saves ONLY bounded top-right CamPos search crops and a JSON timing/result file.
+The diagnostic compares direct Gamescope PipeWire against the KDE Spectacle fallback actually used by ArchVerse on Wayland.
+It saves ONLY bounded top-right CamPos search crops and a JSON timing/source-inventory result file.
 It does not change hauling state, config, or the normal overlay capture loop.
 EOF
 
