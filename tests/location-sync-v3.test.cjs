@@ -15,6 +15,16 @@ assert.equal(daymar.frame, 'body');
 assert.equal(daymar.body, 'Daymar');
 assert.equal(daymar.system, 'Stanton');
 assert.deepEqual(daymar.pos, { x: 200552.3, y: -104907.3, z: 190095.1 });
+
+const daymarDamagedLabels = mod.parseDisplayInfoLines([
+  'Zone: 00c Stanton 2b Daymar Pos: 200.5523km -104.9073km 190.0951km',
+  'Zone: SolarSystem 742312208505 Pos: -18930616.1288km -2609945.7846km 190.0951km',
+  'Zone: Ro0t Pos: -18930616.1288km -2609945.7846km 190.0951km',
+]);
+assert.equal(daymarDamagedLabels.ok, true);
+assert.equal(daymarDamagedLabels.frame, 'body');
+assert.equal(daymarDamagedLabels.body, 'Daymar');
+
 const eager = mod.nearestActiveStop([
   { id: '@eager', pos: { x: 200545.063566, y: -104917.273995, z: 190096.594760 }, meta: { name: 'Eager Flats Aid Shelter', parentName: 'Daymar', system: 'Stanton System', star: 'Stanton' } },
   { id: '@wrong-body', pos: { ...daymar.pos }, meta: { name: 'Coincidental Point', parentName: 'Yela', system: 'Stanton System', star: 'Stanton' } },
