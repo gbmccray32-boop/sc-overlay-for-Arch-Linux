@@ -5,11 +5,12 @@ This branch ports upstream `SubliminalsTV-Projects/sc-overlay` behavior onto the
 ## Baselines
 
 - ArchVerse Linux source head: `d2c5c783635b35cd3c807e4f1b4357a3953058d8` (`agent/alpha22-candidate7-location-sync-v3`)
-- Upstream source head at integration start: `abe36392bd1803001de2e2571f60daa4734f3361`
+- Frozen upstream integration target: `97e381fd3c4bc98b439711e994f5cb3755f103d1`
+- Prior integration target: `abe36392bd1803001de2e2571f60daa4734f3361`
 - Previously reviewed upstream checkpoint: `23a5109006bdc5a786dbb1a33567027b99a9679f`
 - Upstream development version: `0.1.45`
 
-The upstream head moved by another 27 commits after the previous checkpoint. Those commits are included in this integration target.
+The integration target is intentionally frozen at `97e381fd` so ArchVerse can port and test one slice at a time even if upstream `main` advances. Commits after that SHA are out of scope until this target is integrated and validated.
 
 ## Linux contracts — hard gates
 
@@ -51,11 +52,14 @@ Port the 0.1.45 source-layout refactors semantically so later feature ports targ
 
 **Gate:** live tail + handover + rotated replay tests on Linux; no Windows path dependency.
 
-### Phase 3 — player location and travel model
+### Phase 3 — player location, shop-location evidence, and travel model
 
 - [ ] unified player-location/origin ladder
 - [ ] terrain, quantum-route, terminal and system signals
 - [ ] exact location-name precedence before fuzzy matching
+- [ ] shop-line coverage for shopping provider, dealership/rental, food-stall, refinery and related terminal verbs
+- [ ] shop placement from player-location evidence, preserving named / placed / unplaced confidence states
+- [ ] stale-system protection across inter-system transitions
 - [ ] travel/proximity model and coordinate dataset
 
 **Linux rule:** passive log-derived location augments ArchVerse precision; it does not replace the direct Gamescope PipeWire CamPos path.
@@ -67,7 +71,7 @@ Port the 0.1.45 source-layout refactors semantically so later feature ports targ
 - [ ] blueprint cross-linking
 - [ ] player-origin proximity/distance display
 - [ ] item/vehicle/rental/commodity support
-- [ ] observed-price pool and confidence/provenance display through upstream `abe36392`
+- [ ] observed-price pool and confidence/provenance display through the frozen target
 
 **Gate:** Verse Finder keyboard/search focus uses the existing Linux ownership contract and always releases on hide.
 
