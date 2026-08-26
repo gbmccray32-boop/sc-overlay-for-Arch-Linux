@@ -41,8 +41,18 @@ must(runtimeText.includes("'-l', 'eng'"), 'Tesseract English language selection 
 must(runtimeText.includes('tessedit_char_whitelist=0123456789,. '), 'numeric resource fallback whitelist missing');
 
 must(capture.includes('ARCHVERSE_LINUX_PER_WIDGET_OCR_REGIONS'), 'per-widget Linux crop execution missing');
-must(capture.includes('linuxOcr.readCrop'), 'Linux feature crop reader missing');
-must(capture.includes('linuxOcr.ocrLines(tmpMiningCrop'), 'resource signature is not using the common Linux backend');
+// This self-test intentionally runs in two reconstruction phases. The base Alpha21/upstream stage
+// still has the common Linux OCR object; Candidate 3+ then replaces those call sites with bounded
+// per-feature lanes. Be strict for the phase that is actually present rather than requiring a later
+// patch before the stage helper has had a chance to apply it.
+const hasIndependentLanes = capture.includes('ARCHVERSE_LINUX_OCR_INDEPENDENT_LANES');
+if (hasIndependentLanes) {
+  must(capture.includes('linuxOcrLane(key).readCrop'), 'Linux feature crop reader is not lane-isolated');
+  must(capture.includes('linuxOcrLane("resourceSignature").ocrLines(tmpMiningCrop'), 'resource signature is not using its dedicated Linux OCR lane');
+} else {
+  must(capture.includes('linuxOcr.readCrop'), 'base Linux feature crop reader missing');
+  must(capture.includes('linuxOcr.ocrLines(tmpMiningCrop'), 'base resource signature is not using the common Linux backend');
+}
 must(capture.includes('linuxOcrRegionPixels(cfg, "resourceSignature"'), 'resource signature is not using its named ROI');
 must(capture.includes('ARCHVERSE_LINUX_NO_FULL_FRAME_OCR_ARCHIVE'), 'Linux Fabricator archive is not crop-only');
 must(capture.includes('process.platform === "linux"'), 'Linux execution branch missing');
@@ -154,7 +164,7 @@ try {
   must(j.kind === 'none', `Linux path-only screen-read unexpectedly classified: ${JSON.stringify(j)}`);
   must(elapsed < 900, `Linux path-only screen-read took ${elapsed}ms; possible Windows OCR fall-through`);
 
-  console.log('Native Linux OCR contract self-test OK: RapidOCR primary, Tesseract failure-only, Win32 OCR gated, five independent game-normalized ROIs, no Linux full-frame OCR');
+  console.log(`Native Linux OCR contract self-test OK: RapidOCR primary, Tesseract failure-only, Win32 OCR gated, ${hasIndependentLanes ? 'independent per-feature OCR lanes' : 'base shared Linux OCR stage'}, five independent game-normalized ROIs, no Linux full-frame OCR`);
 } catch (error) {
   console.error(error?.stack || error);
   console.error('--- sidecar output ---\n' + log.slice(-8000));
