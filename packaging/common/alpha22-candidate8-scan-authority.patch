@@ -1,0 +1,308 @@
+--- a/app/electron/scan-mode-gate.cjs
++++ b/app/electron/scan-mode-gate.cjs
+@@ -6,17 +6,29 @@
+ // crop. The six compact bit masks below were derived from the user-supplied 2/5/11/22/45/90-degree
+ // radar references. They contain no screenshots and are decoded once, entirely in memory.
+ const SCAN_MODE_RADAR_SEARCH_ROI = Object.freeze({
+-  name: "radar-icon-authority-field",
+-  // ARCHVERSE_LINUX_SCAN_MODE_AUTHORITY_ROI: paired on/off field captures and later mining logs
+-  // put the actual universal radar control near x=.49,y=.48. Search a generous normalized center
+-  // neighborhood for HUD/FOV variance, but exclude fleet-manager/cockpit lookalikes in the lower
+-  // HUD. This is resolution-independent and applies after the primary game display is normalized.
+-  x: 0.43,
+-  y: 0.40,
+-  w: 0.14,
+-  h: 0.18,
++  name: "radar-icon-authority-union",
++  // ARCHVERSE_LINUX_SCAN_MODE_AUTHORITY_ROI: limit the expensive search to the union of the two
++  // field-proven normalized radar renderings. Candidate acceptance below still requires the origin
++  // to land inside one island, so the gap between them cannot arm Mining.
++  x: 0.44,
++  y: 0.46,
++  w: 0.066,
++  h: 0.07,
+ });
+ 
++// ARCHVERSE_LINUX_SCAN_MODE_AUTHORITY_ISLANDS
++const SCAN_MODE_RADAR_AUTHORITY_ISLANDS = Object.freeze([
++  // Candidate 7b field run: sustained real Scan Mode clustered at x=.452-.456 y=.478-.496.
++  Object.freeze({ name: "current-field", x0: 0.448, x1: 0.463, y0: 0.472, y1: 0.501 }),
++  // Historical paired on/off Scan captures after normalization: x=.4875-.4896 y=.4698-.4808.
++  Object.freeze({ name: "paired-reference", x0: 0.483, x1: 0.494, y0: 0.465, y1: 0.486 }),
++]);
++
++function scanModeAuthorityIsland(x, y) {
++  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
++  return SCAN_MODE_RADAR_AUTHORITY_ISLANDS.find((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) || null;
++}
++
+ const RADAR_REFERENCE_BITS = Object.freeze([
+   { reference: 2, width: 47, height: 74, bits: "AAD8BwAAAAD+AQAAAAB+AAAAAAAcAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAEAAAAAD7nAAAA4J89BwAA/syODwDA4WbHEwDw8f9nNAD2/P8/LIDg//9/CCD4A+P/QAw+wIH/cIMD4AD+2XEAeAD8Rx0APAD8UQMAHgD4wAEADwA4cAEABwAMQAGAAwADwAHAAYAAwAHgACAA4AFwAAgA4AE4AAIA4AEcgAEA4AAOYAAA4AAHEAAAoIADBAAAoMAAAQAAoCDAAAAAoPAxAAAAoPwNAAAAoP8DAAAAYPgBAAAAMPABAAAAnPcAAADAz+MHAADw9/kBAADA8zwAAADgOQYAAADgAQMAAADwwQAAAABwPwAAAADQDwAAAADwAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAD48AAAAgD8fAAAA4N8PAAAA8O8HAAAA+PcDAAAA7PkAAAAA8PwBAAAAOHwAAAAAHh8AAACANwAAAADAPwAAAADwDwAAAAD4AwAA" },
+   { reference: 5, width: 48, height: 77, bits: "AADwHwAAAADwHwAAAADgBwAAAADAAwAAAACAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8/AAAAID//gYAAPB+zjMAABxuzpgAADvs/3gDwDj//4kFYPD//x8SEPgP/D8oDP4Aw99QBg+AA/yjjwPAA/jH/gDAA+BvfADAA4A/OADAAwAfXADAAwAOqADAAwAEwAHAAwACwAPAAwABgAPAA4AAAAXAA0AAAArAAyAAABTAAzAAADjAAxgAAHjAAwwAAPDAAwYAAODAAQMAAEBBAAEAAIDChwAAAAD1TwAAAAB+PwAAAAAePwAAAAAOfAAAAADGewAAAODn+wcAAPDn8wMAAIDncQAAAADPMQAAAAAPOAAAAAAdGAAAAAD+DwAAAAD8BwAAAAD4AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwwwEAAAD44wMAAAD88QMAAAD8+AMAAAA++AMAAAD++wEAAAD++wAAAAD++wMAAAD+8wEAAAD8+wAAAAD8AwAAAAD+AQAAAAD8AAAAAAB8AAAAAAA4AAAA" },
+@@ -170,6 +182,7 @@
+         const haloPixels = rectSum(outerX, outerY, outerRight - outerX, outerBottom - outerY) - livePixels;
+         const haloDensity = haloArea ? haloPixels / haloArea : 1;
+ 
++        const authorityIsland = scanModeAuthorityIsland(x / width, y / height);
+         const candidate = {
+           template,
+           x,
+@@ -180,9 +193,11 @@
+           iconRecall,
+           labelRecall,
+           haloDensity,
++          authorityIsland,
+         };
+         if (!bestRaw || score > bestRaw.score) bestRaw = candidate;
+-        const structurallyValid = score >= 0.75
++        const structurallyValid = !!authorityIsland
++          && score >= 0.75
+           && precision >= 0.72
+           && recall >= 0.48
+           && iconRecall >= 0.60
+@@ -202,7 +217,8 @@
+     : 0;
+   let rejectionReason = null;
+   if (!active && best) {
+-    if (best.labelRecall < 0.40) rejectionReason = "missing-angle-label";
++    if (!best.authorityIsland) rejectionReason = "outside-authority-islands";
++    else if (best.labelRecall < 0.40) rejectionReason = "missing-angle-label";
+     else if (best.haloDensity > 0.055) rejectionReason = "match-not-isolated";
+     else rejectionReason = "shape-threshold";
+   }
+@@ -218,6 +234,7 @@
+     labelRecall: Number((best?.labelRecall || 0).toFixed(4)),
+     haloDensity: Number((best?.haloDensity || 0).toFixed(4)),
+     rejectionReason,
++    authorityIsland: best?.authorityIsland?.name || null,
+     candidatesChecked,
+     roi: best ? {
+       x: Number((best.x / width).toFixed(5)),
+@@ -229,4 +246,45 @@
+   };
+ }
+ 
+-module.exports = { SCAN_MODE_RADAR_SEARCH_ROI, RADAR_REFERENCE_BITS, detectScanModeRadarIcon };
++// ARCHVERSE_LINUX_SCAN_MODE_TEMPORAL_AUTHORITY: require repeat evidence at the same radar
++// location, then keep a short latch through individual dropped frames. One-frame HUD coincidences
++// cannot arm Mining, while a real persistent Scan Mode does not flicker on a single missed frame.
++function createScanModeAuthorityStabilizer(options = {}) {
++  const confirmHits = Math.max(2, Number(options.confirmHits) || 2);
++  const confirmWindowMs = Math.max(1000, Number(options.confirmWindowMs) || 4500);
++  const latchMs = Math.max(1000, Number(options.latchMs) || 4500);
++  const maxDx = Number(options.maxDx) || 0.008;
++  const maxDy = Number(options.maxDy) || 0.012;
++  let hits = 0;
++  let lastHitAt = 0;
++  let lastRoi = null;
++  let latchedUntil = 0;
++  let lastAccepted = null;
++  return (raw, now = Date.now()) => {
++    raw = raw && typeof raw === "object" ? raw : { active: false, confidence: 0, method: "radar-icon-structure-search" };
++    if (raw.active && raw.roi && Number.isFinite(raw.roi.x) && Number.isFinite(raw.roi.y)) {
++      const same = lastRoi && now - lastHitAt <= confirmWindowMs
++        && Math.abs(raw.roi.x - lastRoi.x) <= maxDx
++        && Math.abs(raw.roi.y - lastRoi.y) <= maxDy;
++      hits = same ? hits + 1 : 1;
++      lastHitAt = now;
++      lastRoi = { x: raw.roi.x, y: raw.roi.y };
++      if (hits >= confirmHits) {
++        latchedUntil = now + latchMs;
++        lastAccepted = { ...raw, active: true, authorityStable: true, authorityHits: hits };
++        return lastAccepted;
++      }
++      return { ...raw, active: false, confidence: 0, authorityStable: false, authorityHits: hits,
++        rejectionReason: "temporal-consistency" };
++    }
++    if (lastAccepted && now <= latchedUntil) {
++      return { ...lastAccepted, active: true, method: "radar-icon-structure-latch", authorityStable: true,
++        authorityHits: hits, latched: true };
++    }
++    if (now - lastHitAt > confirmWindowMs) { hits = 0; lastRoi = null; }
++    return { ...raw, active: false, authorityStable: false, authorityHits: hits };
++  };
++}
++
++module.exports = { SCAN_MODE_RADAR_SEARCH_ROI, SCAN_MODE_RADAR_AUTHORITY_ISLANDS, RADAR_REFERENCE_BITS,
++  scanModeAuthorityIsland, detectScanModeRadarIcon, createScanModeAuthorityStabilizer };
+--- a/app/electron/capture.cjs
++++ b/app/electron/capture.cjs
+@@ -16,7 +16,7 @@
+ const os = require("node:os");
+ const { getStarCitizenSessionBinder } = require("./linux/star-citizen-session.cjs");
+ const { createRapidOcrClient } = require("./rapidocr-client.cjs");
+-const { detectScanModeRadarIcon } = require("./scan-mode-gate.cjs");
++const { detectScanModeRadarIcon, createScanModeAuthorityStabilizer } = require("./scan-mode-gate.cjs");
+ const { createLinuxOcrBackend, regionFor: linuxOcrRegion, regionPixels: linuxOcrRegionPixels, normalizedRegions: normalizedLinuxOcrRegions } = require("./native-linux-ocr.cjs"); // ARCHVERSE_LINUX_OCR_CONTRACT_V1
+ const { createGamescopePipeWireCapture } = require("./native-linux-gamescope-pipewire.cjs"); // ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_CAPTURE
+ const { parseDisplayInfoLines, locationCropGeometry } = require("./location-sync-v3.cjs"); // ARCHVERSE_LOCATION_SYNC_V3
+@@ -656,6 +656,8 @@
+ }
+ 
+ let _lastArchVerseScanDiagnostic = "";
++// ARCHVERSE_LINUX_SCAN_MODE_TEMPORAL_AUTHORITY_CAPTURE
++const stabilizeArchVerseScanMode = createScanModeAuthorityStabilizer();
+ function scanModeDiagnosticKey(r) {
+   const roi = r?.roi || {};
+   const roiKey = [roi.x, roi.y, roi.w, roi.h].map((v) => Number.isFinite(v) ? Number(v).toFixed(4) : "-").join(",");
+@@ -666,7 +668,8 @@
+   const normalizedWidth = 960;
+   const normalizedHeight = Math.max(240, Math.round(normalizedWidth * height / width));
+   const normalized = image.resize({ width: normalizedWidth, height: normalizedHeight, quality: "good" });
+-  const r = detectScanModeRadarIcon(normalized.toBitmap(), normalizedWidth, normalizedHeight);
++  const raw = detectScanModeRadarIcon(normalized.toBitmap(), normalizedWidth, normalizedHeight);
++  const r = stabilizeArchVerseScanMode(raw);
+   const key = scanModeDiagnosticKey(r);
+   if (key !== _lastArchVerseScanDiagnostic) {
+     _lastArchVerseScanDiagnostic = key;
+@@ -1208,29 +1211,58 @@
+   let lastForegroundGateLog = "";
+   let lastMiningOcrLogAt = 0;
+   let lastMiningOcrSig = null;
+-  // ARCHVERSE_LINUX_ASYNC_MINING_TELEMETRY: telemetry must never add network timeout latency to
+-  // capture/OCR. One in flight + one newest pending payload; intermediate stale frames coalesce.
++  // ARCHVERSE_LINUX_MINING_EARLY_SIGNATURE_FLOOR: server validation remains authoritative, but
++  // impossible low reads (for example 1100 from "100.0%") never lock the crop or enter Mining IPC.
++  const MINING_SIGNATURE_EARLY_FLOOR = 2000;
++  let lastMiningAuthorityRejectAt = 0;
++  // ARCHVERSE_LINUX_ASYNC_MINING_TELEMETRY: Mining IPC never adds latency to capture/OCR.
++  // ARCHVERSE_LINUX_MINING_TELEMETRY_LATEST_ONLY: one in flight + one newest confirmed payload.
++  // Repeated unchanged signatures are suppressed; failures retain only the newest payload and retry
++  // with bounded backoff instead of starting another timeout on every scanner tick.
+   let miningScanPostInFlight = false;
+   let pendingMiningScanPayload = null;
++  let miningScanRetryTimer = null;
++  let miningScanFailureCount = 0;
++  let miningScanLastSuccessKey = "";
++  let miningScanLastSuccessAt = 0;
++  let miningScanLastFailureLogAt = 0;
++  const miningScanPayloadKey = (p) => `${p?.signature ?? "-"}:${p?.confirmed === true ? 1 : 0}`;
+   const queueMiningScanPost = (payload) => {
++    const now = Date.now();
++    const key = miningScanPayloadKey(payload);
++    if (key === miningScanLastSuccessKey && now - miningScanLastSuccessAt < 5000) return;
+     pendingMiningScanPayload = payload;
+-    if (miningScanPostInFlight) return;
++    if (miningScanPostInFlight || miningScanRetryTimer) return;
+     miningScanPostInFlight = true;
+     const drain = async () => {
++      const next = pendingMiningScanPayload;
++      pendingMiningScanPayload = null;
++      if (!next) { miningScanPostInFlight = false; return; }
+       try {
+-        while (pendingMiningScanPayload) {
+-          const next = pendingMiningScanPayload;
+-          pendingMiningScanPayload = null;
+-          try {
+-            await fetch(`http://localhost:${port}/api/mining/scan`, {
+-              method: "POST", headers: { "Content-Type": "application/json" },
+-              body: JSON.stringify(next), signal: AbortSignal.timeout(1500),
+-            });
+-          } catch (error) { console.warn("[mining] scan telemetry post failed:", error?.message || error); }
+-        }
+-      } finally {
++        const response = await fetch(`http://localhost:${port}/api/mining/scan`, {
++          method: "POST", headers: { "Content-Type": "application/json" },
++          body: JSON.stringify(next), signal: AbortSignal.timeout(1200),
++        });
++        if (!response.ok) throw new Error(`HTTP ${response.status}`);
++        miningScanFailureCount = 0;
++        miningScanLastSuccessKey = miningScanPayloadKey(next);
++        miningScanLastSuccessAt = Date.now();
+         miningScanPostInFlight = false;
+         if (pendingMiningScanPayload) queueMiningScanPost(pendingMiningScanPayload);
++      } catch (error) {
++        miningScanFailureCount = Math.min(6, miningScanFailureCount + 1);
++        if (!pendingMiningScanPayload) pendingMiningScanPayload = next;
++        const delay = Math.min(5000, 500 * (2 ** Math.min(3, miningScanFailureCount - 1)));
++        if (Date.now() - miningScanLastFailureLogAt >= 5000) {
++          miningScanLastFailureLogAt = Date.now();
++          console.warn(`[mining] scan IPC unavailable; newest confirmed read retained, retry in ${delay}ms:`, error?.message || error);
++        }
++        miningScanPostInFlight = false;
++        miningScanRetryTimer = setTimeout(() => {
++          miningScanRetryTimer = null;
++          if (pendingMiningScanPayload) queueMiningScanPost(pendingMiningScanPayload);
++        }, delay);
++        miningScanRetryTimer.unref?.();
+       }
+     };
+     void drain();
+@@ -1643,15 +1675,21 @@
+             signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+           });
+           const rr3 = await r3.json();
++          const rr3Signature = typeof rr3.signature === "number" ? rr3.signature : null;
++          const rr3SignatureAllowed = Number.isFinite(rr3Signature) && rr3Signature >= MINING_SIGNATURE_EARLY_FLOOR;
+           // ARCHVERSE_LINUX_MINING_OCR_DIAGNOSTICS
+           const miningOcrSample = lines.map((l) => String(l.text || "").trim()).filter(Boolean).slice(0, 8).join(" | ");
+           const miningOcrNow = Date.now();
+-          if (rr3.kind === "mineable" && typeof rr3.signature === "number") {
++          if (rr3.kind === "mineable" && rr3SignatureAllowed) {
+             if (rr3.signature !== lastMiningOcrSig || miningOcrNow - lastMiningOcrLogAt >= 5000) {
+               console.log(`[mining-ocr] signature ${rr3.signature} via ${cap.method}; crop=${stage.region} scale=${MINING_OCR_SCALE} ocr=${stage.rapidOcr}ms text="${miningOcrSample}"`);
+               lastMiningOcrLogAt = miningOcrNow;
+             }
+             lastMiningOcrSig = rr3.signature;
++          } else if (rr3.kind === "mineable" && rr3Signature !== null && !rr3SignatureAllowed) {
++            console.log(`[mining-ocr] rejected candidate ${rr3Signature} below ${MINING_SIGNATURE_EARLY_FLOOR} floor via ${cap.method}; text="${miningOcrSample}"`);
++            lastMiningOcrLogAt = miningOcrNow;
++            lastMiningOcrSig = null;
+           } else if (miningOcrNow - lastMiningOcrLogAt >= 5000) {
+             console.log(`[mining-ocr] no signature via ${cap.method}; crop=${stage.region} scale=${MINING_OCR_SCALE} ocr=${stage.rapidOcr}ms text="${miningOcrSample}"`);
+             lastMiningOcrLogAt = miningOcrNow;
+@@ -1660,7 +1698,7 @@
+           // ARCHVERSE_LINUX_MINING_COORDINATE_AUTHORITY: /api/screen-read receives offsetX/Y and
+           // returns pin/text in FULL-FRAME coordinates. Adding region.x/y here a second time was
+           // the lock bug that turned a successful hit back into a full-size 4x OCR crop.
+-          if (rr3.kind === "mineable" && typeof rr3.signature === "number" && rr3.pin && rr3.text) {
++          if (rr3.kind === "mineable" && rr3SignatureAllowed && rr3.pin && rr3.text) {
+             read = { ...read, kind: "mineable", signature: rr3.signature, raw: rr3.raw,
+               pin: rr3.pin, text: rr3.text };
+             sigBox = rr3.text;
+@@ -1727,17 +1765,24 @@
+         console.log(`[fab-capture] poll ${rate}ms${rate === FAST_MS ? " (scanning)" : ""}`);
+       }
+ 
+-      // A mining signature: the sidecar deliberately does NOT act on it until we've checked the
+-      // frame for the scan glyph beside the number — it has the OCR but not the pixels.
++      // ARCHVERSE_LINUX_MINING_STRUCTURAL_AUTHORITY_CAPTURE: a parsed number is only a candidate.
++      // Commit transport requires BOTH the local glyph beside the number and stable structural Scan
++      // Mode authority. Unrelated HUD numbers therefore never mutate Mining state.
+       if (read.kind === "mineable" && typeof read.signature === "number" && read.pin) {
+         const glyph = findScanGlyph(shot, read.pin, read.text);
+-        // Do not await telemetry. It is observability/state propagation, not part of OCR.
+-        queueMiningScanPost({
+-          signature: read.signature, confirmed: glyph.seen,
+-          glyph: { fraction: glyph.fraction, total: glyph.total, mean: glyph.mean, hitMean: glyph.hitMean, ref: glyph.ref },
+-          raw: read.raw, text: read.text, pollMs: rate, scanHud: read.scanHud === true,
+-          frame: { w: shot.getSize().width, h: shot.getSize().height },
+-        });
++        const confirmed = glyph.seen && archScanModeRead.active === true;
++        if (confirmed) {
++          queueMiningScanPost({
++            signature: read.signature, confirmed: true,
++            glyph: { fraction: glyph.fraction, total: glyph.total, mean: glyph.mean, hitMean: glyph.hitMean, ref: glyph.ref },
++            raw: read.raw, text: read.text, pollMs: rate, scanHud: read.scanHud === true,
++            scanMode: { confidence: archScanModeRead.confidence, island: archScanModeRead.authorityIsland || null, latched: archScanModeRead.latched === true },
++            frame: { w: shot.getSize().width, h: shot.getSize().height },
++          });
++        } else if (Date.now() - lastMiningAuthorityRejectAt >= 5000) {
++          lastMiningAuthorityRejectAt = Date.now();
++          console.log(`[mining-authority] candidate ${read.signature} refused before IPC: scanMode=${archScanModeRead.active === true ? 1 : 0} glyph=${glyph.seen ? 1 : 0}`);
++        }
+       }
+       // A kiosk on screen -> "fabricator" context (gold diamond) even if image capture is off;
+       // anything else while watching -> "watching".
+--- a/app/server/server.mjs
++++ b/app/server/server.mjs
+@@ -3891,6 +3891,9 @@
+    *  (they are values the game can draw); `unknown` is refused outright, glyph or not. */
+   applyMineableRead(signature, confirmed = false) {
+     if (!this.data) return { verdict: null, announced: false, used: false, why: "no rock table loaded" };
++    // ARCHVERSE_LINUX_MINING_STRUCTURAL_AUTHORITY_SERVER: candidate OCR alone is never state.
++    // Capture must confirm the number with the scan glyph AND stable structural Scan Mode first.
++    if (!confirmed) return { verdict: null, announced: false, used: false, why: "unconfirmed; structural Scan Mode/glyph authority required" };
+     const repaired = confirmed ? repairConfusableDigits(signature, (n) => this.isLegalSignature(n)) : null;
+     const read = signature;
+     if (repaired !== null) signature = repaired;

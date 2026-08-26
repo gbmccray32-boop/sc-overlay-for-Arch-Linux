@@ -1,9 +1,9 @@
-name: Alpha22 Candidate 7b Durable Location Sync
+name: Alpha22 Candidate 8 Scan Authority
 
 on:
   push:
     branches:
-      - agent/alpha22-candidate7b-durable-location-handoff
+      - agent/alpha22-candidate8-scan-authority
   workflow_dispatch:
 
 permissions:
@@ -11,11 +11,11 @@ permissions:
   actions: read
 
 concurrency:
-  group: alpha22-candidate7b-${{ github.ref }}
+  group: alpha22-candidate8-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  APP_VERSION: 0.1.44-r31.alpha22.candidate7b
+  APP_VERSION: 0.1.44-r31.alpha22.candidate8
   BASE_STAGE_VERSION: 0.1.44-r31.alpha22.candidate6
   VERIFIED_ALPHA21_CORE_RUN_ID: '31901404904'
   VERIFIED_ALPHA21_CORE_ARTIFACT_ID: '9251185299'
@@ -53,6 +53,7 @@ jobs:
           node --check packaging/common/enforce-location-sync-v3.cjs
           node --check packaging/common/enforce-location-sync-v3b.cjs
           node --check packaging/common/location-sync-v3.cjs
+          node --check packaging/common/candidate8-scan-authority-selftest.mjs
           node tests/location-sync-v3.test.cjs
 
       - name: Verify pinned Alpha21 core provenance
@@ -85,7 +86,7 @@ jobs:
             --output "$RUNNER_TEMP/sources/$ELECTRON_ASSET"
           echo "$ELECTRON_SHA256  $RUNNER_TEMP/sources/$ELECTRON_ASSET" | sha256sum -c -
 
-      - name: Reconstruct Candidate 7b in semantic order
+      - name: Reconstruct Candidate 8 in semantic order
         run: |
           set -euo pipefail
           WORK_ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$BASE_STAGE_VERSION"
@@ -101,9 +102,6 @@ jobs:
           node packaging/common/enforce-alpha22-first-f.cjs "$WORK_ROOT"
           node packaging/common/enforce-alpha22-scan-lane-stall-fixes.cjs "$WORK_ROOT"
 
-          # The generic stage helper deliberately retains its internal candidate1 package label.
-          # Promote that exact staged runtime to the already-field-tested Candidate 6 identity before
-          # the Candidate 7 fail-closed patch is allowed to touch it.
           python3 - "$WORK_ROOT/app/package.json" "$BASE_STAGE_VERSION" <<'PY'
           import json, sys
           from pathlib import Path
@@ -115,6 +113,11 @@ jobs:
           node packaging/common/enforce-location-sync-v3.cjs "$WORK_ROOT"
           node packaging/common/enforce-location-sync-v3b.cjs "$WORK_ROOT"
 
+          # Candidate 8 is deliberately a fail-closed patch over the exact field-passed Candidate 7b
+          # runtime. Fuzz is disabled: if an upstream or earlier Linux contract moves these anchors,
+          # CI must stop rather than silently applying the safety gate somewhere unintended.
+          (cd "$WORK_ROOT" && patch -p1 --fuzz=0 < "$GITHUB_WORKSPACE/packaging/common/alpha22-candidate8-scan-authority.patch")
+
           install -m 0644 packaging/diagnostics/location-sync-diagnostic.cjs \
             "$WORK_ROOT/app/electron/location-sync-diagnostic.cjs"
           install -m 0755 packaging/diagnostics/archverse-location-sync-diagnostic \
@@ -124,51 +127,63 @@ jobs:
           import json, sys
           from pathlib import Path
           p=Path(sys.argv[1]); d=json.loads(p.read_text()); d['version']=sys.argv[2]
-          d['description']='ArchVerse Alpha22 Candidate 7b: durable one-shot Location Sync result handoff'
+          d['description']='ArchVerse Alpha22 Candidate 8: field-derived Scan Mode authority, fail-closed Mining commits, latest-only Mining IPC'
           p.write_text(json.dumps(d, indent=2)+'\n')
           PY
           mv "$WORK_ROOT" "$FINAL_ROOT"
 
-      - name: Assert frozen Linux and Candidate 7b contracts
+      - name: Assert frozen Linux and Candidate 8 contracts
         run: |
           set -euo pipefail
           ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
           find "$ROOT/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
           node --check "$ROOT/app/server/server.mjs"
 
+          # Frozen interaction/focus contracts.
           grep -q 'keyboard authority=evdev' "$ROOT/app/electron/main.cjs"
           grep -q '__overlayClassifyPoint' "$ROOT/app/electron/main.cjs"
           grep -q 'function updateFHoverHit()' "$ROOT/app/electron/main.cjs"
           ! grep -q 'pointIsInsideOverlayRegion(' "$ROOT/app/electron/main.cjs"
           ! grep -q 'overlay\.setFocusable(false)' "$ROOT/app/electron/main.cjs"
 
+          # Frozen capture/OCR/Location contracts.
           grep -q 'ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_CAPTURE' "$ROOT/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_PIPEWIRE_REPROBE' "$ROOT/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_BACKGROUND_OCR_NONBLOCKING' "$ROOT/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_MINING_COORDINATE_AUTHORITY' "$ROOT/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_MINING_SCALE_GUARD' "$ROOT/app/electron/capture.cjs"
-          grep -q 'ARCHVERSE_LINUX_ASYNC_MINING_TELEMETRY' "$ROOT/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LINUX_WINDOWS_OCR_HARD_DENY' "$ROOT/app/server/server.mjs"
-          ! grep -REq 'taskset|sched_setaffinity|SCHED_FIFO|SCHED_RR' "$ROOT/app/electron" "$ROOT/bin"
-
           grep -q 'ARCHVERSE_LOCATION_SYNC_V3_CAPTURE' "$ROOT/app/electron/capture.cjs"
-          grep -q 'ARCHVERSE_LOCATION_SYNC_V3_ONE_SHOT' "$ROOT/app/electron/capture.cjs"
-          grep -q 'linuxOcrLane("locationSync")' "$ROOT/app/electron/capture.cjs"
-          grep -q 'pipewiresrc' "$ROOT/app/electron/capture.cjs"
-          grep -q 'method: "gamescope-pipewire"' "$ROOT/app/electron/capture.cjs"
-          grep -q 'HAULING_LOCATE_SNAP_M = 12_000' "$ROOT/app/server/server.mjs"
-          ! grep -q 'Windows\.Media\.Ocr' "$ROOT/app/electron/location-sync-v3.cjs"
-
           grep -q 'ARCHVERSE_LOCATION_SYNC_DURABLE_HANDOFF' "$ROOT/app/electron/capture.cjs"
-          grep -q 'location-sync-result.json' "$ROOT/app/electron/capture.cjs"
-          grep -q 'postLocationResultFast' "$ROOT/app/electron/capture.cjs"
-          grep -q 'AbortSignal.timeout(1200)' "$ROOT/app/electron/capture.cjs"
-          ! grep -q 'AbortSignal.timeout(3500)' "$ROOT/app/electron/capture.cjs"
-          ! grep -Eq 'await[[:space:]]+postLocationResult\b' "$ROOT/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LOCATION_SYNC_DURABLE_CONSUMER' "$ROOT/app/server/server.mjs"
+          grep -q 'location-sync-result.json' "$ROOT/app/electron/capture.cjs"
           grep -q 'deliveryTransport' "$ROOT/app/server/server.mjs"
           grep -q 'ARCHVERSE_LOCATION_SYNC_DURABLE_UI' "$ROOT/app/server/overlay/hauling.html"
+          grep -q 'pipewiresrc' "$ROOT/app/electron/capture.cjs"
+          grep -q 'method: "gamescope-pipewire"' "$ROOT/app/electron/capture.cjs"
+          ! grep -q 'Windows\.Media\.Ocr' "$ROOT/app/electron/location-sync-v3.cjs"
+          ! grep -REq 'taskset|sched_setaffinity|SCHED_FIFO|SCHED_RR' "$ROOT/app/electron" "$ROOT/bin"
+
+          # Candidate 8 authority/IPC contracts.
+          grep -q 'ARCHVERSE_LINUX_SCAN_MODE_AUTHORITY_ISLANDS' "$ROOT/app/electron/scan-mode-gate.cjs"
+          grep -q 'ARCHVERSE_LINUX_SCAN_MODE_TEMPORAL_AUTHORITY' "$ROOT/app/electron/scan-mode-gate.cjs"
+          grep -q 'outside-authority-islands' "$ROOT/app/electron/scan-mode-gate.cjs"
+          grep -q 'ARCHVERSE_LINUX_SCAN_MODE_TEMPORAL_AUTHORITY_CAPTURE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_EARLY_SIGNATURE_FLOOR' "$ROOT/app/electron/capture.cjs"
+          grep -q 'MINING_SIGNATURE_EARLY_FLOOR = 2000' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_TELEMETRY_LATEST_ONLY' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_STRUCTURAL_AUTHORITY_CAPTURE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'glyph.seen && archScanModeRead.active === true' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_STRUCTURAL_AUTHORITY_SERVER' "$ROOT/app/server/server.mjs"
+          ! grep -q 'confirmed: glyph.seen,' "$ROOT/app/electron/capture.cjs"
+          ! grep -q 'scan telemetry post failed' "$ROOT/app/electron/capture.cjs"
           jq -e --arg v "$APP_VERSION" '.version == $v' "$ROOT/app/package.json"
+
+      - name: Exercise Candidate 8 Scan authority
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          node packaging/common/candidate8-scan-authority-selftest.mjs "$ROOT"
 
       - name: Exercise durable Location Sync handoff
         run: |
@@ -209,7 +224,7 @@ jobs:
           node packaging/common/native-linux-ocr-selftest.mjs "$ROOT"
           (cd "$ROOT/app" && node "$GITHUB_WORKSPACE/packaging/common/rapidocr-native-selftest.mjs")
 
-      - name: Package Candidate 7b
+      - name: Package Candidate 8
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -218,7 +233,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ArchVerse-0.1.44-Alpha22-Candidate7b
+          name: ArchVerse-0.1.44-Alpha22-Candidate8
           path: |
             dist/ArchVerse-Native-${{ env.APP_VERSION }}.tar.gz
             dist/SHA256SUMS
