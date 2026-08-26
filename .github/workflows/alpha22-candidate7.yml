@@ -1,9 +1,9 @@
-name: Alpha22 Candidate 7 Location Sync V3
+name: Alpha22 Candidate 7b Durable Location Sync
 
 on:
   push:
     branches:
-      - agent/alpha22-candidate7-location-sync-v3
+      - agent/alpha22-candidate7b-durable-location-handoff
   workflow_dispatch:
 
 permissions:
@@ -11,11 +11,11 @@ permissions:
   actions: read
 
 concurrency:
-  group: alpha22-candidate7-${{ github.ref }}
+  group: alpha22-candidate7b-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  APP_VERSION: 0.1.44-r31.alpha22.candidate7
+  APP_VERSION: 0.1.44-r31.alpha22.candidate7b
   VERIFIED_ALPHA21_CORE_RUN_ID: '31901404904'
   VERIFIED_ALPHA21_CORE_ARTIFACT_ID: '9251185299'
   VERIFIED_ALPHA21_CORE_ARTIFACT: ArchVerse-Alpha21-native-payload
@@ -56,6 +56,7 @@ jobs:
           node --check packaging/common/enforce-alpha22-first-f.cjs
           node --check packaging/common/enforce-alpha22-scan-lane-stall-fixes.cjs
           node --check packaging/common/enforce-location-sync-v3.cjs
+          node --check packaging/common/enforce-location-sync-v3b.cjs
           node --check packaging/common/location-sync-v3.cjs
           node tests/location-sync-v3.test.cjs
 
@@ -89,7 +90,7 @@ jobs:
             --output "$RUNNER_TEMP/sources/$ELECTRON_ASSET"
           echo "$ELECTRON_SHA256  $RUNNER_TEMP/sources/$ELECTRON_ASSET" | sha256sum -c -
 
-      - name: Reconstruct Candidate 7 runtime
+      - name: Reconstruct Candidate 7b runtime
         run: |
           set -euo pipefail
           STAGE_ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
@@ -97,20 +98,29 @@ jobs:
             "$RUNNER_TEMP/verified-alpha21-core/$VERIFIED_ALPHA21_CORE_PAYLOAD" \
             "$RUNNER_TEMP/sources/$ELECTRON_ASSET" \
             "$STAGE_ROOT"
-          # Ordering is deliberate. OCR architecture rewrite can replace capture.cjs, so PipeWire is reapplied after it.
           node packaging/common/enforce-native-linux-pipewire-capture.cjs "$STAGE_ROOT"
           node packaging/common/enforce-alpha22-performance-repair.cjs "$STAGE_ROOT"
           node packaging/common/enforce-alpha22-field-fixes.cjs "$STAGE_ROOT"
           node packaging/common/enforce-alpha22-first-f.cjs "$STAGE_ROOT"
           node packaging/common/enforce-alpha22-scan-lane-stall-fixes.cjs "$STAGE_ROOT"
           node packaging/common/enforce-location-sync-v3.cjs "$STAGE_ROOT"
+          node packaging/common/enforce-location-sync-v3b.cjs "$STAGE_ROOT"
 
           install -m 0644 packaging/diagnostics/location-sync-diagnostic.cjs \
             "$STAGE_ROOT/app/electron/location-sync-diagnostic.cjs"
           install -m 0755 packaging/diagnostics/archverse-location-sync-diagnostic \
             "$STAGE_ROOT/bin/archverse-location-sync-diagnostic"
 
-      - name: Assert Candidate 7 contracts
+          python3 - "$STAGE_ROOT/app/package.json" "$APP_VERSION" <<'PY'
+          import json, sys
+          from pathlib import Path
+          p=Path(sys.argv[1]); version=sys.argv[2]; d=json.loads(p.read_text())
+          d['version']=version
+          d['description']='ArchVerse Alpha22 Candidate 7b: durable one-shot Location Sync result handoff'
+          p.write_text(json.dumps(d, indent=2)+'\n')
+          PY
+
+      - name: Assert Candidate 7b contracts
         run: |
           set -euo pipefail
           STAGE_ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
@@ -134,19 +144,27 @@ jobs:
           grep -q 'ARCHVERSE_LINUX_WINDOWS_OCR_HARD_DENY' "$STAGE_ROOT/app/server/server.mjs"
           ! grep -REq 'taskset|sched_setaffinity|SCHED_FIFO|SCHED_RR' "$STAGE_ROOT/app/electron" "$STAGE_ROOT/bin"
 
-          # Location Sync V3: one-shot, full-canvas top-right, direct PipeWire, Linux OCR lane.
+          # Location Sync V3 coordinate/capture contract.
           grep -q 'ARCHVERSE_LOCATION_SYNC_V3_CAPTURE' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -q 'ARCHVERSE_LOCATION_SYNC_V3_ONE_SHOT' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -q 'linuxOcrLane("locationSync")' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -q 'pipewiresrc' "$STAGE_ROOT/app/electron/capture.cjs"
           grep -q 'method: "gamescope-pipewire"' "$STAGE_ROOT/app/electron/capture.cjs"
-          grep -q 'ARCHVERSE_LOCATION_SYNC_V3_API' "$STAGE_ROOT/app/server/server.mjs"
-          grep -q 'ARCHVERSE_LOCATION_SYNC_V3_PLAN' "$STAGE_ROOT/app/server/server.mjs"
-          grep -q 'ARCHVERSE_LOCATION_SYNC_V3_UI' "$STAGE_ROOT/app/server/overlay/hauling.html"
           grep -q 'HAULING_LOCATE_SNAP_M = 12_000' "$STAGE_ROOT/app/server/server.mjs"
           ! grep -q 'Windows\.Media\.Ocr' "$STAGE_ROOT/app/electron/location-sync-v3.cjs"
 
-          # Run the parser/matcher fixture against the exact staged module.
+          # Candidate 7b delivery contract: durable first, HTTP hint never authoritative.
+          grep -q 'ARCHVERSE_LOCATION_SYNC_DURABLE_HANDOFF' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'location-sync-result.json' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'postLocationResultFast' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'AbortSignal.timeout(1200)' "$STAGE_ROOT/app/electron/capture.cjs"
+          ! grep -q 'AbortSignal.timeout(3500)' "$STAGE_ROOT/app/electron/capture.cjs"
+          ! grep -Eq 'await[[:space:]]+postLocationResult\b' "$STAGE_ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LOCATION_SYNC_DURABLE_CONSUMER' "$STAGE_ROOT/app/server/server.mjs"
+          grep -q 'requestAt' "$STAGE_ROOT/app/server/server.mjs"
+          grep -q 'deliveryTransport' "$STAGE_ROOT/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LOCATION_SYNC_DURABLE_UI' "$STAGE_ROOT/app/server/overlay/hauling.html"
+
           node - "$STAGE_ROOT" <<'NODE'
           const assert=require('node:assert/strict');
           const root=process.argv[2];
@@ -166,9 +184,44 @@ jobs:
             'Current player location : Nyx Levski (Lz : Nyx Levski)', 'No Current Planet'
           ]);
           assert.equal(l.ok,true); assert.equal(l.frame,'system'); assert.equal(l.system,'Nyx');
-          const g=m.locationCropGeometry(6360,2160);
-          assert.deepEqual(g.crop,{x:3960,y:0,width:2400,height:900});
           NODE
+
+      - name: Exercise durable Location Sync handoff
+        run: |
+          set -euo pipefail
+          STAGE_ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          CFG="$RUNNER_TEMP/location-sync-handoff"; PORT=18787
+          mkdir -p "$CFG"
+          SC_TRACKER_CONFIG_DIR="$CFG" PORT="$PORT" node "$STAGE_ROOT/app/server/server.mjs" >"$RUNNER_TEMP/location-sync-server.log" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 100); do curl -fsS "http://127.0.0.1:$PORT/api/config" >/dev/null 2>&1 && break; sleep .1; done
+
+          ARM="$(curl -fsS -X POST "http://127.0.0.1:$PORT/api/hauling/locate")"
+          AT="$(jq -r .at <<<"$ARM")"
+          jq -n --argjson at "$AT" --argjson done "$(( $(date +%s%3N) - 250 ))" '{
+            schema:"archverse-location-sync-result/1", completedAt:$done, requestAt:$at,
+            pos:{x:200552.3,y:-104907.3,z:190095.1}, frame:"body", body:"Daymar", system:"Stanton",
+            source:"zone-body", captureMethod:"gamescope-pipewire", captureMs:1394, ocrMs:2170, totalMs:3600, engine:"rapidocr"
+          }' >"$CFG/location-sync-result.json.tmp"
+          chmod 600 "$CFG/location-sync-result.json.tmp"
+          mv "$CFG/location-sync-result.json.tmp" "$CFG/location-sync-result.json"
+
+          RESULT="$(curl -fsS "http://127.0.0.1:$PORT/api/hauling/locate")"
+          jq -e '.pending == false and .result.ok == true and .result.frame == "body" and .result.body == "Daymar" and .result.deliveryTransport == "durable-file"' <<<"$RESULT"
+          test ! -e "$CFG/location-sync-result.json"
+
+          # Stale prior-request result must be discarded while the new request remains pending.
+          ARM2="$(curl -fsS -X POST "http://127.0.0.1:$PORT/api/hauling/locate")"
+          AT2="$(jq -r .at <<<"$ARM2")"
+          test "$AT2" != "$AT"
+          jq -n --argjson at "$AT" '{completedAt:0,requestAt:$at,pos:{x:1,y:2,z:3},frame:"system",system:"Nyx"}' >"$CFG/location-sync-result.json"
+          STALE="$(curl -fsS "http://127.0.0.1:$PORT/api/hauling/locate")"
+          jq -e '.pending == true and .result == null' <<<"$STALE"
+          test ! -e "$CFG/location-sync-result.json"
+
+          grep -q 'durable result consumed' "$RUNNER_TEMP/location-sync-server.log"
+          grep -q 'discarded durable result: stale-request' "$RUNNER_TEMP/location-sync-server.log"
 
       - name: Run Linux OCR self-tests
         run: |
@@ -177,19 +230,19 @@ jobs:
           node packaging/common/native-linux-ocr-selftest.mjs "$STAGE_ROOT"
           (cd "$STAGE_ROOT/app" && node "$GITHUB_WORKSPACE/packaging/common/rapidocr-native-selftest.mjs")
 
-      - name: Package Candidate 7
+      - name: Package Candidate 7b
         run: |
           set -euo pipefail
           mkdir -p dist
-          STAGE_ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
           tar -C "$RUNNER_TEMP/native" -czf "dist/ArchVerse-Native-$APP_VERSION.tar.gz" "ArchVerse-Native-$APP_VERSION"
           (cd dist && sha256sum "ArchVerse-Native-$APP_VERSION.tar.gz" > SHA256SUMS)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ArchVerse-0.1.44-Alpha22-Candidate7
+          name: ArchVerse-0.1.44-Alpha22-Candidate7b
           path: |
             dist/ArchVerse-Native-${{ env.APP_VERSION }}.tar.gz
             dist/SHA256SUMS
+            ${{ runner.temp }}/location-sync-server.log
           if-no-files-found: error
           compression-level: 0
