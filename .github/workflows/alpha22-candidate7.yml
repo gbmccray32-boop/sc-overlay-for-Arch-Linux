@@ -101,7 +101,17 @@ jobs:
           node packaging/common/enforce-alpha22-first-f.cjs "$WORK_ROOT"
           node packaging/common/enforce-alpha22-scan-lane-stall-fixes.cjs "$WORK_ROOT"
 
-          # Candidate 7 V3 is deliberately fail-closed against the Candidate 6 package identity.
+          # The generic stage helper deliberately retains its internal candidate1 package label.
+          # Promote that exact staged runtime to the already-field-tested Candidate 6 identity before
+          # the Candidate 7 fail-closed patch is allowed to touch it.
+          python3 - "$WORK_ROOT/app/package.json" "$BASE_STAGE_VERSION" <<'PY'
+          import json, sys
+          from pathlib import Path
+          p=Path(sys.argv[1]); d=json.loads(p.read_text()); d['version']=sys.argv[2]
+          d['description']='ArchVerse Alpha22 Candidate 6: first-F field-pass, Scan Mode authority ROI, nonblocking auxiliary OCR'
+          p.write_text(json.dumps(d, indent=2)+'\n')
+          PY
+
           node packaging/common/enforce-location-sync-v3.cjs "$WORK_ROOT"
           node packaging/common/enforce-location-sync-v3b.cjs "$WORK_ROOT"
 
