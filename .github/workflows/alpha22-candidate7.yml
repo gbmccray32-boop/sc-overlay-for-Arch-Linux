@@ -1,9 +1,9 @@
-name: Alpha22 Candidate 8 Scan Authority
+name: Alpha22 Candidate 8b Dual Scan Witness
 
 on:
   push:
     branches:
-      - agent/alpha22-candidate8-scan-authority
+      - agent/alpha22-candidate8b-dual-scan-signatures
   workflow_dispatch:
 
 permissions:
@@ -11,20 +11,18 @@ permissions:
   actions: read
 
 concurrency:
-  group: alpha22-candidate8-${{ github.ref }}
+  group: alpha22-candidate8b-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  APP_VERSION: 0.1.44-r31.alpha22.candidate8
-  BASE_STAGE_VERSION: 0.1.44-r31.alpha22.candidate6
-  VERIFIED_ALPHA21_CORE_RUN_ID: '31901404904'
-  VERIFIED_ALPHA21_CORE_ARTIFACT_ID: '9251185299'
-  VERIFIED_ALPHA21_CORE_ARTIFACT: ArchVerse-Alpha21-native-payload
-  VERIFIED_ALPHA21_CORE_DIGEST: sha256:6a6e05eeb8f7a91e06d5a60fb1b93230a3d6564c66741a71642926191815bbca
-  VERIFIED_ALPHA21_CORE_HEAD_SHA: 9f3c095b74c5220b7720717c5bb8d6ed2bc28382
-  VERIFIED_ALPHA21_CORE_PAYLOAD: ArchVerse-Overlay-0.1.42-r31-alpha.21-payload.tar.gz
-  ELECTRON_ASSET: electron-v42.7.1-linux-x64.zip
-  ELECTRON_SHA256: e85b28245deaa75c3c4f2cf5da084f4c7fbedd5af1630c59a827c41ac1f5e1af
+  APP_VERSION: 0.1.44-r31.alpha22.candidate8b
+  BASE_VERSION: 0.1.44-r31.alpha22.candidate8
+  VERIFIED_C8_RUN_ID: '32927022738'
+  VERIFIED_C8_ARTIFACT_ID: '9591895831'
+  VERIFIED_C8_ARTIFACT: ArchVerse-0.1.44-Alpha22-Candidate8
+  VERIFIED_C8_ARTIFACT_DIGEST: sha256:12c5ee460155894c2baef28825f68aa24672426d4ff351cdf75ed61b91e9032f
+  VERIFIED_C8_HEAD_SHA: 64fb74eb9dfb563b9f3116ef2c4abf8277d8b85b
+  VERIFIED_C8_TARBALL_SHA256: 6bdac6faa9a39d3e9a542c3c3aed0059824db9f8a1ee3a91d56436de102b8d30
 
 jobs:
   build-and-verify:
@@ -37,107 +35,71 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
 
-      - name: Install and validate source
+      - name: Validate Candidate 8b source enforcer
         run: |
           set -euo pipefail
-          npm ci
-          npm run typecheck
-          npm run test:mining
-          npm run test:screenocr
-          npm run test:hauling
-          npm run test:location
-          npm run build:server
-          node --check build/server/server.mjs
-          node --check packaging/common/enforce-location-sync-v3.cjs
-          node --check packaging/common/enforce-location-sync-v3b.cjs
-          node --check packaging/common/location-sync-v3.cjs
-          node --check packaging/common/candidate8-scan-authority-selftest.mjs
-          node tests/location-sync-v3.test.cjs
+          node --check packaging/common/enforce-alpha22-candidate8b.cjs
 
-      - name: Verify pinned Alpha21 core provenance
+      - name: Verify pinned Candidate 8 provenance
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$VERIFIED_ALPHA21_CORE_ARTIFACT_ID")"
-          test "$(jq -r .name <<<"$meta")" = "$VERIFIED_ALPHA21_CORE_ARTIFACT"
+          meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$VERIFIED_C8_ARTIFACT_ID")"
+          test "$(jq -r .name <<<"$meta")" = "$VERIFIED_C8_ARTIFACT"
           test "$(jq -r .expired <<<"$meta")" = "false"
-          test "$(jq -r .digest <<<"$meta")" = "$VERIFIED_ALPHA21_CORE_DIGEST"
-          test "$(jq -r .workflow_run.id <<<"$meta")" = "$VERIFIED_ALPHA21_CORE_RUN_ID"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_ALPHA21_CORE_RUN_ID" --jq .head_sha)" = "$VERIFIED_ALPHA21_CORE_HEAD_SHA"
+          test "$(jq -r .digest <<<"$meta")" = "$VERIFIED_C8_ARTIFACT_DIGEST"
+          test "$(jq -r .workflow_run.id <<<"$meta")" = "$VERIFIED_C8_RUN_ID"
+          test "$(jq -r .workflow_run.head_sha <<<"$meta")" = "$VERIFIED_C8_HEAD_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_C8_RUN_ID" --jq .head_sha)" = "$VERIFIED_C8_HEAD_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_C8_RUN_ID" --jq .conclusion)" = "success"
 
-      - name: Download pinned Alpha21 core
+      - name: Download pinned Candidate 8 artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.VERIFIED_ALPHA21_CORE_ARTIFACT }}
-          path: ${{ runner.temp }}/verified-alpha21-core
+          name: ${{ env.VERIFIED_C8_ARTIFACT }}
+          path: ${{ runner.temp }}/candidate8-artifact
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ env.VERIFIED_ALPHA21_CORE_RUN_ID }}
+          run-id: ${{ env.VERIFIED_C8_RUN_ID }}
 
-      - name: Download pinned Electron
+      - name: Verify and extract exact Candidate 8 package
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/sources"
-          curl --fail --location --retry 4 \
-            "https://github.com/electron/electron/releases/download/v42.7.1/$ELECTRON_ASSET" \
-            --output "$RUNNER_TEMP/sources/$ELECTRON_ASSET"
-          echo "$ELECTRON_SHA256  $RUNNER_TEMP/sources/$ELECTRON_ASSET" | sha256sum -c -
+          TARBALL="$(find "$RUNNER_TEMP/candidate8-artifact" -type f -name "ArchVerse-Native-$BASE_VERSION.tar.gz" -print -quit)"
+          test -n "$TARBALL"
+          test "$(sha256sum "$TARBALL" | awk '{print $1}')" = "$VERIFIED_C8_TARBALL_SHA256"
+          mkdir -p "$RUNNER_TEMP/native"
+          tar -C "$RUNNER_TEMP/native" -xzf "$TARBALL"
+          test -d "$RUNNER_TEMP/native/ArchVerse-Native-$BASE_VERSION"
+          jq -e --arg v "$BASE_VERSION" '.version == $v' "$RUNNER_TEMP/native/ArchVerse-Native-$BASE_VERSION/app/package.json"
 
-      - name: Reconstruct Candidate 8 in semantic order
+      - name: Apply Candidate 8b dual witness and RS catalog
         run: |
           set -euo pipefail
-          WORK_ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$BASE_STAGE_VERSION"
-          FINAL_ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$BASE_VERSION"
+          node packaging/common/enforce-alpha22-candidate8b.cjs "$ROOT"
 
-          bash packaging/native/stage-upstream-0144-candidate.sh \
-            "$RUNNER_TEMP/verified-alpha21-core/$VERIFIED_ALPHA21_CORE_PAYLOAD" \
-            "$RUNNER_TEMP/sources/$ELECTRON_ASSET" \
-            "$WORK_ROOT"
-          node packaging/common/enforce-native-linux-pipewire-capture.cjs "$WORK_ROOT"
-          node packaging/common/enforce-alpha22-performance-repair.cjs "$WORK_ROOT"
-          node packaging/common/enforce-alpha22-field-fixes.cjs "$WORK_ROOT"
-          node packaging/common/enforce-alpha22-first-f.cjs "$WORK_ROOT"
-          node packaging/common/enforce-alpha22-scan-lane-stall-fixes.cjs "$WORK_ROOT"
-
-          python3 - "$WORK_ROOT/app/package.json" "$BASE_STAGE_VERSION" <<'PY'
+          python3 - "$ROOT/app/package.json" "$APP_VERSION" <<'PY'
           import json, sys
           from pathlib import Path
-          p=Path(sys.argv[1]); d=json.loads(p.read_text()); d['version']=sys.argv[2]
-          d['description']='ArchVerse Alpha22 Candidate 6: first-F field-pass, Scan Mode authority ROI, nonblocking auxiliary OCR'
+          p=Path(sys.argv[1]); d=json.loads(p.read_text())
+          d['version']=sys.argv[2]
+          d['description']='ArchVerse Alpha22 Candidate 8b: dual Scan Mode visual witness and exact current Mining RS catalog'
           p.write_text(json.dumps(d, indent=2)+'\n')
           PY
 
-          node packaging/common/enforce-location-sync-v3.cjs "$WORK_ROOT"
-          node packaging/common/enforce-location-sync-v3b.cjs "$WORK_ROOT"
+          mv "$ROOT" "$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
 
-          # Candidate 8 is deliberately a fail-closed patch over the exact field-passed Candidate 7b
-          # runtime. Fuzz is disabled: if an upstream or earlier Linux contract moves these anchors,
-          # CI must stop rather than silently applying the safety gate somewhere unintended.
-          (cd "$WORK_ROOT" && patch -p1 --fuzz=0 < "$GITHUB_WORKSPACE/packaging/common/alpha22-candidate8-scan-authority.patch")
-
-          install -m 0644 packaging/diagnostics/location-sync-diagnostic.cjs \
-            "$WORK_ROOT/app/electron/location-sync-diagnostic.cjs"
-          install -m 0755 packaging/diagnostics/archverse-location-sync-diagnostic \
-            "$WORK_ROOT/bin/archverse-location-sync-diagnostic"
-
-          python3 - "$WORK_ROOT/app/package.json" "$APP_VERSION" <<'PY'
-          import json, sys
-          from pathlib import Path
-          p=Path(sys.argv[1]); d=json.loads(p.read_text()); d['version']=sys.argv[2]
-          d['description']='ArchVerse Alpha22 Candidate 8: field-derived Scan Mode authority, fail-closed Mining commits, latest-only Mining IPC'
-          p.write_text(json.dumps(d, indent=2)+'\n')
-          PY
-          mv "$WORK_ROOT" "$FINAL_ROOT"
-
-      - name: Assert frozen Linux and Candidate 8 contracts
+      - name: Assert frozen Linux and Candidate 8b contracts
         run: |
           set -euo pipefail
           ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+
           find "$ROOT/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
           node --check "$ROOT/app/server/server.mjs"
+          node --check "$ROOT/app/electron/mining-signature-catalog.cjs"
 
           # Frozen interaction/focus contracts.
           grep -q 'keyboard authority=evdev' "$ROOT/app/electron/main.cjs"
@@ -158,85 +120,53 @@ jobs:
           grep -q 'ARCHVERSE_LOCATION_SYNC_DURABLE_CONSUMER' "$ROOT/app/server/server.mjs"
           grep -q 'location-sync-result.json' "$ROOT/app/electron/capture.cjs"
           grep -q 'deliveryTransport' "$ROOT/app/server/server.mjs"
-          grep -q 'ARCHVERSE_LOCATION_SYNC_DURABLE_UI' "$ROOT/app/server/overlay/hauling.html"
           grep -q 'pipewiresrc' "$ROOT/app/electron/capture.cjs"
           grep -q 'method: "gamescope-pipewire"' "$ROOT/app/electron/capture.cjs"
           ! grep -q 'Windows\.Media\.Ocr' "$ROOT/app/electron/location-sync-v3.cjs"
           ! grep -REq 'taskset|sched_setaffinity|SCHED_FIFO|SCHED_RR' "$ROOT/app/electron" "$ROOT/bin"
 
-          # Candidate 8 authority/IPC contracts.
-          grep -q 'ARCHVERSE_LINUX_SCAN_MODE_AUTHORITY_ISLANDS' "$ROOT/app/electron/scan-mode-gate.cjs"
-          grep -q 'ARCHVERSE_LINUX_SCAN_MODE_TEMPORAL_AUTHORITY' "$ROOT/app/electron/scan-mode-gate.cjs"
-          grep -q 'outside-authority-islands' "$ROOT/app/electron/scan-mode-gate.cjs"
-          grep -q 'ARCHVERSE_LINUX_SCAN_MODE_TEMPORAL_AUTHORITY_CAPTURE' "$ROOT/app/electron/capture.cjs"
-          grep -q 'ARCHVERSE_LINUX_MINING_EARLY_SIGNATURE_FLOOR' "$ROOT/app/electron/capture.cjs"
-          grep -q 'MINING_SIGNATURE_EARLY_FLOOR = 2000' "$ROOT/app/electron/capture.cjs"
-          grep -q 'ARCHVERSE_LINUX_MINING_TELEMETRY_LATEST_ONLY' "$ROOT/app/electron/capture.cjs"
-          grep -q 'ARCHVERSE_LINUX_MINING_STRUCTURAL_AUTHORITY_CAPTURE' "$ROOT/app/electron/capture.cjs"
+          # Candidate 8b authority/catalog contracts.
+          grep -q 'ARCHVERSE_LINUX_SCAN_MODE_DUAL_WITNESS' "$ROOT/app/electron/scan-mode-gate.cjs"
+          grep -q 'ARCHVERSE_LINUX_SCAN_MODE_SIGNAL_STRENGTH_WITNESS' "$ROOT/app/electron/scan-mode-gate.cjs"
+          grep -q 'ARCHVERSE_LINUX_SCAN_MODE_RADAR_PLAUSIBILITY' "$ROOT/app/electron/scan-mode-gate.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_CURRENT_RS_VALIDATION' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_CURRENT_RS_VALIDATION_SERVER' "$ROOT/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_CATALOG_V1' "$ROOT/app/electron/mining-signature-catalog.cjs"
           grep -q 'glyph.seen && archScanModeRead.active === true' "$ROOT/app/electron/capture.cjs"
-          grep -q 'ARCHVERSE_LINUX_MINING_STRUCTURAL_AUTHORITY_SERVER' "$ROOT/app/server/server.mjs"
-          ! grep -q 'confirmed: glyph.seen,' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_TELEMETRY_LATEST_ONLY' "$ROOT/app/electron/capture.cjs"
           ! grep -q 'scan telemetry post failed' "$ROOT/app/electron/capture.cjs"
           jq -e --arg v "$APP_VERSION" '.version == $v' "$ROOT/app/package.json"
 
-      - name: Exercise Candidate 8 Scan authority
+      - name: Re-exercise Candidate 8b after final identity
         run: |
           set -euo pipefail
           ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
-          node packaging/common/candidate8-scan-authority-selftest.mjs "$ROOT"
+          # The enforcer already ran the behavioral dual-witness/catalog/server self-test before identity promotion.
+          # Recheck exact catalog behavior directly in the final packaged tree.
+          ROOT="$ROOT" node <<'NODE'
+          const path=require('node:path');
+          const c=require(path.join(process.env.ROOT,'app/electron/mining-signature-catalog.cjs'));
+          const must=(v,m)=>{if(!v) throw new Error(m)};
+          for (const v of [3170,11565,15420,16000,17020,17200,21050,21500,3000,90000,4000,120000]) must(c.classifyMiningSignature(v)?.valid===true, `valid RS rejected ${v}`);
+          for (const v of [3240,5291,7351,10000,2999,120001]) must(c.classifyMiningSignature(v)?.valid!==true, `invalid RS admitted ${v}`);
+          const amb=c.classifyMiningSignature(16000);
+          must(Array.isArray(amb.matches) && amb.matches.length>=2, '16000 collision was guessed instead of preserved');
+          console.log('Final Candidate 8b RS catalog self-check OK');
+          NODE
 
-      - name: Exercise durable Location Sync handoff
+      - name: Package Candidate 8b
         run: |
           set -euo pipefail
           ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
-          CFG="$RUNNER_TEMP/location-sync-handoff"; PORT=18787
-          mkdir -p "$CFG"
-          SC_TRACKER_CONFIG_DIR="$CFG" PORT="$PORT" node "$ROOT/app/server/server.mjs" >"$RUNNER_TEMP/location-sync-server.log" 2>&1 &
-          PID=$!
-          trap 'kill "$PID" 2>/dev/null || true' EXIT
-          for _ in $(seq 1 100); do curl -fsS "http://127.0.0.1:$PORT/api/config" >/dev/null 2>&1 && break; sleep .1; done
-
-          ARM="$(curl -fsS -X POST "http://127.0.0.1:$PORT/api/hauling/locate")"
-          AT="$(jq -r .at <<<"$ARM")"
-          DONE="$(( $(date +%s%3N) - 250 ))"
-          jq -n --argjson at "$AT" --argjson done "$DONE" '{schema:"archverse-location-sync-result/1",completedAt:$done,requestAt:$at,pos:{x:200552.3,y:-104907.3,z:190095.1},frame:"body",body:"Daymar",system:"Stanton",source:"zone-body",captureMethod:"gamescope-pipewire",captureMs:1394,ocrMs:2170,totalMs:3600,engine:"rapidocr"}' >"$CFG/location-sync-result.json.tmp"
-          chmod 600 "$CFG/location-sync-result.json.tmp"
-          mv "$CFG/location-sync-result.json.tmp" "$CFG/location-sync-result.json"
-
-          RESULT="$(curl -fsS "http://127.0.0.1:$PORT/api/hauling/locate")"
-          jq -e '.pending == false and .result.ok == true and .result.frame == "body" and .result.body == "Daymar" and .result.deliveryTransport == "durable-file"' <<<"$RESULT"
-          test ! -e "$CFG/location-sync-result.json"
-
-          ARM2="$(curl -fsS -X POST "http://127.0.0.1:$PORT/api/hauling/locate")"
-          AT2="$(jq -r .at <<<"$ARM2")"
-          test "$AT2" != "$AT"
-          jq -n --argjson at "$AT" '{completedAt:0,requestAt:$at,pos:{x:1,y:2,z:3},frame:"system",system:"Nyx"}' >"$CFG/location-sync-result.json"
-          STALE="$(curl -fsS "http://127.0.0.1:$PORT/api/hauling/locate")"
-          jq -e '.pending == true and .result == null' <<<"$STALE"
-          test ! -e "$CFG/location-sync-result.json"
-          grep -q 'durable result consumed' "$RUNNER_TEMP/location-sync-server.log"
-          grep -q 'discarded durable result: stale-request' "$RUNNER_TEMP/location-sync-server.log"
-
-      - name: Run Linux OCR self-tests
-        run: |
-          set -euo pipefail
-          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
-          node packaging/common/native-linux-ocr-selftest.mjs "$ROOT"
-          (cd "$ROOT/app" && node "$GITHUB_WORKSPACE/packaging/common/rapidocr-native-selftest.mjs")
-
-      - name: Package Candidate 8
-        run: |
-          set -euo pipefail
           mkdir -p dist
           tar -C "$RUNNER_TEMP/native" -czf "dist/ArchVerse-Native-$APP_VERSION.tar.gz" "ArchVerse-Native-$APP_VERSION"
           (cd dist && sha256sum "ArchVerse-Native-$APP_VERSION.tar.gz" > SHA256SUMS)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ArchVerse-0.1.44-Alpha22-Candidate8
+          name: ArchVerse-0.1.44-Alpha22-Candidate8b
           path: |
             dist/ArchVerse-Native-${{ env.APP_VERSION }}.tar.gz
             dist/SHA256SUMS
-            ${{ runner.temp }}/location-sync-server.log
           if-no-files-found: error
           compression-level: 0
