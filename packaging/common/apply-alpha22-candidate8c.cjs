@@ -37,6 +37,17 @@ try {
   try { fs.unlinkSync(patchPath); } catch {}
 }
 
+// Preserve the established reprobe contract marker while Candidate 8c strengthens the behavior:
+// source rediscovery is bounded, and promotion now requires a successful real PipeWire frame.
+let patchedCapture = fs.readFileSync(capturePath, "utf8");
+if (!patchedCapture.includes("ARCHVERSE_LINUX_PIPEWIRE_REPROBE")) {
+  const anchor = "// ARCHVERSE_LINUX_PIPEWIRE_RECOVERY_STATE_V2";
+  must(patchedCapture.includes(anchor), "PipeWire recovery V2 anchor missing after patch");
+  patchedCapture = patchedCapture.replace(anchor,
+    "// ARCHVERSE_LINUX_PIPEWIRE_REPROBE: bounded rediscovery retained; promotion requires frame health.\n" + anchor);
+  fs.writeFileSync(capturePath, patchedCapture);
+}
+
 const check = spawnSync(process.execPath, [path.join(here, "candidate8c-mining-recovery-selftest.mjs"), root], { encoding: "utf8" });
 process.stdout.write(check.stdout || "");
 process.stderr.write(check.stderr || "");
