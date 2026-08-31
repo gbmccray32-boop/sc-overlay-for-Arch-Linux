@@ -23,6 +23,7 @@ env:
   VERIFIED_C8B_ARTIFACT_DIGEST: sha256:c8328543b82e02589c882e7fcdea675517a117834772b03c01df7264cd1d8099
   VERIFIED_C8B_HEAD_SHA: 50dab9a5cad6d5ba7d97a5d7cdf42d0c76d07b81
   VERIFIED_C8B_TARBALL_SHA256: 04fd0143c5e8b178d05b07213332a8439b62bb3690f01c3f33caf9cf95546b5d
+  VERIFIED_C8C_PATCH_SHA256: a3578c95176d3dd91fb4e7b787cf54947ca6918a87dccc3d40d1f03267d966be
 
 jobs:
   build-and-verify:
@@ -36,10 +37,12 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Validate Candidate 8c source enforcer
+      - name: Validate Candidate 8c source tools
         run: |
           set -euo pipefail
-          node --check packaging/common/enforce-alpha22-candidate8c.cjs
+          node --check packaging/common/apply-alpha22-candidate8c.cjs
+          node --check packaging/common/candidate8c-mining-recovery-selftest.mjs
+          test "$(cat packaging/common/candidate8c-patch-0{1,2,3,4}.b64 | tr -d '\n' | base64 -d | gzip -dc | sha256sum | awk '{print $1}')" = "$VERIFIED_C8C_PATCH_SHA256"
 
       - name: Verify pinned Candidate 8b provenance
         env:
@@ -80,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$BASE_VERSION"
-          node packaging/common/enforce-alpha22-candidate8c.cjs "$ROOT"
+          node packaging/common/apply-alpha22-candidate8c.cjs "$ROOT"
 
           python3 - "$ROOT/app/package.json" "$APP_VERSION" <<'PY'
           import json, sys
@@ -131,7 +134,7 @@ jobs:
           ! grep -q 'Windows\.Media\.Ocr' "$ROOT/app/electron/location-sync-v3.cjs"
           ! grep -REq 'taskset|sched_setaffinity|SCHED_FIFO|SCHED_RR' "$ROOT/app/electron" "$ROOT/bin"
 
-          # Candidate 8c: true pair geometry, pair-relative authority, recovery state, canonical coordinates.
+          # Candidate 8c contracts.
           grep -q 'ARCHVERSE_LINUX_SCAN_MODE_TRUE_PAIR_GEOMETRY' "$ROOT/app/electron/scan-mode-gate.cjs"
           grep -q 'ARCHVERSE_LINUX_SCAN_MODE_DUAL_WITNESS_V2' "$ROOT/app/electron/scan-mode-gate.cjs"
           grep -q 'ARCHVERSE_LINUX_SCAN_MODE_PAIR_RELATIVE_TEMPORAL_AUTHORITY' "$ROOT/app/electron/scan-mode-gate.cjs"
@@ -147,7 +150,7 @@ jobs:
         run: |
           set -euo pipefail
           ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
-          node packaging/common/enforce-alpha22-candidate8c.cjs "$ROOT" --selftest-only
+          node packaging/common/candidate8c-mining-recovery-selftest.mjs "$ROOT"
 
       - name: Package Candidate 8c
         run: |
