@@ -1,0 +1,172 @@
+diff -ruN a/app/electron/capture.cjs b/app/electron/capture.cjs
+--- a/app/electron/capture.cjs	2026-09-03 04:20:57.640696614 +0000
++++ b/app/electron/capture.cjs	2026-09-03 04:20:57.645785487 +0000
+@@ -37,6 +37,13 @@
+ // How long a sighting of the scan HUD keeps the loop fast. Comfortably longer than the gap
+ // between scans, so a scanning session doesn't drop back to 3s between rocks.
+ const FAST_WINDOW_MS = 20000;
++// ARCHVERSE_LINUX_PIPEWIRE_MINING_VISION_CADENCE
++// The Gamescope PipeWire frame is cheap enough to inspect much more often than the old OCR-led
++// 3s idle loop. While Mining is armed on Linux, keep the visual loop responsive even before the
++// first RS exists. Numeric OCR remains periodic until direct pixels provide a radar wake hint.
++const MINING_VISION_IDLE_MS = 1200;
++const MINING_NUMERIC_FALLBACK_MS = 3000;
++const MINING_RADAR_LATCH_MS = 1800;
+ // The kiosk render fades in over ~1-2s. This is the wait the 3s tick was implicitly giving it.
+ const SETTLE_MS = 3000;
+ 
+@@ -745,7 +752,8 @@
+ function scanModeDiagnosticKey(r) {
+   const roi = r?.roi || {};
+   const roiKey = [roi.x, roi.y, roi.w, roi.h].map((v) => Number.isFinite(v) ? Number(v).toFixed(4) : "-").join(",");
+-  return [r?.active ? 1 : 0, r?.confidence || 0, r?.referenceAngle || 0, r?.templateScore || 0,
++  return [r?.active ? 1 : 0, r?.visionWake === true ? 1 : 0, r?.authorityCandidate === true ? 1 : 0,
++    r?.confidence || 0, r?.referenceAngle || 0, r?.templateScore || 0,
+     r?.iconRecall || 0, r?.labelRecall || 0, r?.haloDensity || 0,
+     r?.rejectionReason || "accepted", roiKey].join("|");
+ }
+@@ -764,6 +772,8 @@
+       ` method=${r.method || "radar-icon-structure-search"}` +
+       ` capture=${captureMethod}` +
+       ` score=${r.templateScore || 0}` +
++      ` wake=${r.visionWake === true ? 1 : 0}` +
++      ` authority=${r.authorityCandidate === true ? 1 : 0}` +
+       ` icon=${r.iconRecall || 0}` +
+       ` label=${r.labelRecall || 0}` +
+       ` halo=${r.haloDensity || 0}` +
+@@ -1301,6 +1311,8 @@
+   // behaviour: invalid HUD numbers never lock the crop or enter Mining IPC.
+   const MINING_SIGNATURE_EARLY_FLOOR = 2000; // cheap prefilter only; catalog decides validity
+   let lastMiningAuthorityRejectAt = 0;
++  let lastMiningNumericProbeAt = 0;
++  let lastMiningRadarWitnessAt = 0;
+   // ARCHVERSE_LINUX_ASYNC_MINING_TELEMETRY: Mining IPC never adds latency to capture/OCR.
+   // ARCHVERSE_LINUX_MINING_TELEMETRY_LATEST_ONLY: one in flight + one newest confirmed payload.
+   // Repeated unchanged signatures are suppressed; failures retain only the newest payload and retry
+@@ -1570,7 +1582,14 @@
+       // `archScanModeRead.active` is the structural radar icon. `read.signature` below is admitted only
+       // after exact current-RS catalog validation. Signal-strength/status text/colour and scan glyph are
+       // not part of authority.
++      // ARCHVERSE_LINUX_PIPEWIRE_MINING_VISION_WAKE: Scan-mode acceleration is driven from the
++      // captured frame itself, not general OCR vocabulary. `visionWake` is intentionally permissive
++      // and cannot commit Mining state; it only makes the next visual/numeric probes arrive sooner.
++      const miningVisionWake = mining && process.platform === "linux"
++        && (archScanModeRead.visionWake === true || archScanModeRead.authorityCandidate === true);
++      if (archScanModeRead.authorityCandidate === true) lastMiningRadarWitnessAt = Date.now();
+       stage.scanMode = archScanModeRead.active;
++      stage.miningVisionWake = miningVisionWake;
+       stage.capture = Date.now() - t0;
+       stage.frame = `${cap.width}x${cap.height}`;
+       // 🔑 SKIP THE WHOLE-FRAME PASS WHILE ACTIVELY SCANNING. Measured 2026-08-08: encoding the
+@@ -1699,8 +1718,15 @@
+       // skipped while locked and that fails outright ~42% of the time otherwise. Gating the ONLY
+       // trustworthy mining reader behind the least trustworthy one is backwards: RapidOCR got every
+       // signature right in a measured session while Windows OCR got none. If mining is armed, look.
+-      if (mining && (process.platform === "linux" || cfg.rapidOcr !== false)) { // Linux OCR backend is contractual once the feature is armed
++      const linuxMiningNumericDue = process.platform !== "linux" || locked || miningVisionWake
++        || Date.now() - lastMiningNumericProbeAt >= MINING_NUMERIC_FALLBACK_MS;
++      // ARCHVERSE_LINUX_PIPEWIRE_MINING_VISION_NUMERIC_FALLBACK: Linux no longer asks general OCR
++      // whether Scan Mode is active. Direct PipeWire pixels drive cadence; the tiny numeric RS crop
++      // runs immediately on a visual wake/lock and otherwise only as a 3s fail-safe probe.
++      if (mining && (process.platform !== "linux" || cfg.rapidOcr !== false || linuxMiningNumericDue)
++          && (process.platform !== "linux" || linuxMiningNumericDue)) {
+         try {
++          if (process.platform === "linux") lastMiningNumericProbeAt = Date.now();
+           const full = linuxOcrRegionPixels(cfg, "resourceSignature", cap.width, cap.height);
+           // Narrow to where the number actually was, when we know. Clamped inside `full`, so this
+           // only ever shrinks the search — it can never look outside what the user configured.
+@@ -1811,7 +1837,7 @@
+       // Mining is latency-critical. Background OCR is intentionally deferred until its read is
+       // complete, and an active radar/signature frame skips those unrelated consumers altogether.
+       // They resume automatically on the next non-scanning frame.
+-      if (runLinuxBackgroundOcr && !(archScanModeRead.active && typeof read.signature === "number")) {
++      if (runLinuxBackgroundOcr && !(archScanModeRead.authorityCandidate === true && typeof read.signature === "number")) {
+         runLinuxBackgroundOcr();
+         stage.backgroundOcr = linuxBackgroundInFlight.size ? "background-dispatched" : "background-idle";
+       } else if (runLinuxBackgroundOcr) {
+@@ -1836,7 +1862,10 @@
+       // the player is scanning, whatever the HUD says or doesn't. scanHud is KEPT as an
+       // additional trigger because it fires on "ready to scan", i.e. slightly BEFORE the first
+       // number exists — useful when it happens to be there, never required.
+-      else if (mining && (read.scanHud || typeof read.signature === "number")) fastUntil = Date.now() + FAST_WINDOW_MS;
++      else if (mining && process.platform === "linux"
++          && (miningVisionWake || typeof read.signature === "number")) fastUntil = Date.now() + FAST_WINDOW_MS;
++      else if (mining && process.platform !== "linux"
++          && (read.scanHud || typeof read.signature === "number")) fastUntil = Date.now() + FAST_WINDOW_MS;
+       // Self-tuning, because this runs over a RUNNING GAME and a fixed rate is a guess about
+       // someone else's PC. A tick costs a screen grab plus an OCR (~230ms on Sub's machine with
+       // the warm worker, but a slower box could be several times that). Never let the loop occupy
+@@ -1847,7 +1876,8 @@
+       // between FAST_MS and POLL_MS. Tune from the current tick, not the previous one.
+       const currentTickMs = Math.max(1, Date.now() - busyAt);
+       const floor = Math.max(FAST_MS, Math.round(currentTickMs * 1.5));
+-      const want = Date.now() < fastUntil ? Math.min(POLL_MS, floor) : POLL_MS;
++      const miningIdleCeiling = process.platform === "linux" && mining ? MINING_VISION_IDLE_MS : POLL_MS;
++      const want = Date.now() < fastUntil ? Math.min(miningIdleCeiling, floor) : miningIdleCeiling;
+       if (want !== rate) {
+         rate = want;
+         clearInterval(timer);
+@@ -1861,17 +1891,23 @@
+       //   2) a numeric resource signature already admitted by the exact current RS catalog above.
+       // No signal-strength/status witness, status colour/label, or scan glyph can veto this pair.
+       if (read.kind === "mineable" && typeof read.signature === "number" && read.pin) {
+-        const confirmed = archScanModeRead.active === true;
++        // ARCHVERSE_LINUX_PIPEWIRE_MINING_RADAR_RS_AUTHORITY: final Linux authority remains exactly
++        // the two user-selected witnesses: (1) a radar icon from PipeWire pixels and (2) an exact
++        // current-catalog RS. A very short radar latch bridges one noisy 900-1200ms visual frame;
++        // no OCR word/status/glyph becomes a third veto.
++        const radarWitnessAgeMs = Date.now() - lastMiningRadarWitnessAt;
++        const confirmed = archScanModeRead.authorityCandidate === true
++          || (lastMiningRadarWitnessAt > 0 && radarWitnessAgeMs <= MINING_RADAR_LATCH_MS);
+         if (confirmed) {
+           queueMiningScanPost({
+             signature: read.signature, confirmed: true,
+             raw: read.raw, text: read.text, pollMs: rate, scanHud: read.scanHud === true,
+-            scanMode: { confidence: archScanModeRead.confidence, method: archScanModeRead.method || "radar-icon-structure-search", roi: archScanModeRead.roi || null },
++            scanMode: { confidence: archScanModeRead.confidence, method: "pipewire-radar+rs", roi: archScanModeRead.roi || null, radarWitnessAgeMs: Math.max(0, radarWitnessAgeMs) },
+             frame: { w: shot.getSize().width, h: shot.getSize().height },
+           });
+         } else if (Date.now() - lastMiningAuthorityRejectAt >= 5000) {
+           lastMiningAuthorityRejectAt = Date.now();
+-          console.log(`[mining-authority] candidate ${read.signature} refused before IPC: radar=0 (valid RS present)`);
++          console.log(`[mining-authority] candidate ${read.signature} refused before IPC: radar=0 (valid RS present; wake=${miningVisionWake ? 1 : 0} score=${archScanModeRead.templateScore || 0} icon=${archScanModeRead.iconRecall || 0})`);
+         }
+       }
+       // A kiosk on screen -> "fabricator" context (gold diamond) even if image capture is off;
+diff -ruN a/app/electron/scan-mode-gate.cjs b/app/electron/scan-mode-gate.cjs
+--- a/app/electron/scan-mode-gate.cjs	2026-09-03 04:20:57.642555104 +0000
++++ b/app/electron/scan-mode-gate.cjs	2026-09-03 04:20:57.647386917 +0000
+@@ -244,8 +244,20 @@
+         w: Number((row.template.width / width).toFixed(5)), h: Number((row.template.height / height).toFixed(5)),
+       },
+     }));
++  // ARCHVERSE_LINUX_PIPEWIRE_MINING_VISION: Candidate 8e separates three concepts:
++  // - `active`: the older strict standalone radar classification (kept for diagnostics);
++  // - `visionWake`: a permissive pixel-only hint used only to increase polling cadence;
++  // - `authorityCandidate`: a stronger radar witness that may confirm Mining ONLY when the same
++  //   frame also yields an exact current-catalog RS. This deliberately does not depend on OCR
++  //   words, status colours, or the signal-strength widget.
++  const visionWake = !!best && best.score >= 0.50 && best.iconRecall >= 0.30
++    && best.precision >= 0.20 && best.recall >= 0.22;
++  const authorityCandidate = active || (!!best && best.score >= 0.60 && best.iconRecall >= 0.70
++    && best.precision >= 0.30 && best.recall >= 0.30);
+   return {
+     active,
++    visionWake,
++    authorityCandidate,
+     confidence,
+     method: "radar-icon-structure-search",
+     referenceAngle: best?.template.reference || null,
+diff -ruN a/app/package.json b/app/package.json
+--- a/app/package.json	2026-09-03 04:20:57.644183793 +0000
++++ b/app/package.json	2026-09-03 04:20:57.648880388 +0000
+@@ -1,7 +1,7 @@
+ {
+   "name": "archverse-overlay",
+-  "version": "0.1.44-r31.alpha22.candidate8d",
+-  "description": "ArchVerse Alpha22 Candidate 8d: Mining authority simplified to Scan radar icon + current resource signature",
++  "version": "0.1.44-r31.alpha22.candidate8e",
++  "description": "ArchVerse Alpha22 Candidate 8e: PipeWire-first Mining vision wake with radar + exact RS authority",
+   "main": "electron/main.cjs",
+   "type": "module",
+   "dependencies": {
