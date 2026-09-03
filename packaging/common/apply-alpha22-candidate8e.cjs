@@ -4,7 +4,6 @@ const crypto=require('node:crypto');
 const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
-const zlib=require('node:zlib');
 const {spawnSync}=require('node:child_process');
 const root=process.argv[2];
 if(!root) throw new Error('usage: apply-alpha22-candidate8e.cjs <staged-candidate8d-root>');
@@ -20,8 +19,7 @@ must(String(pkg.version||'')==='0.1.44-r31.alpha22.candidate8d',`expected exact 
 const beforeCapture=fs.readFileSync(capturePath,'utf8');
 must(beforeCapture.includes('ARCHVERSE_LINUX_MINING_RADAR_RS_AUTHORITY'),'Candidate 8d radar+RS base marker missing');
 must(beforeCapture.includes('ARCHVERSE_LINUX_PIPEWIRE_RECOVERY_STATE_V2'),'Candidate 8c PipeWire recovery marker missing');
-const encoded=[1,2,3,4].map(n=>fs.readFileSync(path.join(here,`candidate8e-patch-0${n}.b64`),'utf8').trim()).join('');
-const patch=zlib.gunzipSync(Buffer.from(encoded,'base64'));
+const patch=fs.readFileSync(path.join(here,'candidate8e.patch'));
 const digest=crypto.createHash('sha256').update(patch).digest('hex');
 must(digest==='86fcd681f86f1e3ecf0a146d800462c96c038b7a61398c35023cfacc3dcaf806',`patch digest mismatch: ${digest}`);
 const patchPath=path.join(os.tmpdir(),`archverse-candidate8e-${process.pid}.patch`);
