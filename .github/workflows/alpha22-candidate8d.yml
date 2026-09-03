@@ -1,0 +1,160 @@
+name: Alpha22 Candidate 8d Radar + RS Authority
+
+on:
+  push:
+    branches:
+      - agent/alpha22-candidate8d-radar-rs-authority
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: alpha22-candidate8d-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_VERSION: 0.1.44-r31.alpha22.candidate8d
+  BASE_VERSION: 0.1.44-r31.alpha22.candidate8c
+  VERIFIED_C8C_RUN_ID: '33357119901'
+  VERIFIED_C8C_ARTIFACT_ID: '9745487368'
+  VERIFIED_C8C_ARTIFACT: ArchVerse-0.1.44-Alpha22-Candidate8c
+  VERIFIED_C8C_ARTIFACT_DIGEST: sha256:e4cf06e6dd76a25612411fc7eaa0605a669e39d8f6f9c875cf242ff7a6e8107d
+  VERIFIED_C8C_HEAD_SHA: 7afef3f3c4fbfc8ab44798bafab73d983160a4e0
+  VERIFIED_C8C_TARBALL_SHA256: e0605ba9c450bad780f08a5c16b6b579df2eb10effa90987c914586223d05a41
+  VERIFIED_C8D_PATCH_SHA256: bafa61d3115e242b911d9d51ef09cb4d8e6dec46ee97008da62b66484e758914
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate Candidate 8d source tools
+        run: |
+          set -euo pipefail
+          node --check packaging/common/apply-alpha22-candidate8d.cjs
+          node --check packaging/common/candidate8d-radar-rs-selftest.mjs
+          test "$(cat packaging/common/candidate8d-patch-0{1,2,3,4}.b64 | tr -d '\n' | base64 -d | gzip -dc | sha256sum | awk '{print $1}')" = "$VERIFIED_C8D_PATCH_SHA256"
+
+      - name: Verify pinned Candidate 8c provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$VERIFIED_C8C_ARTIFACT_ID")"
+          test "$(jq -r .name <<<"$meta")" = "$VERIFIED_C8C_ARTIFACT"
+          test "$(jq -r .expired <<<"$meta")" = "false"
+          test "$(jq -r .digest <<<"$meta")" = "$VERIFIED_C8C_ARTIFACT_DIGEST"
+          test "$(jq -r .workflow_run.id <<<"$meta")" = "$VERIFIED_C8C_RUN_ID"
+          test "$(jq -r .workflow_run.head_sha <<<"$meta")" = "$VERIFIED_C8C_HEAD_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_C8C_RUN_ID" --jq .head_sha)" = "$VERIFIED_C8C_HEAD_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_C8C_RUN_ID" --jq .conclusion)" = "success"
+
+      - name: Download pinned Candidate 8c artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.VERIFIED_C8C_ARTIFACT }}
+          path: ${{ runner.temp }}/candidate8c-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.VERIFIED_C8C_RUN_ID }}
+
+      - name: Verify and extract exact Candidate 8c package
+        run: |
+          set -euo pipefail
+          TARBALL="$(find "$RUNNER_TEMP/candidate8c-artifact" -type f -name "ArchVerse-Native-$BASE_VERSION.tar.gz" -print -quit)"
+          test -n "$TARBALL"
+          test "$(sha256sum "$TARBALL" | awk '{print $1}')" = "$VERIFIED_C8C_TARBALL_SHA256"
+          mkdir -p "$RUNNER_TEMP/native"
+          tar -C "$RUNNER_TEMP/native" -xzf "$TARBALL"
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$BASE_VERSION"
+          test -d "$ROOT"
+          jq -e --arg v "$BASE_VERSION" '.version == $v' "$ROOT/app/package.json"
+
+      - name: Apply Candidate 8d radar + RS authority
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$BASE_VERSION"
+          node packaging/common/apply-alpha22-candidate8d.cjs "$ROOT"
+          mv "$ROOT" "$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+
+      - name: Assert frozen Linux and Candidate 8d contracts
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          find "$ROOT/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          node --check "$ROOT/app/server/server.mjs"
+          node --check "$ROOT/app/electron/mining-signature-catalog.cjs"
+
+          # Frozen F/focus behavior.
+          grep -q 'keyboard authority=evdev' "$ROOT/app/electron/main.cjs"
+          grep -q '__overlayClassifyPoint' "$ROOT/app/electron/main.cjs"
+          grep -q 'function updateFHoverHit()' "$ROOT/app/electron/main.cjs"
+          ! grep -q 'pointIsInsideOverlayRegion(' "$ROOT/app/electron/main.cjs"
+          ! grep -q 'overlay\.setFocusable(false)' "$ROOT/app/electron/main.cjs"
+
+          # Frozen Linux OCR, capture, Location Sync, RS catalog and Candidate 8c recovery contracts.
+          grep -q 'ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_CAPTURE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_PIPEWIRE_REPROBE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_PIPEWIRE_RECOVERY_STATE_V2' "$ROOT/app/electron/capture.cjs"
+          grep -q 'Gamescope PipeWire frame health recovered; promoted over' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_CAPTURE_COORDINATE_CANONICALIZATION' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_BACKGROUND_OCR_NONBLOCKING' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_COORDINATE_AUTHORITY' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_SCALE_GUARD' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_WINDOWS_OCR_HARD_DENY' "$ROOT/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LOCATION_SYNC_V3_CAPTURE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LOCATION_SYNC_DURABLE_HANDOFF' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LOCATION_SYNC_DURABLE_CONSUMER' "$ROOT/app/server/server.mjs"
+          grep -q 'location-sync-result.json' "$ROOT/app/electron/capture.cjs"
+          grep -q 'deliveryTransport' "$ROOT/app/server/server.mjs"
+          grep -q 'pipewiresrc' "$ROOT/app/electron/capture.cjs"
+          grep -q 'method: "gamescope-pipewire"' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_CURRENT_RS_VALIDATION' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_CURRENT_RS_VALIDATION_SERVER' "$ROOT/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_SIGNATURE_CATALOG_V1' "$ROOT/app/electron/mining-signature-catalog.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_TELEMETRY_LATEST_ONLY' "$ROOT/app/electron/capture.cjs"
+          ! grep -q 'Windows\.Media\.Ocr' "$ROOT/app/electron/location-sync-v3.cjs"
+          ! grep -REq 'taskset|sched_setaffinity|SCHED_FIFO|SCHED_RR' "$ROOT/app/electron" "$ROOT/bin"
+
+          # Candidate 8d authority is exactly radar icon + current RS signature.
+          grep -q 'ARCHVERSE_LINUX_SCAN_MODE_RADAR_ONLY_AUTHORITY' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_RADAR_RS_AUTHORITY' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_RADAR_RS_AUTHORITY_SERVER' "$ROOT/app/server/server.mjs"
+          grep -q 'const { detectScanModeRadarIcon } = require("./scan-mode-gate.cjs")' "$ROOT/app/electron/capture.cjs"
+          grep -q 'const confirmed = archScanModeRead.active === true;' "$ROOT/app/electron/capture.cjs"
+          ! grep -q 'detectScanModeDualWitness(normalized.toBitmap()' "$ROOT/app/electron/capture.cjs"
+          ! grep -q 'glyph.seen && archScanModeRead.active === true' "$ROOT/app/electron/capture.cjs"
+          ! grep -q 'createScanModeAuthorityStabilizer();' "$ROOT/app/electron/capture.cjs"
+          grep -q 'radar+RS.*CONFIRMED' "$ROOT/app/server/server.mjs"
+          jq -e --arg v "$APP_VERSION" '.version == $v' "$ROOT/app/package.json"
+
+      - name: Re-exercise Candidate 8d final runtime
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          node packaging/common/candidate8d-radar-rs-selftest.mjs "$ROOT"
+
+      - name: Package Candidate 8d
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -C "$RUNNER_TEMP/native" -czf "dist/ArchVerse-Native-$APP_VERSION.tar.gz" "ArchVerse-Native-$APP_VERSION"
+          (cd dist && sha256sum "ArchVerse-Native-$APP_VERSION.tar.gz" > SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-0.1.44-Alpha22-Candidate8d
+          path: |
+            dist/ArchVerse-Native-${{ env.APP_VERSION }}.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
