@@ -17,24 +17,25 @@ Do not convert one label into another without new evidence.
 | Item | Current value |
 | --- | --- |
 | Repository | `https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux` |
-| Current application baseline | `0.1.44-r31.alpha22.candidate8f` |
-| Baseline branch | `agent/alpha22-candidate8f-gamelog-vehicle-mining-gate` |
-| Baseline commit | `5d4f550e372abc6487cb694056ac78be548e117d` |
-| CI workflow | `Alpha22 Candidate 8f Game.log Vehicle Mining Gate` |
-| CI result | **Automated verified** — run `33826061607` succeeded |
-| Saved artifact | `ArchVerse-0.1.44-Alpha22-Candidate8f.zip` |
-| Native archive | `ArchVerse-Native-0.1.44-r31.alpha22.candidate8f.tar.gz` |
-| Native archive SHA-256 | `a41ca5460e937ac9707d27edbd8dd4b40f00fe26c640f3e786ab7b7db3b2c82c` |
-| Artifact integrity | **Packaged verified** |
+| Current packaged candidate | `0.1.44-r31.alpha22.candidate8g` |
+| Candidate branch | `agent/alpha22-candidate8g-rs-recognition-repair` |
+| Packaged source commit | `0e5b6a27091ef6c87ed9fc584d4f6510e3606b4e` |
+| CI workflow | `Alpha22 Candidate 8g RS Recognition Repair` |
+| CI result | **Automated verified** — run `33833003367` succeeded in 49 seconds |
+| Artifact ID | `9922339513` |
+| Saved artifact | `ArchVerse-0.1.44-Alpha22-Candidate8g.zip` |
+| Artifact SHA-256 | `c786d3a6b5c636bbe80cc774ccc58be529a7f9add36ee3d70a09749dbd37edb3` |
+| Native archive | `ArchVerse-Native-0.1.44-r31.alpha22.candidate8g.tar.gz` |
+| Native archive SHA-256 | `37846d4e330f7f248be3acd518a0c388537cef0e9f79a1b186b945eb5529584e` |
+| Artifact integrity | **Packaged verified** — downloaded artifact, outer digest, inner checksum, embedded version, syntax, protected markers, and packaged Candidate 8g self-test passed |
 | Candidate 8f in-game status | **Field tested, failed** — September 4 log proves an RS catalog regression and repeated Mining commit IPC timeouts |
 | Latest field-tested candidate | Candidate 8f, tested September 4, 2026 |
-| Current repair candidate | `0.1.44-r31.alpha22.candidate8g` on `agent/alpha22-candidate8g-rs-recognition-repair` |
 | Candidate 8g repair implementation | `0632ca4341a57b77987123a6a11112ea8b99b76e` |
 | Candidate 8g remote workflow commit | `0e5b6a27091ef6c87ed9fc584d4f6510e3606b4e` |
-| Candidate 8g verification | **Automated verified locally** — exact Candidate 8f artifact transformed; syntax, frozen-contract, and end-to-end RS tests passed. **CI/package unverified** — the available GitHub connection cannot list push-triggered runs |
+| Candidate 8g in-game status | **Unverified** — no Candidate 8g field log has been supplied yet |
 | Frozen upstream target | `aecabc2c2ec25822e2e784832ee6d6cfa9892d30`, upstream version `0.1.46` |
 | Upstream delta | 68 commits after the earlier frozen `97e381fd` target |
-| Immediate next step | Verify the Candidate 8g Actions run and artifact, then field-test RS recognition |
+| Immediate next step | Field-test Candidate 8g RS recognition and preserve the runtime log |
 
 The branch `agent/archverse-continuity-handoff` contains continuity infrastructure only and starts
 from Candidate 8f. Candidate 8g branches from that continuity state but still rebuilds from the
@@ -84,7 +85,7 @@ Observed Candidate 8f behavior:
   ceilings.
 
 This is a catalog-integration regression, not a return of the old screen-capture failure. Candidate
-8f remains the packaged baseline but does not pass the Mining field gate.
+8f remains the latest field-tested build but does not pass the Mining field gate.
 
 ## What Candidate 8g repairs
 
@@ -108,8 +109,7 @@ values and checks the Candidate 8f vehicle/capture contract markers.
 
 ## Candidate 8g field-test gate
 
-Before Candidate 8g replaces Candidate 8f as the packaged field baseline, verify these cases in one
-saved runtime log:
+Before Candidate 8g becomes the field baseline, verify these cases in one saved runtime log:
 
 1. Start on foot. Confirm Mining does not accept or announce an RS value.
 2. Enter a ship. Confirm `/api/vehicle-presence` becomes active from the ship channel.
@@ -180,9 +180,9 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest verified packaged deliverable remains the quarantined Candidate 8f native tar/zip
-artifact. Candidate 8g is pushed, but its CI artifact has not yet been independently verified. The
-last documented Arch, Fedora, and Debian package set belongs to the older Alpha 21 line. Do not
+The latest verified packaged deliverable is the quarantined Candidate 8g native tar/zip artifact.
+It passed CI and independent artifact verification, but it has not passed its in-game field gate.
+The last documented Arch, Fedora, and Debian package set belongs to the older Alpha 21 line. Do not
 describe Candidate 8g as a completed three-distribution release until fresh packages pass their own
 checks and field tests.
 
