@@ -36,6 +36,10 @@ The complete testable contract is in `linux-port/PORTING_CONTRACT.md`.
 
 ## Development protocol
 
+- Gabe explicitly authorized Charlie/Codex on September 4, 2026 to push completed ArchVerse project
+  work to this repository's configured origin, including future ArchVerse branches and commits.
+  This standing push authorization does not waive candidate, field-test, release, or deployment
+  gates.
 - Port or repair one behavior group at a time.
 - Start each new candidate from the last verified artifact or commit and pin its provenance.
 - Add a regression test for every field failure.
