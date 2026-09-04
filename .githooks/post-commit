@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+set -u
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+if ! "$repo_root/tools/update-archverse-handoff.sh" >/dev/null; then
+  printf '%s\n' 'warning: ArchVerse handoff refresh failed after commit' >&2
+fi
+
+exit 0
