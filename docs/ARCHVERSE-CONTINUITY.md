@@ -30,10 +30,11 @@ Do not convert one label into another without new evidence.
 | Latest field-tested candidate | Candidate 8f, tested September 4, 2026 |
 | Current repair candidate | `0.1.44-r31.alpha22.candidate8g` on `agent/alpha22-candidate8g-rs-recognition-repair` |
 | Candidate 8g repair implementation | `0632ca4341a57b77987123a6a11112ea8b99b76e` |
-| Candidate 8g verification | **Automated verified locally** — exact Candidate 8f artifact transformed; syntax, frozen-contract, and end-to-end RS tests passed. **CI/package unverified** |
+| Candidate 8g remote workflow commit | `0e5b6a27091ef6c87ed9fc584d4f6510e3606b4e` |
+| Candidate 8g verification | **Automated verified locally** — exact Candidate 8f artifact transformed; syntax, frozen-contract, and end-to-end RS tests passed. **CI/package unverified** — the available GitHub connection cannot list push-triggered runs |
 | Frozen upstream target | `aecabc2c2ec25822e2e784832ee6d6cfa9892d30`, upstream version `0.1.46` |
 | Upstream delta | 68 commits after the earlier frozen `97e381fd` target |
-| Immediate next step | Push Candidate 8g, run CI, verify its artifact, then field-test RS recognition |
+| Immediate next step | Verify the Candidate 8g Actions run and artifact, then field-test RS recognition |
 
 The branch `agent/archverse-continuity-handoff` contains continuity infrastructure only and starts
 from Candidate 8f. Candidate 8g branches from that continuity state but still rebuilds from the
@@ -179,11 +180,11 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest packaged deliverable remains the quarantined Candidate 8f native tar/zip artifact.
-Candidate 8g has no CI artifact until its branch is authorized and pushed. The last documented
-Arch, Fedora, and Debian package set belongs to the older Alpha 21 line. Do not describe Candidate
-8g as a completed three-distribution release until fresh packages pass their own checks and field
-tests.
+The latest verified packaged deliverable remains the quarantined Candidate 8f native tar/zip
+artifact. Candidate 8g is pushed, but its CI artifact has not yet been independently verified. The
+last documented Arch, Fedora, and Debian package set belongs to the older Alpha 21 line. Do not
+describe Candidate 8g as a completed three-distribution release until fresh packages pass their own
+checks and field tests.
 
 ## Continuity maintenance
 
