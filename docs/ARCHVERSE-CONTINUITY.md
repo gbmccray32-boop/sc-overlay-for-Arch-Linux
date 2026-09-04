@@ -30,7 +30,9 @@ Do not convert one label into another without new evidence.
 | Artifact integrity | **Packaged verified** — downloaded artifact, outer digest, inner checksum, embedded version, syntax, protected markers, and packaged Candidate 8g self-test passed |
 | Candidate 8f in-game status | **Field tested, failed** — September 4 log proves an RS catalog regression and repeated Mining commit IPC timeouts |
 | Latest field-tested candidate | Candidate 8f, tested September 4, 2026 |
-| Candidate 8g repair implementation | `0632ca4341a57b77987123a6a11112ea8b99b76e` |
+| Candidate 8g repair payload (remote) | `53c0d0347e1eaf7931ae6713e940809294c070ff` |
+| Candidate 8g regression test (remote) | `7aa41c0a40631d95e3157dc1fd8922be56c67bcb` |
+| Original local repair checkpoint | `0632ca4341a57b77987123a6a11112ea8b99b76e`; its work was published as the equivalent remote payload, test, and workflow commits |
 | Candidate 8g remote workflow commit | `0e5b6a27091ef6c87ed9fc584d4f6510e3606b4e` |
 | Candidate 8g in-game status | **Unverified** — no Candidate 8g field log has been supplied yet |
 | Frozen upstream target | `aecabc2c2ec25822e2e784832ee6d6cfa9892d30`, upstream version `0.1.46` |
