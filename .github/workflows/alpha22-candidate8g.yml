@@ -1,0 +1,162 @@
+name: Alpha22 Candidate 8g RS Recognition Repair
+
+on:
+  push:
+    branches: [agent/alpha22-candidate8g-rs-recognition-repair]
+    paths-ignore:
+      - docs/ARCHVERSE-CONTINUITY.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: alpha22-candidate8g-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_VERSION: 0.1.44-r31.alpha22.candidate8g
+  BASE_VERSION: 0.1.44-r31.alpha22.candidate8f
+  VERIFIED_C8F_RUN_ID: '33826061607'
+  VERIFIED_C8F_ARTIFACT_ID: '9919999361'
+  VERIFIED_C8F_ARTIFACT: ArchVerse-0.1.44-Alpha22-Candidate8f
+  VERIFIED_C8F_ARTIFACT_DIGEST: sha256:74fab5fa0b3b71952d04da665d412999b1b2a9e23eca4ac4eed91bec4f3cf71b
+  VERIFIED_C8F_HEAD_SHA: 5d4f550e372abc6487cb694056ac78be548e117d
+  VERIFIED_C8F_TARBALL_SHA256: a41ca5460e937ac9707d27edbd8dd4b40f00fe26c640f3e786ab7b7db3b2c82c
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Validate Candidate 8g source tools
+        run: |
+          set -euo pipefail
+          node --check packaging/common/apply-alpha22-candidate8g.cjs
+          node --check packaging/common/candidate8g-rs-recognition-selftest.mjs
+
+      - name: Verify pinned Candidate 8f provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$VERIFIED_C8F_ARTIFACT_ID")"
+          test "$(jq -r .name <<<"$meta")" = "$VERIFIED_C8F_ARTIFACT"
+          test "$(jq -r .expired <<<"$meta")" = false
+          test "$(jq -r .digest <<<"$meta")" = "$VERIFIED_C8F_ARTIFACT_DIGEST"
+          test "$(jq -r .workflow_run.id <<<"$meta")" = "$VERIFIED_C8F_RUN_ID"
+          test "$(jq -r .workflow_run.head_sha <<<"$meta")" = "$VERIFIED_C8F_HEAD_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_C8F_RUN_ID" --jq .head_sha)" = "$VERIFIED_C8F_HEAD_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_C8F_RUN_ID" --jq .conclusion)" = success
+
+      - name: Download pinned Candidate 8f artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.VERIFIED_C8F_ARTIFACT }}
+          path: ${{ runner.temp }}/candidate8f-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.VERIFIED_C8F_RUN_ID }}
+
+      - name: Verify and extract exact Candidate 8f package
+        run: |
+          set -euo pipefail
+          TARBALL="$(find "$RUNNER_TEMP/candidate8f-artifact" -type f -name "ArchVerse-Native-$BASE_VERSION.tar.gz" -print -quit)"
+          test -n "$TARBALL"
+          test "$(sha256sum "$TARBALL" | awk '{print $1}')" = "$VERIFIED_C8F_TARBALL_SHA256"
+          mkdir -p "$RUNNER_TEMP/native"
+          tar -C "$RUNNER_TEMP/native" -xzf "$TARBALL"
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$BASE_VERSION"
+          test -d "$ROOT"
+          jq -e --arg v "$BASE_VERSION" '.version == $v' "$ROOT/app/package.json"
+
+      - name: Apply Candidate 8g RS recognition repair
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$BASE_VERSION"
+          node packaging/common/apply-alpha22-candidate8g.cjs "$ROOT"
+          mv "$ROOT" "$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+
+      - name: Assert frozen Linux and Candidate 8g contracts
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          find "$ROOT/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          node --check "$ROOT/app/server/server.mjs"
+
+          grep -q 'keyboard authority=evdev' "$ROOT/app/electron/main.cjs"
+          grep -q '__overlayClassifyPoint' "$ROOT/app/electron/main.cjs"
+          grep -q 'function updateFHoverHit()' "$ROOT/app/electron/main.cjs"
+          ! grep -q 'pointIsInsideOverlayRegion(' "$ROOT/app/electron/main.cjs"
+          ! grep -q 'overlay\.setFocusable(false)' "$ROOT/app/electron/main.cjs"
+
+          grep -q 'ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_CAPTURE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_PIPEWIRE_REPROBE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_PIPEWIRE_RECOVERY_STATE_V2' "$ROOT/app/electron/capture.cjs"
+          grep -q 'Gamescope PipeWire frame health recovered; promoted over' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_CAPTURE_COORDINATE_CANONICALIZATION' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_BACKGROUND_OCR_NONBLOCKING' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_COORDINATE_AUTHORITY' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_SCALE_GUARD' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_WINDOWS_OCR_HARD_DENY' "$ROOT/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LOCATION_SYNC_V3_CAPTURE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LOCATION_SYNC_DURABLE_HANDOFF' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LOCATION_SYNC_DURABLE_CONSUMER' "$ROOT/app/server/server.mjs"
+          grep -q 'pipewiresrc' "$ROOT/app/electron/capture.cjs"
+          grep -q 'method: "gamescope-pipewire"' "$ROOT/app/electron/capture.cjs"
+          ! grep -q 'Windows\.Media\.Ocr' "$ROOT/app/electron/location-sync-v3.cjs"
+          ! grep -REq 'taskset|sched_setaffinity|SCHED_FIFO|SCHED_RR' "$ROOT/app/electron" "$ROOT/bin"
+
+          grep -q 'ARCHVERSE_LINUX_GAMELOG_VEHICLE_MINING_CADENCE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_GAMELOG_VEHICLE_MINING_GATE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_GAMELOG_VEHICLE_NUMERIC_GATE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_VEHICLE_RS_AUTHORITY' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_GAMELOG_VEHICLE_PRESENCE' "$ROOT/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LINUX_GAMELOG_VEHICLE_PRESENCE_API' "$ROOT/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_VEHICLE_RS_AUTHORITY_SERVER' "$ROOT/app/server/server.mjs"
+          grep -q 'const MINING_VEHICLE_IDLE_MS = 1200;' "$ROOT/app/electron/capture.cjs"
+          grep -q '/api/vehicle-presence' "$ROOT/app/electron/capture.cjs"
+          grep -q 'method: "gamelog-vehicle+rs"' "$ROOT/app/electron/capture.cjs"
+          grep -q 'in-vehicle + current-RS authority required' "$ROOT/app/server/server.mjs"
+          grep -q 'ev.action === "grant"' "$ROOT/app/server/server.mjs"
+          grep -q 'ev.action === "release"' "$ROOT/app/server/server.mjs"
+          ! grep -q 'await archVerseScanMode(shot' "$ROOT/app/electron/capture.cjs"
+          ! grep -q 'method: "pipewire-radar+rs"' "$ROOT/app/electron/capture.cjs"
+          ! grep -q 'MINING_RADAR_LATCH_MS' "$ROOT/app/electron/capture.cjs"
+          ! grep -q 'MINING_NUMERIC_FALLBACK_MS' "$ROOT/app/electron/capture.cjs"
+
+          grep -q 'ARCHVERSE_LINUX_MINING_RS_CATALOG_V2' "$ROOT/app/electron/mining-signature-catalog.cjs"
+          grep -q 'const DEBRIS_BASE = 2000;' "$ROOT/app/electron/mining-signature-catalog.cjs"
+          grep -q 'const DEBRIS_MAX_N = 12;' "$ROOT/app/electron/mining-signature-catalog.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_INLINE_COMMIT' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_INLINE_COMMIT_SERVER' "$ROOT/app/server/server.mjs"
+          grep -q 'v <= MAX_VALID_SIGNATURE' "$ROOT/app/server/server.mjs"
+          ! grep -q 'radar+RS CONFIRMED' "$ROOT/app/server/server.mjs"
+          jq -e --arg v "$APP_VERSION" '.version == $v' "$ROOT/app/package.json"
+
+      - name: Exercise restored RS vocabulary and inline commit
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          node packaging/common/candidate8g-rs-recognition-selftest.mjs "$ROOT"
+
+      - name: Package Candidate 8g
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -C "$RUNNER_TEMP/native" -czf "dist/ArchVerse-Native-$APP_VERSION.tar.gz" "ArchVerse-Native-$APP_VERSION"
+          (cd dist && sha256sum "ArchVerse-Native-$APP_VERSION.tar.gz" > SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-0.1.44-Alpha22-Candidate8g
+          path: |
+            dist/ArchVerse-Native-${{ env.APP_VERSION }}.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
