@@ -62,27 +62,32 @@ The following are ArchVerse platform contracts:
 
 ## 3. Mining integration rule
 
-The newest upstream mining scanner is authoritative **behind** the ArchVerse structural Scan Mode
-gate.
+Mining authority is the conjunction of two independent facts:
 
-The gate must remain:
+1. The sidecar's Game.log watcher confirms that the player is aboard a ship or controls a ground
+   vehicle.
+2. OCR reads an exact member of the current Resource Signature catalog from the configured Mining
+   region.
 
-- structural/pixel based;
-- independent of ship type;
-- independent of HUD color;
-- independent of OCR text;
-- independent of Prospector-specific assumptions;
-- validated by the labeled Scan Mode on/off and false-positive fixture corpus.
+Radar pixels, HUD color, OCR wording such as “strong,” and Prospector-specific assumptions are not
+Mining authority. Structural Scan Mode detection and its labeled fixture corpus remain useful as
+diagnostics and wake-up evidence, but they may not arm or disarm Mining by themselves.
 
-When Scan Mode is structurally inactive, mining-only signature/analysis OCR must remain dormant.
-Other explicitly enabled features such as mission or fabricator OCR may still perform the work they
-need, but their results may not be allowed to masquerade as a mining signature while the gate is
-off.
+A timeout or other transport failure while reading vehicle presence is not evidence of a Game.log
+departure. The capture process must retain the last confirmed state with bounded retry. The sidecar
+must recheck its current Game.log state when it commits every OCR result, so on-foot reads remain
+fail-closed even when capture has a stale in-vehicle scheduling state. A successful inline response
+must return the current authority state so capture can reconcile a real departure immediately.
 
-Scan Mode diagnostics must remain bounded and persistent under the canonical Linux config directory.
-When mining diagnostics are explicitly enabled, the package must retain an exact match crop, a wider
-context crop and the structural metrics/rejection reason needed to diagnose a false positive or
-false negative.
+Mining-only signature OCR must remain dormant when the last confirmed vehicle state is inactive.
+Other explicitly enabled features such as mission or fabricator OCR may perform their own work, but
+their results may not masquerade as a Mining signature. Repeated auxiliary OCR failures must use
+bounded backoff so they cannot continually consume the shared OCR fallback budget during Mining.
+
+Mining diagnostics must remain bounded and persistent under the canonical Linux config directory.
+When diagnostics are explicitly enabled, the package must retain the exact OCR crop, wider context,
+authority state, accepted or rejected text, and timing needed to diagnose a false positive or false
+negative.
 
 ## 4. Config ownership
 
