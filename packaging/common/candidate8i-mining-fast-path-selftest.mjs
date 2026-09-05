@@ -154,6 +154,9 @@ globalThis.fetch = (input, init) => {
 
 const port = 25000 + (process.pid % 9000);
 const child = spawn(process.execPath, [path.join(root, "app/server/server.mjs")], {
+  // Match Electron's packaged launch contract. This also proves the test uses the artifact's
+  // app/server/data tables instead of accidentally borrowing data from the repository checkout.
+  cwd: path.join(root, "app/server"),
   env: {
     ...process.env,
     NODE_OPTIONS: `${process.env.NODE_OPTIONS || ""} --require=${networkGuard}`.trim(),
