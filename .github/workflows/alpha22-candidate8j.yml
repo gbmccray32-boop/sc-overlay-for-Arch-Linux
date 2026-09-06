@@ -1,0 +1,163 @@
+name: Alpha22 Candidate 8j Mining Transport Recovery
+
+on:
+  push:
+    branches: [agent/alpha22-candidate8j-mining-transport-recovery]
+    paths-ignore:
+      - docs/ARCHVERSE-CONTINUITY.md
+      - ARCHVERSE-HANDOFF.generated.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: alpha22-candidate8j-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_VERSION: 0.1.44-r31.alpha22.candidate8j
+  BASE_VERSION: 0.1.44-r31.alpha22.candidate8i
+  VERIFIED_C8I_RUN_ID: '33995752456'
+  VERIFIED_C8I_ARTIFACT_ID: '9978005577'
+  VERIFIED_C8I_ARTIFACT: ArchVerse-0.1.44-Alpha22-Candidate8i
+  VERIFIED_C8I_ARTIFACT_DIGEST: sha256:17726d343fd388e387a131640d2a9af883e66b2ddd51e643048ade59a1418dec
+  VERIFIED_C8I_HEAD_SHA: c1aed6a1e02b997d52c7fe69d3cbdd0b6b9c1aac
+  VERIFIED_C8I_TARBALL_SHA256: 0fe867952ecad62060eb39b835e13a086076598eba70a654566e021768d436ec
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Validate Candidate 8j source tools
+        run: |
+          set -euo pipefail
+          node --check packaging/common/apply-alpha22-candidate8j.cjs
+          node --check packaging/common/candidate8j-local-json-ipc.cjs
+          node --check packaging/common/candidate8j-mining-result-transport.cjs
+          node --check packaging/common/candidate8j-mining-vehicle-presence.cjs
+          node --check packaging/common/candidate8j-sidecar-watchdog.cjs
+          node --check packaging/common/candidate8j-mining-transport-selftest.mjs
+
+      - name: Verify pinned Candidate 8i provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$VERIFIED_C8I_ARTIFACT_ID")"
+          test "$(jq -r .name <<<"$meta")" = "$VERIFIED_C8I_ARTIFACT"
+          test "$(jq -r .expired <<<"$meta")" = false
+          test "$(jq -r .digest <<<"$meta")" = "$VERIFIED_C8I_ARTIFACT_DIGEST"
+          test "$(jq -r .workflow_run.id <<<"$meta")" = "$VERIFIED_C8I_RUN_ID"
+          test "$(jq -r .workflow_run.head_sha <<<"$meta")" = "$VERIFIED_C8I_HEAD_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_C8I_RUN_ID" --jq .head_sha)" = "$VERIFIED_C8I_HEAD_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_C8I_RUN_ID" --jq .conclusion)" = success
+
+      - name: Download pinned Candidate 8i artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.VERIFIED_C8I_ARTIFACT }}
+          path: ${{ runner.temp }}/candidate8i-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.VERIFIED_C8I_RUN_ID }}
+
+      - name: Verify and extract exact Candidate 8i package
+        run: |
+          set -euo pipefail
+          TARBALL="$(find "$RUNNER_TEMP/candidate8i-artifact" -type f -name "ArchVerse-Native-$BASE_VERSION.tar.gz" -print -quit)"
+          test -n "$TARBALL"
+          test "$(sha256sum "$TARBALL" | awk '{print $1}')" = "$VERIFIED_C8I_TARBALL_SHA256"
+          mkdir -p "$RUNNER_TEMP/native"
+          tar --no-same-owner -C "$RUNNER_TEMP/native" -xzf "$TARBALL"
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$BASE_VERSION"
+          test -d "$ROOT"
+          jq -e --arg v "$BASE_VERSION" '.version == $v' "$ROOT/app/package.json"
+
+      - name: Recheck Candidate 8i baseline behavior
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$BASE_VERSION"
+          node packaging/common/candidate8i-mining-fast-path-selftest.mjs "$ROOT"
+
+      - name: Apply Candidate 8j Mining transport recovery
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$BASE_VERSION"
+          node packaging/common/apply-alpha22-candidate8j.cjs "$ROOT"
+          mv "$ROOT" "$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+
+      - name: Assert frozen Linux and Candidate 8j contracts
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          find "$ROOT/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          node --check "$ROOT/app/server/server.mjs"
+
+          grep -q 'keyboard authority=evdev' "$ROOT/app/electron/main.cjs"
+          grep -q '__overlayClassifyPoint' "$ROOT/app/electron/main.cjs"
+          grep -q 'function updateFHoverHit()' "$ROOT/app/electron/main.cjs"
+          ! grep -q 'pointIsInsideOverlayRegion(' "$ROOT/app/electron/main.cjs"
+          ! grep -q 'overlay\.setFocusable(false)' "$ROOT/app/electron/main.cjs"
+
+          grep -q 'ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_CAPTURE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_PERSISTENT_STREAM' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_PERSISTENT_STREAM' "$ROOT/app/electron/persistent-gamescope-pipewire.cjs"
+          grep -q 'multifilesink' "$ROOT/app/electron/persistent-gamescope-pipewire.cjs"
+          grep -q 'leaky=downstream' "$ROOT/app/electron/persistent-gamescope-pipewire.cjs"
+          ! grep -q 'num-buffers=1' "$ROOT/app/electron/persistent-gamescope-pipewire.cjs"
+
+          grep -q 'ARCHVERSE_LINUX_MINING_OCR_PRIORITY_LANES' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_EXCLUSIVE_OCR' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_LATEST_FRAME_SCHEDULER' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_TESSERACT_BOUNDED_FALLBACK' "$ROOT/app/electron/native-linux-ocr.cjs"
+          grep -q 'timeoutMs: 900, restartOnFailure: true' "$ROOT/app/electron/capture.cjs"
+          grep -q 'tesseractTimeoutMs: 600' "$ROOT/app/electron/capture.cjs"
+
+          grep -q 'ARCHVERSE_LINUX_MINING_RESULT_TRANSPORT_V1' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_NONBLOCKING_COMMIT' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_LOCAL_ADMISSION' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_STABLE_CADENCE' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_ELECTRON_HEARTBEAT' "$ROOT/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_VEHICLE_PRESENCE_BOUNDED_GET' "$ROOT/app/electron/mining-vehicle-presence.cjs"
+          grep -q 'ARCHVERSE_LINUX_LOCAL_JSON_IPC_ISOLATION' "$ROOT/app/electron/local-json-ipc.cjs"
+          grep -q 'ARCHVERSE_LINUX_SIDECAR_HEALTH_WATCHDOG' "$ROOT/app/electron/sidecar-health-watchdog.cjs"
+          grep -q 'onSidecarTransportFailure:.*sidecarHealthWatchdog' "$ROOT/app/electron/main.cjs"
+          ! grep -Rq '/api/vehicle-presence/events' "$ROOT/app/electron" "$ROOT/app/server/server.mjs"
+          ! grep -q 'vehiclePresenceClients' "$ROOT/app/server/server.mjs"
+
+          grep -q 'ARCHVERSE_LINUX_MINING_CONTEXT_SAFE_RS_ADMISSION' "$ROOT/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_INLINE_COMMIT_SERVER' "$ROOT/app/server/server.mjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_RS_CATALOG_V2' "$ROOT/app/electron/mining-signature-catalog.cjs"
+          grep -q 'ARCHVERSE_LINUX_GAMELOG_VEHICLE_PRESENCE' "$ROOT/app/server/server.mjs"
+          ! grep -q 'Windows\.Media\.Ocr' "$ROOT/app/electron/location-sync-v3.cjs"
+          ! grep -REq 'taskset|sched_setaffinity|SCHED_FIFO|SCHED_RR' "$ROOT/app/electron" "$ROOT/bin"
+          jq -e --arg v "$APP_VERSION" '.version == $v' "$ROOT/app/package.json"
+
+      - name: Exercise Mining transport soak and recovery
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/native/ArchVerse-Native-$APP_VERSION"
+          node packaging/common/candidate8j-mining-transport-selftest.mjs "$ROOT"
+
+      - name: Package Candidate 8j
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar --owner=0 --group=0 -C "$RUNNER_TEMP/native" -czf "dist/ArchVerse-Native-$APP_VERSION.tar.gz" "ArchVerse-Native-$APP_VERSION"
+          (cd dist && sha256sum "ArchVerse-Native-$APP_VERSION.tar.gz" > SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-0.1.44-Alpha22-Candidate8j
+          path: |
+            dist/ArchVerse-Native-${{ env.APP_VERSION }}.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
