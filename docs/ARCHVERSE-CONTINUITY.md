@@ -12,34 +12,34 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
-## Current state — September 5, 2026
+## Current state — September 6, 2026
 
 | Item | Current value |
 | --- | --- |
 | Repository | `https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux` |
-| Current packaged candidate | `0.1.44-r31.alpha22.candidate8i` |
-| Candidate branch | `agent/alpha22-candidate8i-mining-fast-path` |
-| Packaged source commit (remote) | `c1aed6a1e02b997d52c7fe69d3cbdd0b6b9c1aac` |
-| Equivalent local checkpoint | `c1aed6a1e02b997d52c7fe69d3cbdd0b6b9c1aac` |
-| Remote/local tree | `43c2b84572e0efebd3d516daa34b9d08f0b304f4` — exact match, including executable modes |
-| CI workflow | `Alpha22 Candidate 8i Mining Fast Path` |
-| CI result | **Automated verified** — run `33995752456` succeeded in 52 seconds |
-| Artifact ID | `9978005577` |
-| GitHub artifact | `ArchVerse-0.1.44-Alpha22-Candidate8i` |
-| Artifact ZIP SHA-256 | `17726d343fd388e387a131640d2a9af883e66b2ddd51e643048ade59a1418dec` |
-| Native archive | `ArchVerse-Native-0.1.44-r31.alpha22.candidate8i.tar.gz` |
-| Native archive SHA-256 | `0fe867952ecad62060eb39b835e13a086076598eba70a654566e021768d436ec` |
-| Artifact integrity | **Packaged verified** — downloaded artifact, GitHub digest, inner checksum, embedded version, syntax, frozen Linux markers, packaged data lookup, and Candidate 8i real-sidecar self-test passed |
-| Candidate 8h in-game status | **Field tested, failed** — September 5 log proves per-frame PipeWire process startup, competing OCR workers, long fallbacks, and interval scheduling stretch the intended 1,200 ms Mining lane to a 6.188-second median |
-| Latest field-tested candidate | Candidate 8h, tested September 5, 2026 |
-| Candidate 8i in-game status | **Unverified** — automated and packaged verification passed; no Candidate 8i field log has been supplied yet |
+| Current packaged candidate | `0.1.44-r31.alpha22.candidate8j` |
+| Candidate branch | `agent/alpha22-candidate8j-mining-transport-recovery` |
+| Packaged source commit (remote) | `dba4dc53d475a2dfb48c2a2419a9a19af3ddb4ec` |
+| Equivalent local checkpoint | `d67340318473a09e9b6971ce8405cce7801a36ba` |
+| Remote/local tree | `6e6fcf711a0fa9cda53e67449971db9255dacf62` — exact match, including executable modes |
+| CI workflow | `Alpha22 Candidate 8j Mining Transport Recovery` |
+| CI result | **Automated verified** — run `34043229294` succeeded |
+| Artifact ID | `9992327348` |
+| GitHub artifact | `ArchVerse-0.1.44-Alpha22-Candidate8j` |
+| Artifact ZIP SHA-256 | `d29bad0980aa3feb5cfb6d5b9fd7dba1f9bbaf56c0c2adbd4b3802702b5c8a45` |
+| Native archive | `ArchVerse-Native-0.1.44-r31.alpha22.candidate8j.tar.gz` |
+| Native archive SHA-256 | `7bd0ce3ec826a80ae3b5a7117bbadf24bf7d34e7b716deb5429d053598413028` |
+| Artifact integrity | **Packaged verified** — downloaded artifact, GitHub digest, inner checksum, embedded version, syntax, frozen Linux markers, Candidate 8i baseline test, Candidate 8j recovery test, and 120-request real-sidecar soak passed |
+| Candidate 8i in-game status | **Field tested, failed** — September 6 log contains 331 Mining localhost timeouts and about 82.6 minutes of failure windows in a 148.2-minute run; OCR and direct PipeWire remain fast when the route is healthy |
+| Latest field-tested candidate | Candidate 8i, tested September 6, 2026 |
+| Candidate 8j in-game status | **Unverified** — automated and packaged verification passed; no Candidate 8j field log has been supplied yet |
 | Frozen upstream target | `aecabc2c2ec25822e2e784832ee6d6cfa9892d30`, upstream version `0.1.46` |
 | Upstream delta | 68 commits after the earlier frozen `97e381fd` target |
-| Immediate next step | Field-test Candidate 8i without using `F` or the scan-area overlay as a wake-up action, then preserve the full runtime log |
+| Immediate next step | Field-test Candidate 8j without using `F` or the scan-area overlay as a wake-up action, run long enough to cross the prior five-minute failure boundary, then preserve the full runtime log |
 
 The branch `agent/archverse-continuity-handoff` contains continuity infrastructure only and starts
-from Candidate 8f. Candidate 8i branches from the later continuity state but rebuilds from the exact
-checksum-verified Candidate 8h artifact produced by run `33945862290`.
+from Candidate 8f. Candidate 8j branches from the later continuity state but rebuilds from the exact
+checksum-verified Candidate 8i artifact produced by run `33995752456`.
 
 ## What Candidate 8f changes
 
@@ -65,35 +65,36 @@ grant, vehicle release, theme separation, and current Mining signature catalog c
 
 ## Latest field evidence
 
-The latest uploaded runtime evidence is `archverse-candidate8h-electron.log`, created September 5,
-2026. It is a 91-minute Candidate 8h field run containing 2,051 log lines.
+The latest uploaded runtime evidence is `archverse-candidate8i-electron.log`, created September 6,
+2026. It is a 148.2-minute Candidate 8i field run.
 
-Observed Candidate 8h behavior:
+Observed Candidate 8i behavior:
 
-- Direct Gamescope PipeWire bound to node `174` for the exact Gamescope/Star Citizen session and
-  remained the Mining source. The regression is above source discovery and focus gating.
-- The log contains 641 Mining OCR events. Successful OCR itself is fast: its median is about 218 ms.
-  The effective interval between Mining observations is not fast: median 6.188 seconds, 90th
-  percentile 18.034 seconds, with 117 intervals longer than 16 seconds.
-- Candidate 8h still starts a new `gst-launch-1.0` PipeWire pipeline and encodes a display PNG for
-  each scanner tick. It also owns six independent RapidOCR workers plus the general OCR client.
-- There are 173 bounded OCR timeout/fallback failures and 180 vehicle-presence IPC timeouts. At
-  least 29.2% of the measured run is consumed by roughly nine-second failure paths.
-- Held `F` is correlated with looking around the HUD, not with scanner authority. Of completed
-  Mining observations, 91.5% occur more than three seconds after the last `F` transition; accepted
-  reads occur between 4.7 and 84.5 seconds after one. Showing the scan area changes or confirms the
-  crop, but it is not a valid liveness trigger.
-- The catalog correctly rejects a structurally clear `26000`, but it does so 16 times without
-  preserving a useful unclassified observation. A `20000` can also be admitted from a
-  `SHIP IN DISTRESS`/wreckage HUD context because the prior parser validates the number without
-  validating the surrounding line semantics.
-- Candidate 8h therefore regressed the developer's useful execution property: one warm reader
-  handles Mining work without repeatedly rebuilding capture and OCR state. The Linux port retained
-  the correct direct PipeWire source but put expensive setup, background OCR, polling IPC, and
-  interval delay in front of each Mining read.
+- Direct Gamescope PipeWire remains the capture source. Broad-crop OCR normally completes in about
+  247–258 ms, and locked-crop OCR normally completes in about 36–67 ms.
+- The repaired catalog and parser commit real `2000`, `3400`, `3900`, `7200`, `10000`, and `14000`
+  values. The persistent PipeWire producer and dedicated Mining OCR worker are effective.
+- The log contains 331 Mining localhost timeout lines and 20 failure runs. The interval from each
+  first failure to recovery totals about 82.6 minutes, or 55.7% of the 148.2-minute session.
+- Candidate 8i introduced a persistent vehicle-presence SSE connection on the same global localhost
+  fetch stack used by Mining commit traffic. The stream ends at roughly five-minute intervals;
+  stream reconnect failures and Mining POST failures correlate in the field log.
+- The exact low-level failure inside the shared local transport was not proven without a matching
+  sidecar log, but the Candidate 8i regression is isolated above PipeWire and OCR. The Candidate 8i
+  automated test mocked the SSE instead of running it concurrently with sustained real-sidecar
+  POST traffic, so the test could not reproduce this failure class.
+- Focus is not the authority or the root cause. Mining recovered at `04:07:00Z` while ArchVerse
+  still owned focus; Star Citizen regained focus at `04:07:13Z`. Another outage continued until
+  `05:06:20Z` even though Star Citizen regained focus at `04:54:48Z`.
+- Pressing `F`, showing the scan area, or Alt-Tabbing can coincide with a recovery or crop refresh,
+  but none is a valid Mining wake-up action. Game.log vehicle presence plus an exact current RS
+  value remain the only Mining authority.
+- Candidate 8i's message that a “bounded OCR attempt failed” combines OCR, local parsing, and the
+  awaited sidecar request. In the failing windows OCR usually completed before the 8-second
+  `/api/screen-read` timeout, so the message attributed a transport failure to OCR.
 
-Candidate 8h does not pass the Mining field gate. The evidence rules out `F` as the cause and makes
-capture/OCR scheduling plus context admission the Candidate 8i repair boundary.
+Candidate 8i does not pass the Mining field gate. Candidate 8j preserves its fast PipeWire/OCR work
+and removes the shared-SSE and awaited-sidecar failure paths.
 
 ## What Candidate 8g repairs
 
@@ -179,17 +180,47 @@ proving it loads its own Mining data. It verifies latest-frame selection, timeou
 replacement, pushed vehicle transitions, on-foot refusal, in-vehicle `2000` acceptance, safe
 preservation of `26000` and `5959`, and rejection of the exact false contexts from the field log.
 
-## Candidate 8i field-test gate
+## What Candidate 8j repairs
 
-Before Candidate 8i becomes the field baseline, verify these cases in one saved runtime log:
+Candidate 8j starts from the exact Candidate 8i artifact from run `33995752456`, artifact
+`9978005577`, outer digest
+`17726d343fd388e387a131640d2a9af883e66b2ddd51e643048ade59a1418dec`, and native archive
+checksum `0fe867952ecad62060eb39b835e13a086076598eba70a654566e021768d436ec`.
+
+It keeps Candidate 8i's fast capture and OCR path, then removes the field-proven transport hazard:
+
+- Vehicle presence returns to bounded cached GET requests over independent loopback HTTP
+  transactions. Candidate 8j removes the experimental vehicle-presence SSE client and endpoint.
+- Mining classifies the OCR lines locally with the same exact catalog and false-context rules used
+  by the sidecar. A valid read locks the crop and selects the 900 ms cadence immediately.
+- The authoritative `/api/screen-read` commit is asynchronous. One request may run and one newest
+  result may wait; a 650 ms failure retains the latest read with bounded retry instead of blocking
+  the capture/OCR tick for eight seconds.
+- The sidecar still repeats parsing and rechecks its current Game.log vehicle authority before
+  every state change. A stale in-vehicle capture state cannot authorize an on-foot commit.
+- Mining uses exact Linux rates: 1,200 ms for in-vehicle acquisition and 900 ms after a valid
+  signature. Small timing changes no longer cause 909/913/941 ms scheduler flapping.
+- OCR failures and commit-transport failures have separate log prefixes. A compact 15-second
+  Mining heartbeat is written directly to `electron.log`, so it remains visible when the sidecar
+  cannot receive diagnostics.
+- Repeated Mining transport failures trigger a separate short `/api/instance` health probe. Only
+  three consecutive failures of that independent probe may restart the owned sidecar child.
+- The regression test uses the real packaged sidecar for 120 Mining commits interleaved with 120
+  vehicle-presence reads under the 650 ms deadline. It also forces a hung commit route, proves that
+  `submit()` remains immediate, preserves the newest result, verifies recovery, and exercises the
+  watchdog threshold.
+
+## Candidate 8j field-test gate
+
+Before Candidate 8j becomes the field baseline, verify these cases in one saved runtime log:
 
 1. Start on foot. Confirm Mining does not accept or announce an RS value.
 2. Enter a ship. Confirm `/api/vehicle-presence` becomes active from the ship channel.
 3. Without pressing `F` and without opening “show scan area,” scan a `2000` debris/harvest signature.
-   Confirm it is accepted promptly and the poll remains near `1200ms` while no signature is visible.
+   Confirm acquisition runs at exactly `1200ms` and changes to exactly `900ms` after the read.
 4. Scan several ore signatures, including one above `30000` if available. Confirm the log reports
-   `commit=integrated:used`, does not emit a matching false `vehicle=0`, and does not require the
-   compatibility `/api/mining/scan` request.
+   `commit=queued`, then a matching `[mining-commit]` acknowledgment with `result=used`. Confirm it
+   does not use the compatibility `/api/mining/scan` request.
 5. Leave the ship. Confirm vehicle presence clears and Mining refuses new values.
 6. Enter and exit a ground vehicle. Confirm control grant activates presence and release clears it.
 7. Hold `F` over widgets, type or click, leave the widget, and release `F`. Confirm focus and
@@ -200,8 +231,11 @@ Before Candidate 8i becomes the field baseline, verify these cases in one saved 
 10. Visit a location that exposes decimal navigation coordinates. Confirm the coordinates are not
     accepted or announced as an RS value.
 11. Confirm location sync remains responsive during the Mining test.
-12. Run long enough to capture several heartbeat batches. Confirm frame age stays bounded and worker
-    restart counts rise only when a deadline actually discards a stale worker.
+12. Run longer than the prior five-minute SSE failure interval. Confirm `[mining-heartbeat]` remains
+    present in `electron.log`, the 900/1200 cadence stays stable, and no repeated `[mining-ipc]`
+    timeout run appears.
+13. If the sidecar becomes unresponsive, confirm three failed independent health probes precede one
+    owned-sidecar restart and the newest Mining result is acknowledged after recovery.
 
 If a case fails, preserve the log and create one candidate that addresses only that failure group.
 
@@ -215,7 +249,7 @@ Gabe selected the latest reviewed upstream commit as the target. The frozen targ
 - Upstream package version: `0.1.46`
 - Subject: `Merge orisonfix: ignore event contributions earned before the event's live run`
 
-Candidate 8i is still based on the `0.1.44` integration line. After Candidate 8i passes its field
+Candidate 8j is still based on the `0.1.44` integration line. After Candidate 8j passes its field
 gate, compare the 68 remaining upstream commits by behavior group. Port one group at a time and keep
 the target frozen until every group is reconciled and tested.
 
@@ -249,7 +283,7 @@ See `linux-port/PORTING_CONTRACT.md` for the complete validation matrix.
 
 These files remain useful as history, but they are not current status authorities:
 
-- Root `README.md`: describes upstream Windows usage and does not identify Candidate 8i.
+- Root `README.md`: describes upstream Windows usage and does not identify Candidate 8j.
 - Packaged Candidate 8f `README.md`: inherited Alpha 21 text.
 - `linux-port/ALPHA-STATUS.md`: records the Alpha 17 checkpoint.
 - `docs/R31-INPUT-DESIGN.md`: records an older Right Alt design that was superseded by the tested
@@ -258,10 +292,10 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest verified packaged deliverable is the quarantined Candidate 8i native tar/zip artifact.
+The latest verified packaged deliverable is the quarantined Candidate 8j native tar/zip artifact.
 It passed CI and independent artifact verification, but it has not passed its in-game field gate.
 The last documented Arch, Fedora, and Debian package set belongs to the older Alpha 21 line. Do not
-describe Candidate 8i as a completed three-distribution release until fresh packages pass their own
+describe Candidate 8j as a completed three-distribution release until fresh packages pass their own
 checks and field tests.
 
 ## Continuity maintenance

@@ -79,6 +79,14 @@ must recheck its current Game.log state when it commits every OCR result, so on-
 fail-closed even when capture has a stale in-vehicle scheduling state. A successful inline response
 must return the current authority state so capture can reconcile a real departure immediately.
 
+The Mining capture/OCR tick may not wait on the sidecar commit route. It must classify an exact
+catalog result locally, queue one in-flight plus one newest pending authoritative commit, and retain
+the newest result through a bounded transport failure. The sidecar repeats the admission checks and
+remains the only process that changes Mining state. Mining loopback requests must use short,
+independent transactions rather than sharing a dispatcher with a long-lived event stream. A sidecar
+restart requires repeated failures from a separate instance-health probe; a single route timeout is
+not restart authority.
+
 Mining-only signature OCR must remain dormant when the last confirmed vehicle state is inactive.
 Other explicitly enabled features such as mission or fabricator OCR may perform their own work, but
 their results may not masquerade as a Mining signature. Repeated auxiliary OCR failures must use
@@ -193,6 +201,15 @@ Re-run the still-applicable proven Alpha 17 tests against the new candidate, inc
   immediately and successfully continues to the next backend rather than disabling OCR;
 - a real default/non-Gamescope Star Citizen launch is part of the pre-release field-test matrix in
   addition to the Gamescope launch used for low-latency Mining Scanner validation.
+- Mining local admission and sidecar admission return the same result for current-catalog values,
+  unclassified structural contacts, coordinate text, identifiers, cargo text, and distress/wreckage
+  context.
+- A hung Mining commit route does not block the capture/OCR tick, retains only the newest pending
+  result, and delivers that result after recovery.
+- Sustained real-sidecar Mining commits and vehicle-presence reads complete within the Mining route
+  deadline without a long-lived vehicle-presence SSE connection.
+- The owned sidecar is restarted only after the configured number of independent instance-health
+  probe failures.
 
 The four labeled Alpha 17 Scan Mode fixtures are part of the permanent detector regression corpus.
 
