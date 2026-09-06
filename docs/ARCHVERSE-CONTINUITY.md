@@ -19,16 +19,16 @@ Do not convert one label into another without new evidence.
 | Repository | `https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux` |
 | Current packaged candidate | `0.1.44-r31.alpha22.candidate8j` |
 | Candidate branch | `agent/alpha22-candidate8j-mining-transport-recovery` |
-| Packaged source commit (remote) | `dba4dc53d475a2dfb48c2a2419a9a19af3ddb4ec` |
-| Equivalent local checkpoint | `d67340318473a09e9b6971ce8405cce7801a36ba` |
-| Remote/local tree | `6e6fcf711a0fa9cda53e67449971db9255dacf62` — exact match, including executable modes |
+| Packaged source commit (remote) | `7753b9d1ecaf112d8a17162a5bf1dd48914f35b9` |
+| Equivalent local checkpoint | `2bfc921b054f1acc6a2e3e5c53594dcc2d24f0b6` |
+| Remote/local tree | `3810c42044ff5d6c7847b4c4ea7e44d52125e484` — exact match, including executable modes |
 | CI workflow | `Alpha22 Candidate 8j Mining Transport Recovery` |
-| CI result | **Automated verified** — run `34043229294` succeeded |
-| Artifact ID | `9992327348` |
+| CI result | **Automated verified** — final branch-head run `34043540649` succeeded |
+| Artifact ID | `9992407560` |
 | GitHub artifact | `ArchVerse-0.1.44-Alpha22-Candidate8j` |
-| Artifact ZIP SHA-256 | `d29bad0980aa3feb5cfb6d5b9fd7dba1f9bbaf56c0c2adbd4b3802702b5c8a45` |
+| Artifact ZIP SHA-256 | `80c072a7d182a45d3284f48f19f419cc29baaaecc7188daaffd91d5ddaf1dc68` |
 | Native archive | `ArchVerse-Native-0.1.44-r31.alpha22.candidate8j.tar.gz` |
-| Native archive SHA-256 | `7bd0ce3ec826a80ae3b5a7117bbadf24bf7d34e7b716deb5429d053598413028` |
+| Native archive SHA-256 | `f1a0b144e176aa2e3ec641e42370d650f58d1a6b321cd6364c7c04ff1c4066b6` |
 | Artifact integrity | **Packaged verified** — downloaded artifact, GitHub digest, inner checksum, embedded version, syntax, frozen Linux markers, Candidate 8i baseline test, Candidate 8j recovery test, and 120-request real-sidecar soak passed |
 | Candidate 8i in-game status | **Field tested, failed** — September 6 log contains 331 Mining localhost timeouts and about 82.6 minutes of failure windows in a 148.2-minute run; OCR and direct PipeWire remain fast when the route is healthy |
 | Latest field-tested candidate | Candidate 8i, tested September 6, 2026 |
