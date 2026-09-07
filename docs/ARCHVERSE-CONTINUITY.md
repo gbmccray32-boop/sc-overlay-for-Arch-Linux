@@ -19,16 +19,16 @@ Do not convert one label into another without new evidence.
 | Repository | `https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux` |
 | Current packaged candidate | `0.1.44-r31.alpha22.candidate8k` |
 | Candidate branch | `agent/alpha22-candidate8k-sidecar-supervision-repair` |
-| Packaged source commit (remote) | `53f2cbd22840555892791188f71d5b5c9c282c56` |
-| Equivalent local checkpoint | `bbf668c` |
-| Remote/local tree | `9cd67e1ba059c4093a55c712409fe45e84d9c32a` — exact match, including executable modes |
+| Packaged source commit (remote) | `233c5a47c0b6b1c23fbc2a9951f1675f3cfc8bd8` |
+| Equivalent local checkpoint | `3e24e41228a9619310642a16b4f84e1997a31c5e` |
+| Remote/local tree | `838e0157d99f466ac909949491441765fe7eef1a` — exact match, including executable modes |
 | CI workflow | `Alpha22 Candidate 8k Sidecar Supervision Repair` |
-| CI result | **Automated verified** — run `34137487104` succeeded |
-| Artifact ID | `10024570336` |
+| CI result | **Automated verified** — final branch-head run `34138147146` succeeded |
+| Artifact ID | `10024814784` |
 | GitHub artifact | `ArchVerse-0.1.44-Alpha22-Candidate8k` |
-| Artifact ZIP SHA-256 | `38e6b8d407c79cd4247dab2f885d6a783af43cfa1e13853075748fa9cfa29f05` |
+| Artifact ZIP SHA-256 | `f19954bb2b6678c7195d7a50dd5cddcde4c6c2996f0baba482fc34dbce9277f5` |
 | Native archive | `ArchVerse-Native-0.1.44-r31.alpha22.candidate8k.tar.gz` |
-| Native archive SHA-256 | `e64ed56a9597c93ab2ac3af5edb713f0dc69554e48b5ef8ee3c3b4a51dfd8caa` |
+| Native archive SHA-256 | `56f57fa9ce688f0488b461882741d3c4bac5ac7beaba4034706ea67488302f17` |
 | Artifact integrity | **Packaged verified** — downloaded artifact, GitHub digest, ZIP integrity, inner checksum, embedded version, syntax, Candidate 8j baseline/soak tests, and Candidate 8k supervision tests passed |
 | Candidate 8i in-game status | **Field tested, failed** — September 6 log contains 331 Mining localhost timeouts and about 82.6 minutes of failure windows in a 148.2-minute run; OCR and direct PipeWire remain fast when the route is healthy |
 | Latest field-tested candidate | Candidate 8j, tested September 7, 2026 |
