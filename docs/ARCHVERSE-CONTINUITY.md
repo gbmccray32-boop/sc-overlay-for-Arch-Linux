@@ -12,34 +12,35 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
-## Current state — September 6, 2026
+## Current state — September 7, 2026
 
 | Item | Current value |
 | --- | --- |
 | Repository | `https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux` |
-| Current packaged candidate | `0.1.44-r31.alpha22.candidate8j` |
-| Candidate branch | `agent/alpha22-candidate8j-mining-transport-recovery` |
-| Packaged source commit (remote) | `7753b9d1ecaf112d8a17162a5bf1dd48914f35b9` |
-| Equivalent local checkpoint | `2bfc921b054f1acc6a2e3e5c53594dcc2d24f0b6` |
-| Remote/local tree | `3810c42044ff5d6c7847b4c4ea7e44d52125e484` — exact match, including executable modes |
-| CI workflow | `Alpha22 Candidate 8j Mining Transport Recovery` |
-| CI result | **Automated verified** — final branch-head run `34043540649` succeeded |
-| Artifact ID | `9992407560` |
-| GitHub artifact | `ArchVerse-0.1.44-Alpha22-Candidate8j` |
-| Artifact ZIP SHA-256 | `80c072a7d182a45d3284f48f19f419cc29baaaecc7188daaffd91d5ddaf1dc68` |
-| Native archive | `ArchVerse-Native-0.1.44-r31.alpha22.candidate8j.tar.gz` |
-| Native archive SHA-256 | `f1a0b144e176aa2e3ec641e42370d650f58d1a6b321cd6364c7c04ff1c4066b6` |
-| Artifact integrity | **Packaged verified** — downloaded artifact, GitHub digest, inner checksum, embedded version, syntax, frozen Linux markers, Candidate 8i baseline test, Candidate 8j recovery test, and 120-request real-sidecar soak passed |
+| Current packaged candidate | `0.1.44-r31.alpha22.candidate8k` |
+| Candidate branch | `agent/alpha22-candidate8k-sidecar-supervision-repair` |
+| Packaged source commit (remote) | `53f2cbd22840555892791188f71d5b5c9c282c56` |
+| Equivalent local checkpoint | `bbf668c` |
+| Remote/local tree | `9cd67e1ba059c4093a55c712409fe45e84d9c32a` — exact match, including executable modes |
+| CI workflow | `Alpha22 Candidate 8k Sidecar Supervision Repair` |
+| CI result | **Automated verified** — run `34137487104` succeeded |
+| Artifact ID | `10024570336` |
+| GitHub artifact | `ArchVerse-0.1.44-Alpha22-Candidate8k` |
+| Artifact ZIP SHA-256 | `38e6b8d407c79cd4247dab2f885d6a783af43cfa1e13853075748fa9cfa29f05` |
+| Native archive | `ArchVerse-Native-0.1.44-r31.alpha22.candidate8k.tar.gz` |
+| Native archive SHA-256 | `e64ed56a9597c93ab2ac3af5edb713f0dc69554e48b5ef8ee3c3b4a51dfd8caa` |
+| Artifact integrity | **Packaged verified** — downloaded artifact, GitHub digest, ZIP integrity, inner checksum, embedded version, syntax, Candidate 8j baseline/soak tests, and Candidate 8k supervision tests passed |
 | Candidate 8i in-game status | **Field tested, failed** — September 6 log contains 331 Mining localhost timeouts and about 82.6 minutes of failure windows in a 148.2-minute run; OCR and direct PipeWire remain fast when the route is healthy |
-| Latest field-tested candidate | Candidate 8i, tested September 6, 2026 |
-| Candidate 8j in-game status | **Unverified** — automated and packaged verification passed; no Candidate 8j field log has been supplied yet |
+| Latest field-tested candidate | Candidate 8j, tested September 7, 2026 |
+| Candidate 8j in-game status | **Mining field verified; candidate failed overall** — Mining recognized and committed several signatures at the intended 1200/900 ms rates, but the watchdog caused two unnecessary sidecar restarts and eventually exhausted the ordinary crash budget |
+| Candidate 8k in-game status | **Unverified** — automated and packaged verification passed; no Candidate 8k field log has been supplied yet |
 | Frozen upstream target | `aecabc2c2ec25822e2e784832ee6d6cfa9892d30`, upstream version `0.1.46` |
 | Upstream delta | 68 commits after the earlier frozen `97e381fd` target |
-| Immediate next step | Field-test Candidate 8j without using `F` or the scan-area overlay as a wake-up action, run long enough to cross the prior five-minute failure boundary, then preserve the full runtime log |
+| Immediate next step | Long-session field-test Candidate 8k. Confirm Candidate 8j Mining behavior is unchanged and the sidecar no longer restarts from stale health strikes; preserve both `electron.log` and `sidecar.log` |
 
 The branch `agent/archverse-continuity-handoff` contains continuity infrastructure only and starts
-from Candidate 8f. Candidate 8j branches from the later continuity state but rebuilds from the exact
-checksum-verified Candidate 8i artifact produced by run `33995752456`.
+from Candidate 8f. Candidate 8k branches from Candidate 8j and rebuilds from its exact
+checksum-verified artifact produced by run `34043540649`.
 
 ## What Candidate 8f changes
 
@@ -210,9 +211,52 @@ It keeps Candidate 8i's fast capture and OCR path, then removes the field-proven
   `submit()` remains immediate, preserves the newest result, verifies recovery, and exercises the
   watchdog threshold.
 
-## Candidate 8j field-test gate
+## Candidate 8j field result
 
-Before Candidate 8j becomes the field baseline, verify these cases in one saved runtime log:
+Candidate 8j's September 7 field evidence proved that the Mining repair works: it recognized and
+committed `3200`, `100000`, `14400`, `36000`, and `87000` signatures at the intended acquisition
+and locked rates. The full Electron and sidecar logs also isolated a separate supervision defect.
+Successful Mining requests did not clear accumulated watchdog strikes, the restart cooldown did not
+expire the old failure episode, and deliberate watchdog `SIGTERM` exits consumed the same five-exit
+budget as spontaneous crashes. After five controlled recoveries, Electron stopped respawning the
+sidecar. The sidecar log contains no spontaneous exception that explains those exits.
+
+## What Candidate 8k repairs
+
+Candidate 8k starts from the exact Candidate 8j artifact and changes only sidecar supervision:
+
+- Every successful Mining transport call clears the active watchdog failure episode.
+- Failure strikes expire after a 10-second healthy gap and cannot accumulate across hours of play.
+- A controlled restart requires at least three independent health-probe failures spanning at least
+  10 seconds of continuous failure.
+- A new child receives 15 seconds of startup/readiness grace, and controlled restarts have a
+  60-second cooldown to prevent a recovery loop.
+- A watchdog-requested termination is tracked separately and does not consume the five-exit
+  spontaneous-crash budget.
+- The ordinary crash budget resets after the sidecar remains stable for 60 seconds.
+- Candidate 8j's Mining capture, OCR, catalog, scheduler, commit transport, Game.log authority, and
+  direct Gamescope PipeWire implementation are hash-locked unchanged.
+
+The Candidate 8k self-test proves that stale strikes expire, successes reset the failure episode,
+startup grace holds, a continuous outage causes one controlled restart, cooldown prevents another,
+and watchdog recovery does not consume the crash budget.
+
+## Candidate 8k field-test gate
+
+1. Play normally for a long session and confirm Mining keeps Candidate 8j's exact 1200 ms
+   acquisition and 900 ms locked cadence.
+2. Confirm RS values continue to recognize and commit without pressing `F`, showing the scan area,
+   or Alt-Tabbing as a wake-up action.
+3. Confirm successful Mining traffic prevents old watchdog strikes from causing a later restart.
+4. Confirm ordinary transient route failures do not restart the sidecar.
+5. If a genuine continuous sidecar outage occurs, confirm it produces one controlled recovery only,
+   followed by startup grace and cooldown rather than a restart loop.
+6. Confirm controlled watchdog recovery does not raise the ordinary sidecar crash count.
+7. Preserve the complete `electron.log` and `sidecar.log`, including normal startup and shutdown.
+
+Candidate 8k remains field-unverified until this gate is completed.
+
+The planned Candidate 8j field gate was:
 
 1. Start on foot. Confirm Mining does not accept or announce an RS value.
 2. Enter a ship. Confirm `/api/vehicle-presence` becomes active from the ship channel.

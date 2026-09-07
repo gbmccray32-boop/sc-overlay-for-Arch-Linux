@@ -87,6 +87,13 @@ independent transactions rather than sharing a dispatcher with a long-lived even
 restart requires repeated failures from a separate instance-health probe; a single route timeout is
 not restart authority.
 
+Sidecar health strikes form one bounded failure episode. Any successful Mining transport clears
+that episode, and old strikes must expire rather than accumulate across healthy play. Give a newly
+spawned child a readiness grace interval and require a continuous independent-probe outage before a
+controlled restart. Track watchdog-requested termination separately from spontaneous child exits:
+a controlled recovery must not consume the ordinary crash budget. Reset the ordinary crash budget
+after a stable child interval, and apply restart cooldown so supervision cannot create a kill loop.
+
 Mining-only signature OCR must remain dormant when the last confirmed vehicle state is inactive.
 Other explicitly enabled features such as mission or fabricator OCR may perform their own work, but
 their results may not masquerade as a Mining signature. Repeated auxiliary OCR failures must use
