@@ -61,3 +61,14 @@ mandatory.
 
 Alpha 23 artifacts remain internal candidates until automated and packaged checks pass. Gabe's
 in-game field test remains required before any Alpha 23 candidate becomes a release baseline.
+
+## Phase 1 implementation
+
+The first source merge imports upstream `0.1.46` backend logic, datasets, fixtures, and test tools.
+It deliberately keeps the Candidate 8k Electron and renderer trees unchanged. This prevents new
+canvas code from calling IPC methods that the Linux shell does not yet expose.
+
+Phase 1 is a source integration checkpoint, not a field-test candidate. The packaged Candidate 8k
+sidecar still contains later Mining repairs that are not represented in upstream TypeScript. A
+future staging step must rebuild the merged sidecar and then reapply and verify those packaged
+Mining policies before producing Alpha 23 Candidate 1.

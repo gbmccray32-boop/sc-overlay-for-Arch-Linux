@@ -37,7 +37,7 @@ Do not convert one label into another without new evidence.
 | Active integration branch | `agent/alpha23-upstream-fbe3fae-integration` |
 | Frozen upstream target | `fbe3faedb38c82d11650ef6424e4037a9806cf95`, upstream version `0.1.46` |
 | Upstream delta | 285 non-merge commits after `v0.1.44`; 12 commits after the prior frozen `aecabc2c` target |
-| Immediate next step | Run the Alpha 23 source/baseline audit, then port platform-neutral upstream behavior onto an exact Candidate 8k package while keeping Mining and Linux runtime contracts frozen. |
+| Immediate next step | Validate the Phase 1 upstream `0.1.46` backend/data source merge in CI, then reconstruct the renderer and Electron IPC group before staging Alpha 23 Candidate 1 from the exact Candidate 8k package. |
 
 The branch `agent/archverse-continuity-handoff` contains continuity infrastructure only and starts
 from Candidate 8f. Candidate 8k branches from Candidate 8j and rebuilds from its exact

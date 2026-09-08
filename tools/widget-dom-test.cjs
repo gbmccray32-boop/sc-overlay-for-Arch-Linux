@@ -30,9 +30,216 @@ const PORT = process.env.OVERLAY_PORT || 8778;
 // feedback when this flag is present.
 const URL = `http://localhost:${PORT}/missions.html?canvas=1&harness=1&party&mining&notepad`;
 
+/* ── `--only <widget>[,<widget>]` — run the suites a change can actually have broken ────────────
+ *
+ * 🔴 THE FULL PASS IS THE DEFAULT AND MUST STAY THE DEFAULT. This is a flight's tool for the loop
+ * it runs twenty times an afternoon; the landing gate still runs everything. Passing no `--only`
+ * changes nothing about which suites execute.
+ *
+ * 🔑 WHY IT IS WORTH HAVING, AS A NUMBER RATHER THAN A FEELING (measured 2026-08-25, 52 suites,
+ * 1,364 assertions, 324.9s): assertion count is NOT cost. `chat links + slash menu` runs 220
+ * assertions in 1.1s; `pair merges (brute force)` runs SEVEN in 134.4s — 41% of the whole pass —
+ * because it is O(n²) over a 15-widget registry (105 pairs). So a subset that merely skips other
+ * widgets' PAGES saves ~15%; the win only arrives when the registry SWEEPS narrow too, which is
+ * why `only` is pushed into the page and read by the two expensive ones.
+ *
+ * The selection rule, and it errs toward running things:
+ *   · a suite tagged with a named widget runs;
+ *   · EVERY registry-sweeping suite runs regardless (they are the ones that host the widget in the
+ *     canvas — a page that stops fitting its box shows up there and nowhere else), but PAIRS and
+ *     SWEEPS narrow their loops to the named widgets;
+ *   · a single-purpose SHELL suite (patch notes, setup nudge, the service-down banner) is skipped,
+ *     because no widget page can reach it;
+ *   · a suite carrying no tag at all RUNS, and is named in a failure at the end of the pass. Never
+ *     skip something you could not classify — but do not let it go unnoticed either, or `--only`
+ *     silently rots as suites are added.
+ */
+const ONLY = (() => {
+  const a = process.argv;
+  const i = a.findIndex((x) => x === "--only" || x.startsWith("--only="));
+  if (i < 0) return null;
+  const raw = a[i].startsWith("--only=") ? a[i].slice(7) : (a[i + 1] || "");
+  const keys = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return keys.length ? keys : null;
+})();
+
+/* ── `--pairs` — the brute-force pair merge is a RELEASE step, not a landing gate ───────────────
+ *
+ * 🔴 SUB'S CALL, 2026-08-25, AND IT IS A DECISION RATHER THAN AN OVERSIGHT.
+ *   "That seems like something we might be able to just do one time just before an actual
+ *    release... I'm fine with the downside to waiting that long to see if things merge. I think
+ *    it'll far outweigh the amount of time wasted by just sitting there waiting for that script
+ *    to be run."
+ *
+ * The numbers behind it (flight `suiteaudit`, three passes on one tree): `pair merges (brute
+ * force)` is 134s of a 325s pass — 41% — for SEVEN assertions, because it is O(n²) over the
+ * registry (15 widgets = 105 pairs at ~1.28s each). Every widget added to the app adds ~15 pairs,
+ * i.e. ~19s to EVERY landing, forever.
+ *
+ * 🔑 WHY THE RELEASE IS THE RIGHT MOMENT: a broken merge pair can only ever reach a human through
+ * a released build. Landings on `main` ship to nobody, so nothing is at risk between the landing
+ * and the release — only the debugging DISTANCE grows, and Sub accepted that knowingly.
+ *
+ * ⚠️ IT WAS ALSO PROPOSED THAT THIS RUN WHENEVER THE DIFF TOUCHED THE REGISTRY, THE GROUPING CODE
+ * OR A WIDGET'S PANEL SIZING. Sub considered that and DECLINED it. Do not add a trigger condition.
+ *
+ * 🔴 OPT-IN, NEVER `--no-pairs`. A release step that has to remember a negative flag is a step
+ * that gets skipped, and the failure is silent — the flag simply is not typed and nobody notices
+ * the suite did not run. `npm run test:widgets:release` is the whole ritual.
+ */
+const RUN_PAIRS = process.argv.includes("--pairs");
+const PAIRS_LABEL = "pair merges (brute force)";
+const PAIRS_CMD = "npm run test:widgets:release";
+
+/** Registry keys a suite is about. Suites driving a widget's OWN page are tagged from their `page`
+ *  argument and are absent here; this map is only for the ones that run inside the canvas, where
+ *  nothing in the call site says which widget they belong to. */
+const SUITE_TAGS = {
+  "widget grouping": ["canvas"],
+  "pair merges (brute force)": ["canvas"],
+  "title-bar chrome": ["canvas"],
+  "controls visible + reachable": ["canvas"],
+  "sweeps: themes / sizes / text / stacks": ["canvas"],
+  "dragging + reset": ["canvas"],
+  "page headers": ["canvas"],
+  "layout restore": ["canvas"],
+  "chrome anchoring + latches": ["canvas"],
+  "lifecycle: closed = idle": ["canvas"],
+  "typing grab: hiding releases it": ["canvas"],
+  "logView: the filter box releases the canvas grab": ["logView"],
+  "client errors reach the sidecar": ["shell"],
+  "per-widget angle": ["canvas"],
+  "split fade: panel vs text": ["canvas"],
+  "test-environment badge": ["shell"],
+  "nothing animates at rest": ["shell", "blueprint"],
+  "mission info from community data": ["blueprint"],
+  "unrecognized blueprint names": ["blueprint"],
+  "cog auto-hide on game focus": ["shell"],
+  "scan read area": ["mining"],
+  "payout scan session panel": ["blueprint"],
+  "contract board calibration box": ["blueprint"],
+  "idle panel (nothing tracked)": ["blueprint"],
+  "rep scan on the widget face": ["blueprint"],
+  "mission + faction drawers": ["blueprint"],
+  "widget settings close when idle": ["shell"],
+  "canvas calibration (mixed-DPI)": ["shell"],
+  "patch notes fit the monitor": ["shell"],
+  "patch notes are grouped and labelled": ["shell"],
+  "setup nudge": ["shell"],
+  "background service down": ["shell"],
+  "chrome over the native view": ["canvas", "webView"],
+  "completion card holds while you use it": ["blueprint"],
+};
+
+/** A widget's own page → the registry key it is. */
+const PAGE_KEYS = {
+  "logview.html": "logView", "battaglia.html": "battaglia", "versefinder.html": "verseFinder",
+  "unlockalert.html": "unlockAlert", "mining.html": "mining", "chat.html": "chat",
+  "hauling.html": "hauling", "twitchchat.html": "twitchChat", "scfeed.html": "scFeed",
+  "notepad.html": "notepad", "party.html": "party", "webview.html": "webView",
+  "bindingwidget.html": "bindingChart",
+};
+
+/** Suites that loop the whole registry. They HOST every widget, so a page that no longer fits its
+ *  box, or that puts an error on the console, fails here and in no page-specific suite. Always
+ *  selected under `--only`, and the two expensive ones narrow their own loops. */
+const SWEEP_SUITES = new Set([
+  "widget grouping", "pair merges (brute force)", "title-bar chrome", "controls visible + reachable",
+  "sweeps: themes / sizes / text / stacks", "dragging + reset", "page headers",
+  "chrome anchoring + latches", "per-widget angle", "split fade: panel vs text",
+  "chrome over the native view",
+]);
+
+const UNTAGGED = [];
+const SKIPPED = [];
+
+/** Registry widgets that have no page of their own, so PAGE_KEYS cannot name them. The Blueprint
+ *  panel is a LOCAL widget — it lives in missions.html itself rather than in an iframe. */
+const LOCAL_KEYS = ["blueprint"];
+
+/* 🔴 `--only` TAKES WIDGET KEYS, AND THE SUITE TAGS ARE NOT WIDGET KEYS. This list used to be the
+   union of PAGE_KEYS and every SUITE_TAGS value, which quietly admitted `canvas` and `shell` —
+   labels for a SURFACE, with no entry in the registry behind either of them. `--only canvas` was
+   therefore accepted, SEL filtered to ZERO widgets, and the registry sweeps then failed their own
+   anti-vacuous guards (`the sweep really walked widgets and skins  [0 widgets x 16 skins]`) on
+   perfectly green code. Two of those three lines were the design working exactly as intended: the
+   bug was never that an empty selection failed, it was that a key selecting nothing was accepted
+   as though it had selected something.
+
+   🔑 The two halves are DERIVED, not hand-listed, so a tag added to SUITE_TAGS later cannot bring
+   this back silently — anything in SUITE_TAGS that is not a widget key lands in SUITE_ONLY_TAGS by
+   construction and is refused with its own message. */
+const WIDGET_KEYS = [...new Set([...Object.values(PAGE_KEYS), ...LOCAL_KEYS])].sort();
+const SUITE_ONLY_TAGS = [...new Set(Object.values(SUITE_TAGS).flat())]
+  .filter((t) => WIDGET_KEYS.indexOf(t) < 0).sort();
+
+/* 🔴 AN UNRECOGNISED KEY MUST NOT PRODUCE A NEARLY-EMPTY PASS. Without this, --only versefinder
+   (lower-case f, which is what the PAGE is called) matches nothing, the registry sweeps run
+   against an empty SEL, and the run either dies on an obscure positive guard or - worse, if a
+   guard were ever removed - prints a green subset that tested nothing. Fail before loading a
+   single page, and print the list: these are registry keys and are not guessable from the
+   filenames. Matching is case-insensitive and takes a page filename too, so a flight can paste
+   what git printed.  */
+const ONLY_KEYS_RESOLVED = ONLY && ONLY.map((raw) => {
+  const k = raw.trim().toLowerCase().replace(".html", "");
+  return WIDGET_KEYS.find((t) => t.toLowerCase() === k) || PAGE_KEYS[k + ".html"] || null;
+});
+if (ONLY && ONLY_KEYS_RESOLVED.some((k) => !k)) {
+  const bad = ONLY.filter((_, n) => !ONLY_KEYS_RESOLVED[n]);
+  const tags = bad.filter((b) => SUITE_ONLY_TAGS.some((t) => t.toLowerCase() === b.trim().toLowerCase()));
+  console.error("");
+  console.error("--only: unknown widget key(s): " + bad.join(", "));
+  if (tags.length) {
+    console.error("");
+    console.error("  " + tags.join(", ") + " " + (tags.length > 1 ? "are" : "is a")
+      + " SUITE TAG" + (tags.length > 1 ? "S" : "") + ", not a widget. Nothing in the registry"
+      + " carries that key, so it");
+    console.error("  would select no widget at all and the registry sweeps would run over an empty");
+    console.error("  selection. A change to the canvas or the shell can break ANY widget anyway —");
+    console.error("  the right run for one is the full pass, `npm run test:widgets`.");
+  }
+  console.error("");
+  console.error("known keys: " + WIDGET_KEYS.join(", "));
+  console.error("(a page filename works too, e.g. --only versefinder.html)");
+  process.exit(2);
+}
+
+/** Does this suite run under the current selection? */
+function selected(label, page) {
+  if (!ONLY) return true;
+  if (SWEEP_SUITES.has(label)) return true;
+  const tags = page ? [PAGE_KEYS[page] || page] : SUITE_TAGS[label];
+  if (!tags) { UNTAGGED.push(label); return true; }
+  return tags.some((t) => ONLY_KEYS_RESOLVED.indexOf(t) >= 0);
+}
+
 const PRELUDE = `
+  // 🔑 THE SUBSET, INSIDE THE PAGE. SEL is what a registry SWEEP should walk; WIDGETS stays the
+  // whole registry, so the "registry has N widgets" assertion keeps meaning what it says.
+  // With no --only the two are the same list and a full pass behaves exactly as it always did.
+  // ⚠️ No backticks and no backslash escapes anywhere in here: this string is spliced into every
+  // suite body, which is itself a template literal.
+  const ONLY_KEYS = (new URLSearchParams(location.search).get("only") || "").split(",").filter(Boolean);
+  const SEL = typeof WIDGETS === "undefined" ? []
+    : (ONLY_KEYS.length ? WIDGETS.filter((w) => ONLY_KEYS.indexOf(w.key) >= 0) : WIDGETS);
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  // 🔴 A CHECK THAT COULD NOT RUN IS NOT A CHECK THAT PASSED. Three assertions in this file
+  // were written as ok(name, true) in an else branch - honest, documented, and counted as
+  // passes, so a branch that quietly stops being reachable reads as coverage forever. A skip
+  // prints as skip, is counted separately, and never inflates the pass total. Reach for it
+  // when the INPUT could not express the case; ok(name, false) is for when the code is wrong.
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  // 🔴 THE BELT ON THE SUITE-TAG BUG, AND IT IS DERIVED FROM THE REGISTRY ITSELF. The argv-time
+  // refusal reads a list built from PAGE_KEYS; this reads WIDGETS. A key that reaches the page and
+  // matches no widget is the exact condition that made --only canvas redden three green sweeps, so
+  // it now fails LOUDLY and by name instead of leaving SEL empty for those guards to trip over.
+  // A full pass sends no keys at all, so this pushes nothing.
+  if (ONLY_KEYS.length && typeof WIDGETS !== "undefined") {
+    const absent = ONLY_KEYS.filter((k) => !WIDGETS.some((w) => w.key === k));
+    if (absent.length) ok("every --only key names a widget in the registry", false,
+      absent.join(",") + " matched no registry entry, so SEL holds " + SEL.length + " widget(s)");
+  }
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   // The Blueprint panel is a LOCAL registry widget: it lives in this document rather than an
   // iframe, so it has no w-/wf- elements and hides via a body class.
@@ -57,10 +264,10 @@ const GROUPING = `(async () => {
     saveWidget: (id, l) => saved.push([id, JSON.parse(JSON.stringify(l))]),
   });
 
-  // 13 = the 11 canvas widgets + the Blueprint panel (a local, non-iframe widget) + Settings.
+  // 14 = the 12 canvas widgets + the Blueprint panel (a local, non-iframe widget) + Settings.
   // Bump this deliberately when a widget is added — it is the one assertion that notices a
   // registry entry going missing, which would otherwise just look like a widget quietly absent.
-  ok("registry has 13 widgets (incl. the Blueprint panel and Settings)", typeof WIDGETS !== "undefined" && WIDGETS.length === 13, typeof WIDGETS !== "undefined" ? WIDGETS.length : "unreachable");
+  ok("registry has 15 widgets (incl. the Blueprint panel and Settings)", typeof WIDGETS !== "undefined" && WIDGETS.length === 15, typeof WIDGETS !== "undefined" ? WIDGETS.length : "unreachable");
   ok("starts ungrouped", GROUPS.length === 0, GROUPS.length);
   const party = WBY.party, mining = WBY.mining, notepad = WBY.notepad;
   ok("test widgets shown", shown(party) && shown(mining) && shown(notepad));
@@ -166,7 +373,14 @@ const GROUPING = `(async () => {
 const PAIRS = `(async () => {
   ${PRELUDE}
   // Show everything so every pair is actually mergeable.
-  for (const w of WIDGETS) { setWidgetVisible(w, true); }
+  // 🔴 THIS SUITE IS O(n²) OVER THE REGISTRY AND IT IS THE MOST EXPENSIVE THING IN THE PASS.
+  // Measured 2026-08-25: 15 widgets = 105 pairs = 134.4s, which was 41% of a 324.9s full run, for
+  // SEVEN assertions. Every widget added to the registry adds ~15 pairs, i.e. ~19s to every run.
+  // ⚠️ WHICH IS WHY IT NO LONGER RUNS BY DEFAULT — it is opt-in behind the pairs flag and belongs
+  // to the RELEASE, not to the landing gate. See the flag's block at the top of this file for
+  // Sub's reasoning and for the trigger condition he explicitly declined.
+  // It walks SEL so that a flight running --only pays only for the pairs it can have broken.
+  for (const w of SEL) { setWidgetVisible(w, true); }
   await sleep(500);
 
   const frameBox = (w) => (w.local ? el(w).getBoundingClientRect() : document.getElementById("wf-" + w.key).getBoundingClientRect());
@@ -184,14 +398,41 @@ const PAIRS = `(async () => {
     } catch { return null; }
   };
   const fits = (w) => { const o = innerFit(w); return !o || (o.overflowX <= 2 && o.overflowY <= 2); };
+  // 🔴 WAIT FOR THE FRAME TO REPORT ITSELF EMBEDDED BEFORE MEASURING IT. Identical trap to the
+  // one already fixed in the size sweep below, arriving through a different door: grouping and
+  // ungrouping re-runs a widget's page, and until it has read ?embedded and set body.embedded
+  // its #panel sits at the page's STANDALONE fixed size. Measured in that window, the check
+  // reports an overflow that is nothing but the load not having finished.
+  // 🔑 THE SIGNATURE, and it is how this was told apart from a real clip: the reported overflow
+  // equals standalone minus frame EXACTLY. Hauling is 420x560 standalone, so against logView's
+  // 520x420 box it reported -100x140 and against verseFinder's 460x480 it reported -40x80 - the
+  // arithmetic to the pixel, three times over, while a direct measurement of the same page at
+  // the same three sizes WITH ?embedded showed an overflow of 0. The suite's own later
+  // "every widget's content fits its box after all that" assertion passed in the same run,
+  // which is the other half of the tell.
+  // ⚠️ It falls through after ~1.5s and measures anyway: a widget that NEVER embeds is a real
+  // failure and must still be able to fail here.
+  const embeddedReady = async (w) => {
+    if (w.local) return true;
+    for (let i = 0; i < 60; i++) {
+      try {
+        const d = document.getElementById("wf-" + w.key).contentDocument;
+        if (d && d.body && d.body.classList.contains("embedded")) return true;
+      } catch { /* cross-document timing */ }
+      await sleep(25);
+    }
+    return false;
+  };
   // Snapshot each widget's healthy standalone frame size to compare against after a merge cycle.
   const baseline = {};
-  for (const w of WIDGETS) { const r = frameBox(w); baseline[w.key] = [Math.round(r.width), Math.round(r.height)]; }
+  for (const w of SEL) { const r = frameBox(w); baseline[w.key] = [Math.round(r.width), Math.round(r.height)]; }
 
   const broken = [], groupBad = [], clipped = [];
-  for (let i = 0; i < WIDGETS.length; i++) {
-    for (let j = i + 1; j < WIDGETS.length; j++) {
-      const a = WIDGETS[i], b = WIDGETS[j];
+  let pairsDone = 0;
+  for (let i = 0; i < SEL.length; i++) {
+    for (let j = i + 1; j < SEL.length; j++) {
+      const a = SEL[i], b = SEL[j];
+      pairsDone++;
       groupWidgets(a, b);
       const g = GROUPS[0];
       // While grouped: one box, exactly one member on screen, and it must have real size.
@@ -204,6 +445,7 @@ const PAIRS = `(async () => {
       // The fronted member's CONTENT must fit the shared box - this is the check that catches a
       // widget rendering clipped inside a perfectly-sized frame.
       const act = WBY[g ? g.active : a.key];
+      await embeddedReady(act);
       if (!fits(act)) {
         const o = innerFit(act);
         clipped.push(a.key + "+" + b.key + " grouped -> " + act.key + " overflows by " + o.overflowX + "x" + o.overflowY);
@@ -213,6 +455,7 @@ const PAIRS = `(async () => {
       // a widget landing at a size nobody chose, or shrinking/growing a bit more on every cycle.
       while (GROUPS.length) detachFromGroup(WBY[GROUPS[0].active]);
       await sleep(60); // mining re-measures on a timer
+      for (const w of [a, b]) { await embeddedReady(w); }
       const cycle1 = {};
       for (const w of [a, b]) { const r = frameBox(w); cycle1[w.key] = [Math.round(r.width), Math.round(r.height)]; }
       for (const w of [a, b]) {
@@ -238,18 +481,35 @@ const PAIRS = `(async () => {
       await sleep(40);
     }
   }
-  ok("all 28 pairs group cleanly", groupBad.length === 0, groupBad.slice(0, 4).join(" | "));
-  ok("no pair leaves a widget's CONTENT clipped inside its box", clipped.length === 0,
-     clipped.length + " clipped: " + clipped.slice(0, 5).join(" | "));
-  ok("no pair leaves a widget degenerate or drifting", broken.length === 0,
-     broken.length + " broken: " + broken.slice(0, 4).join(" | "));
+  /* 🔴 POSITIVE FIRST, AND IT IS NOT DECORATION. Every assertion below is a must-NOT-contain over
+     a list this loop fills, so all three are satisfied for free by a loop that compared NOTHING —
+     which is exactly what happens when --only names one widget, or none of the named keys is in
+     the registry. Without this line the cheapest way to make PAIRS green is to stop it running.
+     ⚠️ The name used to say "all 28 pairs" while the loop did 105; the number is printed now
+     rather than written down, so it cannot go stale again. */
+  if (pairsDone === 0) {
+    // ALL FOUR go together. Each of the three below is a must-not-contain over a list this loop
+    // fills, so with no pairs compared they are true for free - three vacuous passes reading as
+    // coverage. Reporting one skip is the honest version of what happened.
+    skip("pairs need at least two widgets in the selection",
+         SEL.length + " widget(s) selected, so no pair could be merged or checked");
+  } else {
+    ok("there were pairs to compare at all", pairsDone > 0, pairsDone + " pairs over " + SEL.length + " widgets");
+    ok("every pair groups cleanly", groupBad.length === 0, pairsDone + " pairs: " + groupBad.slice(0, 4).join(" | "));
+    ok("no pair leaves a widget's CONTENT clipped inside its box", clipped.length === 0,
+       clipped.length + " clipped: " + clipped.slice(0, 5).join(" | "));
+    ok("no pair leaves a widget degenerate or drifting", broken.length === 0,
+       broken.length + " broken: " + broken.slice(0, 4).join(" | "));
+  }
   await sleep(200);
-  ok("every widget's content fits its box after all that", WIDGETS.every(fits),
-     WIDGETS.filter(w => !fits(w)).map(w => w.key + " " + JSON.stringify(innerFit(w))).join(" | "));
+  ok("every widget's content fits its box after all that", SEL.length > 0 && SEL.every(fits),
+     SEL.filter(w => !fits(w)).map(w => w.key + " " + JSON.stringify(innerFit(w))).join(" | "));
 
   // The two pairs Sub called out by name, end to end. What matters is that the CONTENT fits both
   // while stacked and after separating - frame size alone never revealed the bug.
-  for (const partner of ["twitchChat", "party"]) {
+  // Skipped when --only leaves one of the two out of the registry selection; the alternative is
+  // grouping a widget the flight did not ask for and reporting on it.
+  for (const partner of (SEL.indexOf(WBY.mining) < 0 ? [] : ["twitchChat", "party"].filter((k) => SEL.indexOf(WBY[k]) >= 0))) {
     groupWidgets(WBY.mining, WBY[partner]);
     await sleep(80);
     const gOk = fits(WBY[GROUPS[0].active]);
@@ -502,7 +762,7 @@ const THEMES = ["mobiglas", "drake", "anvil", "greys", "argo", "misc", "aegis", 
                 "mirai", "origin", "esperia", "banu", "gatac", "kruger", "cnou"];
 const SWEEPS = `(async () => {
   ${PRELUDE}
-  for (const w of WIDGETS) setWidgetVisible(w, true);
+  for (const w of SEL) setWidgetVisible(w, true);
   await sleep(500);
 
   const frameBox = (w) => (w.local ? el(w).getBoundingClientRect()
@@ -527,9 +787,9 @@ const SWEEPS = `(async () => {
   const themeBad = [], missingArt = [];
   for (const th of THEMES) {
     root.setAttribute("data-theme", th);
-    for (const w of WIDGETS) { syncWidgetTheme(w); }
+    for (const w of SEL) { syncWidgetTheme(w); }
     await sleep(30);
-    for (const w of WIDGETS) {
+    for (const w of SEL) {
       if (!fits(w)) themeBad.push(th + "/" + w.key + " " + JSON.stringify(innerFit(w)));
       const box = frameBox(w);
       if (box.width < 40 || box.height < 40) themeBad.push(th + "/" + w.key + " collapsed");
@@ -547,6 +807,11 @@ const SWEEPS = `(async () => {
     }
   }
   if (theme0) root.setAttribute("data-theme", theme0); else root.removeAttribute("data-theme");
+  /* 🔴 POSITIVE FIRST. All three sweep assertions below are must-NOT-contain over a list these
+     loops fill, so an empty SEL (--only naming a key the registry does not hold) satisfies every
+     one of them without measuring anything. Say how many widgets and skins were really walked. */
+  ok("the sweep really walked widgets and skins", SEL.length > 0 && THEMES.length > 0,
+     SEL.length + " widgets x " + THEMES.length + " skins");
   ok("every skin renders every widget without breaking layout", themeBad.length === 0, themeBad.slice(0, 5).join(" | "));
   ok("every skin's trinket art resolves", missingArt.length === 0, [...new Set(missingArt)].slice(0, 6).join(" | "));
 
@@ -566,7 +831,7 @@ const SWEEPS = `(async () => {
     return false;
   };
   const sizeBad = [];
-  for (const w of WIDGETS) {
+  for (const w of SEL) {
     for (const [lbl, ww, hh] of [["min", w.size.minW, w.size.minH], ["max", w.size.maxW, w.size.maxH]]) {
       if (ww == null) continue;
       w.s.w = Math.min(ww, 1600); w.s.h = Math.min(hh, 1200); // keep it inside the test viewport
@@ -590,7 +855,7 @@ const SWEEPS = `(async () => {
   // This is the control that replaced scaling, so it has to hold at both extremes: a widget must
   // not spill out of its box at 200%, and must not collapse at 70%.
   const textBad = [];
-  for (const w of WIDGETS) {
+  for (const w of SEL) {
     for (const scale of [0.7, 1, 1.5, 2]) {
       w.s.text = scale; applyTextScale(w); await sleep(25);
       if (!fits(w)) textBad.push(w.key + "@" + Math.round(scale * 100) + "% " + JSON.stringify(innerFit(w)));
@@ -602,7 +867,13 @@ const SWEEPS = `(async () => {
   // ── stacks of three and four ────────────────────────────────────────────────
   // Pairs never exercise tab overflow in the bar, which is where a third and fourth tab land.
   while (GROUPS.length) detachFromGroup(WBY[GROUPS[0].active]);
+  // 🔑 A FIXED QUAD, SHOWN ON PURPOSE. This block is about the BAR — whether a fourth tab pushes
+  // the controls off it — so it is canvas behaviour and not a claim about these four widgets.
+  // Under --only they may not be in SEL and would therefore be hidden, which would turn a real
+  // assertion into a group of nothing. Show them here and reset them below.
   const quad = ["party", "mining", "battaglia", "notepad"].map(k => WBY[k]);
+  for (const w of quad) setWidgetVisible(w, true);
+  await sleep(120);
   groupWidgets(quad[1], quad[0]);
   groupWidgets(quad[2], quad[0]);
   groupWidgets(quad[3], quad[0]);
@@ -622,7 +893,8 @@ const SWEEPS = `(async () => {
      g4.members.filter(k => shown(WBY[k])).length === 1,
      g4.members.filter(k => shown(WBY[k])).join(","));
   while (GROUPS.length) detachFromGroup(WBY[GROUPS[0].active]);
-  for (const w of WIDGETS) resetWidget(w);
+  for (const w of SEL) resetWidget(w);
+  for (const w of quad) resetWidget(w);
   return out;
 })()`;
 
@@ -633,6 +905,7 @@ const SWEEPS = `(async () => {
 const MININGSAY = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   await sleep(400);
   // Stub BOTH speech paths (clips, and the Windows-TTS fallback) plus the sound cue, and record.
@@ -1267,6 +1540,136 @@ const MIDRAWERS = `(async () => {
     nextName: "Veteran Contractor", nextRank: 4, nextRewards: [], max: false, noData: false });
   ok("...and a contract that DOES advance the bar is not marked",
      !/not from this one/.test(barOn.textContent), barOn.textContent.slice(0, 60));
+  return out;
+})()`;
+
+// ── Suite: the REP-page scan on the widget face ───────────────────────────────
+// Sub: "what visual indication do I get that the rep scanner is working? All I see is waiting
+// for Star Citizen." The feature worked; its only feedback lived in the settings window, which is
+// by definition not the window a player in mobiGlas is looking at.
+//
+// Driven by calling setRepScan() with fixtures rather than by fetching /api/missions: the pool of
+// real scan results belongs to whoever last played, so a suite that read it would pass or fail on
+// that. ?rates is reused purely because it is an existing FIXTURES flag and therefore leaves the
+// live feed disconnected — a fixture a real broadcast can paint over tests nothing.
+// (No backticks, no regex and no backslash escapes anywhere in a suite body — template literal.)
+const REPSTRIP = `(async () => {
+  ${PRELUDE}
+  const bar = document.getElementById("ocrBar");
+  const txt = () => { const e = document.getElementById("ocrBarText"); return e ? e.textContent : "(no #ocrBarText)"; };
+  const showing = () => !!bar && bar.classList.contains("show");
+  const NOW = Date.now();
+
+  // ── POSITIVE FIRST: the shared vocabulary reached this page at all ──────────────────────
+  // Without it describe() returns nothing, the strip falls back to the OCR line, and every
+  // "the strip does not say X" assertion below is satisfied for free.
+  ok("the shared refusal vocabulary is loaded on the widget page",
+     !!(window.REP_SCAN_STATUS && window.REP_SCAN_STATUS.describe && window.REP_SCAN_STATUS.FRESH_MS > 0),
+     window.REP_SCAN_STATUS ? "FRESH_MS " + window.REP_SCAN_STATUS.FRESH_MS : "(REP_SCAN_STATUS missing)");
+  ok("...and the strip it feeds exists", !!bar && !!document.getElementById("ocrBarText"));
+
+  // ── ONE PLACE FOR THE WORDS ─────────────────────────────────────────────────────────────
+  // 🔴 The whole reason repScanLast is a single field is that "it synced" and "it refused, here
+  // is why" must never be reported by two things that disagree. The same argument applies to the
+  // STRINGS, so no page may carry its own copy of the table. Both files are served by our own
+  // sidecar, so this costs one same-origin fetch each and cannot trip the network check.
+  const PHRASE = "bring every rank into view";
+  const owns = async (u) => { try { return (await (await fetch(u)).text()).indexOf(PHRASE) >= 0; } catch (e) { return "(fetch failed: " + e.message + ")"; } };
+  const inShared = await owns("/rep-status.js");
+  const inConfig = await owns("/config.html");
+  const inCanvas = await owns("/canvas.js");
+  ok("the refusal wording lives in the shared module", inShared === true, "rep-status.js -> " + inShared);
+  ok("...and NOT in a second copy inside the settings page", inConfig === false, "config.html -> " + inConfig);
+  ok("...and NOT in a third copy inside the canvas", inCanvas === false, "canvas.js -> " + inCanvas);
+
+  // ── A GOOD READ ─────────────────────────────────────────────────────────────────────────
+  setRepScan(true, { at: NOW, ok: true, giver: "Recco Battaglia", standing: "Prestige 1",
+                     before: 25314, after: 25900, outcome: "raised", estimated: true });
+  ok("a fresh scan puts itself on the widget face", showing(), txt());
+  ok("...and names the FACTION", txt().indexOf("Recco Battaglia") >= 0, txt());
+  // Sub: "what would also help is if it actually listed the rank. For example, Prestige 1 with
+  // Battaglia." A rep number with no rank beside it makes the player do a lookup the app has
+  // already done.
+  ok("...and names the RANK, not just the number", txt().indexOf("Prestige 1") >= 0, txt());
+  // 🔴 BOTH figures, not just the first. Measured on the real widget at 378px, the sentence form
+  // ("corrected up from 25,314 to 25,900") ellipsised away the second number — and Sub asked for
+  // the rank AND the movement. This is the assertion that keeps the short form short.
+  ok("...and says which way it moved, with BOTH numbers",
+     txt().indexOf("25,314") >= 0 && txt().indexOf("25,900") >= 0, txt());
+  ok("...and the whole line fits a narrow widget without losing a figure",
+     txt().length <= 60, txt().length + " chars");
+  ok("...in the good-read colour, not the warning one",
+     bar.classList.contains("on") && !bar.classList.contains("warn"), bar.className);
+
+  // ── A REFUSAL ───────────────────────────────────────────────────────────────────────────
+  // The one Sub is hitting: the ladder is scrolled. The strip leads with what to DO, because it
+  // is one ellipsised line on a widget that can be 320px wide.
+  setRepScan(true, { at: NOW, ok: false, refusal: "cards-incomplete" });
+  ok("a refusal is shown too, not swallowed", showing(), txt());
+  ok("...in the warning colour", bar.classList.contains("warn") && !bar.classList.contains("on"), bar.className);
+  ok("...and it says what to do about it", txt().indexOf("scroll the rank list") >= 0, txt());
+  // 🔴 AND IT NAMES THE PAGE. Sub reported two factions "not working"; a strip that says only
+  // "scroll the rank list" is indistinguishable from the widget talking about a different faction
+  // entirely. Every refusal that KNOWS a heading now carries it, not just no-giver.
+  setRepScan(true, { at: NOW, ok: false, refusal: "cards-incomplete", faction: "COVALEX" });
+  ok("...and names the faction when the reader got far enough to know one",
+     txt().indexOf("COVALEX") >= 0 && txt().indexOf("scroll the rank list") >= 0, txt());
+
+  // 🔴 THE no-giver CASE NAMES THE FACTION. Sub: "there were some mission givers that didn't
+  // record anything. It was like it didn't know the name." Without the heading in the message
+  // neither he nor the app can say WHICH faction is missing, and the in-game faction list is
+  // inside Data.p4k where nothing here can read it. Naming what it saw IS the measurement.
+  setRepScan(true, { at: NOW, ok: false, refusal: "no-giver", faction: "CITIZENS FOR PROSPERITY",
+                     standing: "Neutral" });
+  ok("a no-giver refusal names the faction heading it read",
+     txt().indexOf("CITIZENS FOR PROSPERITY") >= 0, txt());
+  ok("...and still reports the rank the page stated", txt().indexOf("Neutral") >= 0, txt());
+
+  // ── FRESHNESS, AND THE SWITCH ───────────────────────────────────────────────────────────
+  // 🔑 The strip is a LIVE indicator; the settings line is the durable record. An hour-old read
+  // sitting on the widget face reads as the current state of a page nobody is looking at.
+  // Assert the fallback text explicitly rather than just "no longer mentions Battaglia" — an
+  // empty strip would satisfy that for free.
+  OCR = { state: "watching", fabNote: "", fabWarn: false };
+  setRepScan(true, { at: NOW - window.REP_SCAN_STATUS.FRESH_MS - 5000, ok: true,
+                     giver: "Recco Battaglia", standing: "Prestige 1",
+                     before: 1, after: 2, outcome: "raised", estimated: true });
+  ok("a stale read hands the line back to the OCR status", txt() === "Watching Star Citizen…", txt());
+  ok("...and the colour goes back to describing the OCR state, not the old read",
+     bar.classList.contains("on") && !bar.classList.contains("warn"), bar.className);
+
+  // Turning the switch off must clear it immediately, not in twenty seconds.
+  setRepScan(false, { at: Date.now(), ok: true, giver: "Recco Battaglia", standing: "Prestige 1",
+                      before: 1, after: 2, outcome: "raised", estimated: true });
+  ok("a read is not shown once the rep-scan switch is off", txt().indexOf("Battaglia") < 0, txt());
+
+  // ── ARMING ──────────────────────────────────────────────────────────────────────────────
+  // 🔑 rep scan is its own opt-in, separate from fabCapture/missionOcr. capture.cjs already
+  // counts it in the loop's arming test, so the shell keeps emitting idle/watching — but the
+  // strip must not depend on that push having arrived, and a player with EVERY opt-in off must
+  // still get a clean empty widget face.
+  OCR = { state: "off", fabNote: "", fabWarn: false };
+  setRepScan(false, null);
+  ok("everything off leaves the widget face empty", !showing(), bar.className + " / " + txt());
+  OCR = { state: "", fabNote: "", fabWarn: false };
+  setRepScan(true, { at: Date.now(), ok: true, giver: "Recco Battaglia", standing: "Prestige 1",
+                     before: 1, after: 2, outcome: "raised", estimated: true });
+  ok("a fresh read shows the strip even before any OCR state has arrived", showing(), bar.className);
+  ok("...and it is the rep line, not a blank strip", txt().indexOf("Prestige 1") >= 0, txt());
+
+  // ── THE REAL CALL SITE ──────────────────────────────────────────────────────────────────
+  // Everything above drives setRepScan directly. This drives the wiring that actually feeds it —
+  // render(), which the missions SSE calls on every broadcast — so the strip cannot be perfect
+  // while nothing connects it to the sidecar.
+  let threw = "";
+  try {
+    render({ prefs: { repScan: true, repScanLast: { at: Date.now(), ok: false,
+      refusal: "no-giver", faction: "TRANSPORT GUILD", standing: "Courier" } } });
+  } catch (e) { threw = e.message; }
+  ok("the tracker view feeds the strip, so a real broadcast reaches it",
+     !threw && txt().indexOf("TRANSPORT GUILD") >= 0, threw || txt());
+
+  setRepScan(false, null);
   return out;
 })()`;
 
@@ -2238,9 +2641,2232 @@ const LIFECYCLE = `(async () => {
 // leaks with no page left to lower it. notepad/party/chat always did this via onHide; twitchChat
 // and webView defined the release function and the canvas never called it. Negative-controlled:
 // removing twitchChat's onHide turns "hiding it releases the grab" red.
+// ── Suite: Verse Finder — the honesty rules, on screen ───────────────────────
+// Drives the REAL page against the LIVE sidecar, because every rule here is about what the player
+// actually reads. The assertions are the constraints Sub set, not the plumbing:
+//   · a result names its TERMINAL and never just a price;
+//   · every shop row carries the age of its OWN reading;
+//   · a multi-shop item shows the spread rather than one confident number;
+//   · the footer says which tier the table came from, and that stock is unknowable.
+// Negative-controlled three ways — see the commit message.
+// ── Suite: the Event Tracker must SAY when its reward table is a fallback ───────────────────
+// The tiers and rewards are fetched from subliminal.gg (src/event-feed.ts) so a reward confirmed
+// mid-event reaches players without an app release. The corollary is Sub's standing requirement:
+// when that fetch is failing, the player has to be able to tell that the ladder they are reading
+// is the one the build shipped with, rather than reading "Reward not known yet" as fact.
+const EVENTFEED = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  const cav = window.__eventFeedCaveat;
+  ok("the caveat hook exists", typeof cav === "function", typeof cav);
+  // Defensive: a detail expression is evaluated EAGERLY, so a throw here would kill the suite
+  // and report it as a small pass. Never reach into the result without wrapping.
+  const txt = (f) => { try { return String(cav(f) || ""); } catch (e) { return "(threw: " + (e && e.message) + ")"; } };
+
+  // POSITIVE FIRST. Every assertion below is "says nothing", and those are all satisfied for
+  // free by a function that has stopped speaking at all — so the case that MUST speak is the
+  // one that tells a working guard apart from a dead one.
+  const shipped = txt({ source: "bundled", revision: 1, fetchedAt: null, checkedAt: 1, lastError: "fetch failed" });
+  ok("bundled + unreachable site DOES warn", shipped.length > 0, JSON.stringify(shipped));
+  ok("...and says the list is the one the app shipped with", shipped.indexOf("shipped with") >= 0, JSON.stringify(shipped));
+  ok("...in the gold warn style, not as body text", shipped.indexOf("evwarn") >= 0, JSON.stringify(shipped));
+
+  const staleCache = txt({ source: "cache", revision: 4, fetchedAt: Date.now() - 3 * 3600 * 1000, checkedAt: Date.now(), lastError: "fetch failed" });
+  ok("a downloaded list that has gone stale DOES warn", staleCache.length > 0, JSON.stringify(staleCache));
+  ok("...and says HOW OLD it is, which is the part that lets a player judge it",
+     staleCache.indexOf("hours ago") >= 0, JSON.stringify(staleCache));
+
+  // Now the silences, each of which is only meaningful because the two cases above speak.
+  ok("a healthy live fetch says nothing",
+     txt({ source: "live", revision: 4, fetchedAt: Date.now(), checkedAt: Date.now(), lastError: null }) === "",
+     JSON.stringify(txt({ source: "live", revision: 4, fetchedAt: Date.now(), checkedAt: Date.now(), lastError: null })));
+  ok("a healthy cache replay says nothing",
+     txt({ source: "cache", revision: 4, fetchedAt: Date.now(), checkedAt: Date.now(), lastError: null }) === "");
+  // Before the first check returns, "bundled" is the normal transient state. Crying wolf there
+  // would put a permanent warning on every cold start for the second it takes to fetch.
+  ok("bundled BEFORE the first check has returned says nothing",
+     txt({ source: "bundled", revision: 1, fetchedAt: null, checkedAt: null, lastError: null }) === "");
+  ok("no feed at all says nothing", txt(null) === "");
+
+  // ── And it must actually REACH the panel. A pure function nobody renders is not a warning. ──
+  // Stub the sidecar so the feed state is KNOWN: the live one is whatever this machine's network
+  // is doing, which is not something an assertion can pin.
+  const realFetch = window.fetch;
+  window.fetch = async (u, o) => {
+    const s = String(u);
+    if (s.indexOf("/api/events") >= 0) {
+      return new Response(JSON.stringify({
+        feed: { source: "bundled", revision: 1, fetchedAt: null, checkedAt: 1, lastError: "fetch failed" },
+        events: [{ id: "suite-event", label: "Suite Event", log: "Suite Event", status: "current",
+                   total: 1000, points: 150, pct: 15, unpriced: 0, contributions: [],
+                   rewardsUnknown: false,
+                   tiers: [{ pct: 15, points: 150, reached: true, rewards: [{ name: "SUITE REWARD", item: null, owned: false }] }] }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return realFetch(u, o);
+  };
+  await window.__battReload();
+  await sleep(150);
+
+  const tabs = [...document.querySelectorAll("#vnav .vt")];
+  const evTab = tabs.find((b) => b.textContent === "Suite Event");
+  ok("the stubbed event gets a tab", !!evTab, tabs.map((b) => b.textContent).join(" | "));
+  if (evTab) evTab.click();
+  await sleep(150);
+
+  const metaEl = document.querySelector("#body .evmeta");
+  const meta = metaEl ? metaEl.textContent : "(no .evmeta element)";
+  ok("the event panel rendered its meta block", !!metaEl, meta);
+  ok("the fallback warning is ON SCREEN, not merely computable",
+     meta.indexOf("shipped with") >= 0, meta);
+  ok("...and it is styled as a warning in the rendered DOM",
+     !!(metaEl && metaEl.querySelector(".evwarn")), meta);
+  // The caveat must be an ADDITION, not a replacement — the existing honesty lines still matter.
+  ok("the Journal advice survives beside it", meta.indexOf("in-game Journal") >= 0, meta);
+
+  window.fetch = realFetch;
+  return out;
+})()`;
+
+// ── Suite: the tier-reward question, and the line between a sighting and a rumour ──────────
+// `events.json` knows ONE of Siege of Orison's six rewards. The other five fill themselves from
+// this card. What must never happen is a rumour rendering as a fact: the candidate names come
+// from a viewer relaying a chatbot answer, and inside this question is the ONLY place they may
+// appear, because answering is what promotes one to a measurement.
+//
+// ⚠️ The keyboard-grab half is NOT asserted here and that is deliberate: this suite loads
+// battaglia.html standalone, where there is no host bridge, so `editStart()` is never reached
+// and any grab assertion would pass for free. It lives in `typing grab: hiding releases it`,
+// which drives the real canvas.
+const REWARDCARD = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  // Defensive: a detail expression is evaluated EAGERLY, so a throw there kills the suite and
+  // reports it as a small pass. Never reach into an element without a fallback.
+  const txt = (sel) => { const e = document.querySelector(sel); return e ? e.textContent : "(missing " + sel + ")"; };
+  const btns = () => [...document.querySelectorAll("#rwrow .rwbtn")].map((b) => b.textContent);
+  const shown = () => { const c = document.getElementById("rwcard"); return !!c && !c.hidden && getComputedStyle(c).display !== "none"; };
+
+  // Stub the sidecar so the prompt state is KNOWN. The live one depends on whether anybody has
+  // crossed a tier on this machine, which is not something an assertion can pin.
+  const realFetch = window.fetch;
+  const posted = [];
+  let promptState = null;
+  window.fetch = async (u, o) => {
+    const s = String(u);
+    // Model the sidecar: answering marks the prompt answered, so the very next /api/events
+    // stops offering it. A stub that keeps serving an answered prompt would make the card
+    // reappear on the load() that follows an answer, which is a fault in the stub and not in
+    // the widget - the real server clears it.
+    if (s.indexOf("/api/events/reward") >= 0) { posted.push(JSON.parse(o.body)); promptState = null; return new Response("{}", { status: 200 }); }
+    if (s.indexOf("/api/events") >= 0) {
+      return new Response(JSON.stringify({
+        feed: { source: "live", revision: 1, fetchedAt: Date.now(), checkedAt: Date.now(), lastError: null },
+        reporting: true,
+        rewardPrompt: promptState,
+        events: [{ id: "suite-event", label: "Suite Event", log: "Suite Event", status: "current",
+                   total: 1000, points: 250, pct: 25, unpriced: 0, contributions: [], rewardsUnknown: true,
+                   tiers: [{ pct: 25, points: 250, reached: true, rewards: [] }] }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return realFetch(u, o);
+  };
+  const mk = (over) => Object.assign({
+    id: "suite-event:25", eventId: "suite-event", eventLabel: "Suite Event", tier: 25,
+    crossedAt: "2026-08-22T00:00:00Z", crossedAtMs: Date.now(),
+    observed: null, candidate: null, answer: null, reported: false,
+  }, over);
+  const drive = async (p) => { promptState = p; await window.__battReload(); await sleep(160); };
+
+  // ── No prompt: no card. The POSITIVE cases follow, and they are what make this meaningful. ──
+  await drive(null);
+  ok("with nothing due the card is not shown", !shown());
+
+  // ── 1. The app SAW it. One click, and the copy says it was seen. ──
+  await drive(mk({ observed: "S-38 SecondWind Pistol", candidate: "SOME OTHER GUESS" }));
+  ok("a due prompt shows the card", shown());
+  ok("...naming the tier crossed", txt("#rwq").indexOf("25%") >= 0, txt("#rwq"));
+  ok("...and the event", txt("#rwq").indexOf("Suite Event") >= 0, txt("#rwq"));
+  ok("the OBSERVED name is what is offered, not the candidate",
+     txt(".rwname") === "S-38 SecondWind Pistol", txt(".rwname"));
+  // 🔴 The line this suite exists for, half one: a sighting must SAY it was seen.
+  ok("...and the caption says the app SAW it arrive",
+     txt(".rwsrc").indexOf("saw this arrive") >= 0, txt(".rwsrc"));
+  ok("...and does NOT call a sighting unconfirmed",
+     txt(".rwsrc").indexOf("UNCONFIRMED") < 0, txt(".rwsrc"));
+  ok("it is a one-click confirmation", btns().indexOf("Yes") >= 0, btns().join(" | "));
+  ok("...with a way to disagree", btns().some((b) => b.indexOf("No") === 0), btns().join(" | "));
+
+  document.querySelectorAll("#rwrow .rwbtn")[0].click();
+  await sleep(120);
+  ok("Yes posts an answer", posted.length === 1, String(posted.length));
+  ok("...reporting the OBSERVED name", posted[0] && posted[0].name === "S-38 SecondWind Pistol", JSON.stringify(posted[0]));
+  // 🔑 Agreeing with a SIGHTING had two independent witnesses; agreeing with a guess had one.
+  // The site weights them differently, so the app must not collapse them into one word.
+  ok("...as source=confirmed, because the log witnessed it", posted[0] && posted[0].source === "confirmed", JSON.stringify(posted[0]));
+  ok("answering hides the card", !shown());
+
+  // ── 2. Only a CANDIDATE. Still one click, but it must not read as a fact. ──
+  posted.length = 0;
+  await drive(mk({ id: "suite-event:43", tier: 43, observed: null, candidate: "FBL-8a (Modified) armor set" }));
+  ok("a candidate-only prompt still shows the card", shown());
+  ok("the candidate is the name offered", txt(".rwname") === "FBL-8a (Modified) armor set", txt(".rwname"));
+  // 🔴 The line this suite exists for, half two.
+  ok("🔴 a candidate is labelled UNCONFIRMED in words",
+     txt(".rwsrc").indexOf("UNCONFIRMED") >= 0, txt(".rwsrc"));
+  ok("...and is never described as something the app saw",
+     txt(".rwsrc").indexOf("saw this arrive") < 0, txt(".rwsrc"));
+  document.querySelectorAll("#rwrow .rwbtn")[0].click();
+  await sleep(120);
+  // Agreeing with a guess is NOT a confirmed sighting — there was one witness, the player.
+  ok("agreeing with a guess is NOT recorded as a witnessed confirmation",
+     posted[0] && posted[0].source !== "confirmed", JSON.stringify(posted[0]));
+
+  // ── 3. Nothing observed, no candidate. An open question with no Yes to press. ──
+  posted.length = 0;
+  await drive(mk({ id: "suite-event:57", tier: 57, observed: null, candidate: null }));
+  ok("a blind prompt still shows the card", shown());
+  ok("...and offers NO name, because there is nothing to offer",
+     !document.querySelector(".rwname"), txt(".rwname"));
+  // A Yes here would be agreeing with nothing.
+  ok("...and offers no Yes button", btns().indexOf("Yes") < 0, btns().join(" | "));
+  ok("...it opens straight into a text field", !!document.getElementById("rwtext"), btns().join(" | "));
+  // 🔑 "I got nothing" is a real ANSWER — a tier granting no blueprint is a thing that can be
+  // true, and no amount of waiting for a positive report would ever establish it.
+  ok("...and 'I got nothing' is offered as an ANSWER", btns().indexOf("I got nothing") >= 0, btns().join(" | "));
+
+  const box = document.getElementById("rwtext");
+  box.value = "WHAT I ACTUALLY GOT";
+  [...document.querySelectorAll("#rwrow .rwbtn")].find((b) => b.textContent === "Send").click();
+  await sleep(120);
+  ok("a typed answer is posted", posted.length === 1 && posted[0].name === "WHAT I ACTUALLY GOT", JSON.stringify(posted[0]));
+  ok("...as source=typed", posted[0] && posted[0].source === "typed", JSON.stringify(posted[0]));
+
+  // ── 4. Dismissing is not answering. ──
+  posted.length = 0;
+  await drive(mk({ id: "suite-event:80", tier: 80, observed: "SOMETHING", candidate: null }));
+  ok("(control) the card is up before dismissing", shown());
+  document.getElementById("rwx").click();
+  await sleep(80);
+  ok("dismissing hides the card", !shown());
+  ok("dismissing posts NOTHING — it is not an answer", posted.length === 0, String(posted.length));
+
+  // ── 5. Expiry is derived from the CROSSING, not from when the card was drawn. ──
+  // A poll can deliver a prompt most of the way through its two minutes; a timer started on
+  // render would then give it a fresh two minutes every refresh and it would never retire.
+  await drive(mk({ id: "suite-event:100", tier: 100, crossedAtMs: Date.now() - 10 * 60 * 1000 }));
+  await sleep(1200);   // the 1s countdown tick has to run at least once
+  ok("a prompt whose two minutes elapsed retires itself", !shown());
+
+  // ── 6. Reporting is opt-in, and the footer must not overclaim. ──
+  window.fetch = async (u, o) => {
+    const s = String(u);
+    // Model the sidecar: answering marks the prompt answered, so the very next /api/events
+    // stops offering it. A stub that keeps serving an answered prompt would make the card
+    // reappear on the load() that follows an answer, which is a fault in the stub and not in
+    // the widget - the real server clears it.
+    if (s.indexOf("/api/events/reward") >= 0) { posted.push(JSON.parse(o.body)); promptState = null; return new Response("{}", { status: 200 }); }
+    if (s.indexOf("/api/events") >= 0) {
+      return new Response(JSON.stringify({
+        feed: { source: "live", revision: 1, fetchedAt: Date.now(), checkedAt: Date.now(), lastError: null },
+        reporting: false,
+        rewardPrompt: mk({ id: "suite-event:15", tier: 15, observed: "SEEN" }),
+        events: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return realFetch(u, o);
+  };
+  await window.__battReload();
+  await sleep(160);
+  ok("(control) the card is up with reporting off", shown());
+  ok("with reporting OFF the footer does not claim the answer helps everyone",
+     txt("#rwfoot").indexOf("for everyone") < 0, txt("#rwfoot"));
+  ok("...and says how to turn sharing on", txt("#rwfoot").indexOf("Settings") >= 0, txt("#rwfoot"));
+
+  window.fetch = realFetch;
+  return out;
+})()`;
+
+// ── Suite: the event ladder — Orison first, the guesses visible, and labelled as guesses ─────
+//
+// Three things Sub asked for on 2026-08-22, looking at this widget: put Siege of Orison first,
+// show the rewards (five of six tiers read "Reward not known yet" while events.json held a
+// candidate name for every one of them), and stop the ladder inventing precision it does not have.
+//
+// ⚠️ EVERY VALUE BELOW IS THE SUITE'S OWN. data/events.json is a live research artefact — it has
+// already turned tests red twice by being edited, once on `contracts` and once on `rewards` — so
+// this drives a stubbed /api/events and reads nothing off the shipped file. Tiers and totals are
+// the same kind of value and are next.
+const EVENTLADDER = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  const FIX = {
+    feed: { source: "live", revision: 9, fetchedAt: Date.now(), checkedAt: Date.now(), lastError: null },
+    reporting: true,
+    rewardPrompt: null,
+    events: [{
+      id: "suite-orison", label: "Suite Orison", log: "Suite Orison", status: "current",
+      total: 1000, points: 150, pct: 15, unpriced: 0,
+      contractsPriced: 2, contractsKnown: 7,
+      contributions: [], rewardsUnknown: false,
+      tiers: [
+        { pct: 15, points: 150, reached: true,
+          rewards: [{ name: "SUITE MEASURED PISTOL", item: null, owned: true }], candidates: [] },
+        { pct: 40, points: 400, reached: false,
+          rewards: [], candidates: [{ name: "SUITE CANDIDATE ARMOR" }] },
+        { pct: 90, points: 900, reached: false, rewards: [], candidates: [] },
+      ],
+    }],
+  };
+
+  const realFetch = window.fetch;
+  let posted = null;
+  window.fetch = async (u, o) => {
+    const s = String(u);
+    // Ordered: the reward path contains the events path, so it has to be tested first.
+    if (s.indexOf("/api/events/reward") >= 0) {
+      posted = JSON.parse(o && o.body ? o.body : "{}");
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (s.indexOf("/api/events") >= 0) {
+      return new Response(JSON.stringify(FIX), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return realFetch(u, o);
+  };
+  await window.__battReload();
+  await sleep(250);
+
+  // Defensive readers: a detail expression is evaluated EAGERLY, so reaching into an element that
+  // is not there kills the suite and reports it as a small pass.
+  const tabs = () => [].slice.call(document.querySelectorAll("#vnav .vt"));
+  const labels = () => tabs().map((b) => b.textContent);
+  const txt = (sel) => { const n = document.querySelector(sel); return n ? n.textContent : "(no " + sel + ")"; };
+  const bodyTxt = () => txt("#body");
+
+  // ── 1. Siege of Orison first, and SELECTED. Order alone would be cosmetic. ──
+  ok("the event gets a tab at all", labels().indexOf("Suite Orison") >= 0, labels().join(" | "));
+  ok("both views are offered", tabs().length === 2, labels().join(" | "));
+  ok("🔴 the event is the FIRST tab, ahead of the giver track", labels()[0] === "Suite Orison", labels().join(" | "));
+  ok("🔴 ...and it is the one SELECTED on load", !!tabs()[0] && tabs()[0].classList.contains("on"), labels().join(" | "));
+  ok("...which is what the header shows", txt("#who") === "Suite Orison", txt("#who"));
+  ok("the giver track is still reachable, just last", labels()[1] !== "Suite Orison", labels().join(" | "));
+
+  // ── 2. The rewards are ON SCREEN. This is the part Sub could not see at all. ──
+  const loot = () => [].slice.call(document.querySelectorAll("#body .evloot"));
+  const lootTxt = () => loot().map((d) => d.textContent).join(" ~ ");
+  ok("the ladder drew one loot row per tier", loot().length === 3, String(loot().length));
+  // POSITIVE FIRST: every separation assertion below is of the "X is not Y" shape, and an empty
+  // ladder satisfies all of them for free.
+  ok("the MEASURED reward is on screen", lootTxt().indexOf("SUITE MEASURED PISTOL") >= 0, lootTxt());
+  ok("🔴 the CANDIDATE is on screen too — five blanks became five leads", lootTxt().indexOf("SUITE CANDIDATE ARMOR") >= 0, lootTxt());
+  ok("a tier with neither still says so rather than rendering blank",
+     lootTxt().indexOf("not known yet") >= 0, lootTxt());
+
+  // ── 3. ...and a guess does not look like a measurement. ──
+  const cands = [].slice.call(document.querySelectorAll("#body .evloot .it.cand"));
+  const meas = [].slice.call(document.querySelectorAll("#body .evloot .it")).filter((s) => !s.classList.contains("cand"));
+  const cname = cands.length ? cands[0].textContent : "(no candidate element)";
+  const mname = meas.length ? meas[0].textContent : "(no measured element)";
+  ok("exactly one item is drawn as a candidate", cands.length === 1, String(cands.length));
+  ok("exactly one is drawn as a measurement", meas.length === 1, String(meas.length));
+  ok("...and it is the guess that is marked, not the measurement", cname.indexOf("SUITE CANDIDATE ARMOR") >= 0, cname);
+  ok("🔴 the candidate says the word UNCONFIRMED", cname.indexOf("UNCONFIRMED") >= 0, cname);
+  ok("🔴 ...and the measured reward does not", mname.indexOf("UNCONFIRMED") < 0, mname);
+  ok("🔴 a candidate is never ticked as owned", cands.length > 0 && !cands[0].classList.contains("owned"), cname);
+  ok("...and carries no check mark", cname.indexOf("✔") < 0, cname);
+  // The control for the line above: the owned measurement DOES carry one, so "no check mark" is
+  // a real difference rather than a widget that stopped drawing them.
+  ok("...while the owned measurement still does", mname.indexOf("✔") >= 0, mname);
+  const ccs = cands.length ? getComputedStyle(cands[0]) : null;
+  const mcs = meas.length ? getComputedStyle(meas[0]) : null;
+  ok("...and it is drawn differently, not merely classed differently",
+     !!ccs && !!mcs && ccs.color !== mcs.color, (ccs ? ccs.color : "?") + " vs " + (mcs ? mcs.color : "?"));
+  ok("...in italic, which nothing else in this ladder is", !!ccs && ccs.fontStyle === "italic", ccs ? ccs.fontStyle : "?");
+  ok("a legend says what UNCONFIRMED means", txt("#body .evkey").indexOf("verified") >= 0, txt("#body .evkey"));
+  ok("...and points at how to correct it", txt("#body .evkey").indexOf("Wrong?") >= 0, txt("#body .evkey"));
+
+  // ── 4. The ladder states what it cannot know, and offers no missions-to-go figure. ──
+  ok("🔴 the ladder states its own price coverage", txt("#body .evmeta").indexOf("2 of 7 contracts") >= 0, txt("#body .evmeta"));
+  ok("...and says outright it cannot turn a tier into a mission count",
+     txt("#body .evmeta").indexOf("how many missions a tier is") >= 0, txt("#body .evmeta"));
+  ok("the Journal advice survives beside it", txt("#body .evmeta").indexOf("in-game Journal") >= 0, txt("#body .evmeta"));
+
+  // ── 5. The correction path, on every tier rather than only after a crossing. ──
+  const fixes = () => [].slice.call(document.querySelectorAll("#body .evfix"));
+  ok("every tier carries a way to say we have it wrong", fixes().length === 3, String(fixes().length));
+  const card = () => document.getElementById("rwcard");
+  ok("(control) no card is up before it is pressed", card().hidden);
+  if (fixes()[1]) fixes()[1].click();
+  await sleep(80);
+  ok("pressing it raises the question card", !card().hidden, txt("#rwcard"));
+  ok("...naming the tier it is about", txt("#rwcard").indexOf("40%") >= 0, txt("#rwcard"));
+  ok("...and the name it is asking about", txt("#rwcard").indexOf("SUITE CANDIDATE ARMOR") >= 0, txt("#rwcard"));
+  ok("...and saying that name is unverified", txt("#rwcard").indexOf("UNCONFIRMED") >= 0, txt("#rwcard"));
+  // A crossing card retires itself after two minutes because it arrived unbidden. This one was
+  // asked for, so taking it away on a timer would be discarding the player's own work.
+  ok("...with no countdown, because the player opened it themselves",
+     !document.querySelector("#rwcard .rwclock"), txt("#rwfoot"));
+
+  // 🔴 The poll must not close it. The sidecar has no prompt for a self-raised correction and
+  // never will, so the plain "no prompt means hide" rule would shut it a second after it opened.
+  await window.__battReload();
+  await sleep(200);
+  ok("🔴 a routine poll does not close the card out from under the player", !card().hidden, txt("#rwcard"));
+
+  const btns = () => [].slice.call(card().querySelectorAll("button")).map((b) => b.textContent);
+  const press = (label) => {
+    const b = [].slice.call(card().querySelectorAll("button")).filter((x) => x.textContent === label)[0];
+    if (b) b.click();
+    return !!b;
+  };
+  ok("agreeing is one click", btns().indexOf("Yes") >= 0, btns().join(" | "));
+  ok("...and disagreeing is the other", btns().indexOf("No — it was…") >= 0, btns().join(" | "));
+  press("Yes");
+  await sleep(300);
+  ok("🔴 the report is posted by EVENT and TIER — it has no prompt id to answer",
+     !!posted && posted.event === "suite-orison" && posted.tier === 40, JSON.stringify(posted));
+  ok("...and carries no id, which would answer somebody else's question",
+     !!posted && !posted.id, JSON.stringify(posted));
+  ok("...carrying the name being agreed with", !!posted && posted.name === "SUITE CANDIDATE ARMOR", JSON.stringify(posted));
+  ok("...as a claim, never as a witnessed sighting", !!posted && posted.source === "corrected", JSON.stringify(posted));
+  ok("...and the card closes on the answer", card().hidden);
+
+  // A tier we already publish asks a DIFFERENT question — "is what we list right?" — because
+  // "we have this one wrong" is the report worth the most.
+  posted = null;
+  if (fixes()[0]) fixes()[0].click();
+  await sleep(80);
+  ok("a MEASURED tier can be corrected too", !card().hidden, txt("#rwcard"));
+  ok("...and is asked about as something we list, not as something the app saw",
+     txt("#rwcard").indexOf("what we list") >= 0 && txt("#rwcard").indexOf("saw this arrive") < 0, txt("#rwcard"));
+  document.getElementById("rwx").click();
+  await sleep(60);
+  ok("dismissing it posts nothing", posted === null, JSON.stringify(posted));
+
+  // ── 6. Once the player picks a tab, nothing may move them off it. ──
+  const giver = tabs().filter((b) => b.textContent !== "Suite Orison")[0];
+  ok("(control) the giver tab is there to press", !!giver, labels().join(" | "));
+  if (giver) giver.click();
+  await sleep(120);
+  ok("clicking the giver tab switches to it", txt("#who") !== "Suite Orison", txt("#who"));
+  await window.__battReload();
+  await sleep(200);
+  ok("🔴 a poll does not drag the view back to the event once a tab is chosen",
+     txt("#who") !== "Suite Orison", txt("#who"));
+
+  window.fetch = realFetch;
+  return out;
+})()`;
+
+// ── 🔴 THE COMMUNITY PRICE POOL, AS THE PLAYER READS IT (flight poolfill, 2026-08-24) ────────
+//
+// The block this guards used to be a green box labelled "you paid", drawn ABOVE the shop list.
+// Sub: "I don't really need it to tell me what I bought. I just wanted to update the price for
+// everybody." It is now the first GROUP in that list, in the same row idiom as every shop, and
+// what it carries is a price plus who confirmed it and when.
+//
+// 🔑 IT DRIVES `render()` DIRECTLY WITH A FIXTURE, and that is not laziness. The pool is a LIVE
+// endpoint whose contents change whenever anybody in the world shops, so a suite that fetched it
+// would pass or fail on what strangers did this afternoon — the worst kind of flake, because it
+// reads as a regression in the widget. `tools/test-widgets-sandbox.mjs` switches the pool off for
+// the same reason it switches the other two price endpoints off.
+// ⚠️ A BARE call, never `window.render` — a script-scoped `let`/`function` shadows an own-property
+// of the same name on `window`, so the qualified form reaches a binding the page never reads and
+// the suite then silently measures the sidecar's real board instead of the fixture.
+const VERSEPOOL = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400);
+
+  // 🔴 ONE LIST. Flight onerow deleted the SEEN IN GAME group this suite used to be about. A
+  // community confirmation now arrives either ON a survey row (q.confirmed) or as a row already
+  // sitting in its own place group (q.observedOnly), and the assertions below are all about the
+  // difference between those two and the block they replaced. Sub, on the block:
+  //
+  //   "it tells me 25 days ago 7 aUEC and also 7 aUEC four hours ago. It's just too much."
+  //
+  // ⚠️ A FIXTURE, not the live endpoint. The pool is a real network resource whose contents change
+  // when a stranger buys a drink, and a suite that fetched it would pass or fail on that.
+  // ⚠️ No backticks and no backslashes anywhere in this suite, comments included: the body IS a
+  // template literal, so a quoted selector ends the string and a newline escape ends a comment.
+  const nowSec = Math.round(Date.now() / 1000);
+  const DAY = 86400;
+  const fixture = {
+    query: "poolprobe",
+    results: [{
+      name: "Pool Probe Widget",
+      kind: "item",
+      shopCount: 9,
+      unplacedConfirmations: 3,
+      quotes: [
+        // Sub's own case: UEX says 90 days, a player confirmed the same number this morning, and
+        // the placement is only place-level so the AGE moves and the number does not.
+        { terminal: "Cargo Services - Probeville", system: "Stanton", body: null, place: "Probeville",
+          price: 111, asOf: nowSec - 90 * DAY, minutes: null, metres: null, jumps: null,
+          travelBasis: null, containment: "same-place",
+          confirmed: { asOf: nowSec - 120, contributors: 4, samples: 9, mine: true,
+            precision: "place-level", token: "SCShop_Probe_Cargo", setPrice: false } },
+        // An exact placement: ours supplied the price as well.
+        { terminal: "Refinery Shop - Probeville", system: "Stanton", body: null, place: "Probeville",
+          price: 222, asOf: nowSec - 200 * DAY, minutes: null, metres: null, jumps: null,
+          travelBasis: null, containment: "same-place",
+          confirmed: { asOf: nowSec - 3 * DAY, contributors: 1, samples: 1, mine: false,
+            precision: "exact", token: "SCShop_Probe_Refinery", setPrice: true } },
+        // A row nobody has confirmed. The control group.
+        { terminal: "Quiet Shop - Probeville", system: "Stanton", body: null, place: "Probeville",
+          price: 333, asOf: nowSec - 200 * DAY, minutes: null, metres: null, jumps: null,
+          travelBasis: null, containment: "same-place" },
+        // Placed but never named: a confirmation with no UEX terminal under it, which belongs IN
+        // the list under the station it is at rather than in a block of raw tokens.
+        { terminal: "SCShop_Probe_Unnamed", system: "Stanton", body: null, place: "Faraway",
+          price: 444, asOf: nowSec - 5 * DAY, minutes: null, metres: null, jumps: null,
+          travelBasis: null, containment: "same-system", observedOnly: true, placeId: "x-faraway",
+          confirmed: { asOf: nowSec - 5 * DAY, contributors: 2, samples: 2, mine: false,
+            token: "SCShop_Probe_Unnamed", setPrice: true } },
+      ],
+      low: 111, high: 444, rentLow: null, rentHigh: null,
+    }],
+    origin: null,
+    order: null,
+  };
+  render(fixture);
+  await sleep(120);
+
+  // POSITIVE FIRST, always. Every must-not below is free if the fixture never landed, which is the
+  // most dangerous failure this harness has — it passes while measuring nothing.
+  const rows = [...document.querySelectorAll("#results .shops .grow")];
+  ok("the fixture rendered a shop list", rows.length === 4, rows.length + " rows");
+  // 🔴 THE SOURCE MARK LIVES INSIDE THE AGE PILL NOW — flight onepill. It used to be a .tag chip
+  // sitting beside the pill, which is exactly what made Sub read one phrase as two boxes.
+  const srcOf = (r) => {
+    if (!r) return "(no row)";
+    const s = r.querySelector(".age .src");
+    return s ? (s.textContent || "").trim() : "(no .src)";
+  };
+  const marked = rows.filter((r) => srcOf(r) === "SCO");
+  ok("three of those rows carry a confirmation", marked.length === 3, marked.length);
+
+  // ══ 🔴 THERE IS NO SECOND LIST ══════════════════════════════════════════════════════════════
+  ok("🔴 no observations group exists any more",
+     document.querySelectorAll(".obgrp").length === 0,
+     document.querySelectorAll(".obgrp").length + " .obgrp");
+  const headings = [...document.querySelectorAll("#results .gplace")].map((h) =>
+    (h.textContent || "").toLowerCase());
+  ok("🔴 no group calls itself Seen in game",
+     headings.indexOf("seen in game") === -1, headings.join(" | "));
+  ok("every group heading is a PLACE",
+     headings.length === 2 && headings.indexOf("probeville") >= 0 && headings.indexOf("faraway") >= 0,
+     headings.join(" | "));
+
+  // 🔴 THE DUPLICATE. This is the assertion the whole rework exists to make true: at Probeville the
+  // survey says 111 aUEC and a player confirmed 111 aUEC, and that is ONE row. The design this
+  // replaced drew both, which is the sentence Sub objected to.
+  const probeGroup = [...document.querySelectorAll("#results .grp")].find((g) => {
+    const h = g.querySelector(".gplace");
+    return h && (h.textContent || "").toLowerCase() === "probeville";
+  });
+  const probeRows = probeGroup ? [...probeGroup.querySelectorAll(".grow")] : [];
+  ok("Probeville draws its three shops", probeRows.length === 3, probeRows.length + " rows");
+  const priceOf = (r) => {
+    const p = r.querySelector(".price");
+    return p ? (p.textContent || "").replace(" aUEC", "").trim() : "(no price)";
+  };
+  const prices = probeRows.map(priceOf);
+  ok("🔴 no price is printed twice at one place — the 7 aUEC twice Sub rejected",
+     prices.length === new Set(prices).size, prices.join(" | "));
+
+  // ══ 🔴 THE AGE IS THE CONFIRMATION'S ════════════════════════════════════════════════════════
+  // Sub: "instead of Cargo Services at Levski saying 25 days old, it would simply say four hours
+  // ago". Asserted as a BAND rather than a string, because the string is a rounding of a clock.
+  const rowFor = (name) => probeRows.find((r) => {
+    const w = r.querySelector(".gshop");
+    return w && (w.textContent || "").indexOf(name) >= 0;
+  });
+  const bandOf = (r) => {
+    if (!r) return "(no row)";
+    const a = r.querySelector(".age");
+    return a ? a.className.replace("age", "").trim() : "(no age)";
+  };
+  const cargo = rowFor("Cargo Services");
+  const quiet = rowFor("Quiet Shop");
+  ok("🔴 a confirmed row ages from the CONFIRMATION, not from UEX",
+     bandOf(cargo) === "live", bandOf(cargo));
+  ok("...while the identically-old survey row beside it does not",
+     bandOf(quiet) === "ancient", bandOf(quiet));
+  ok("the two therefore paint different colours", (() => {
+       const a = cargo ? cargo.querySelector(".age") : null;
+       const b = quiet ? quiet.querySelector(".age") : null;
+       return !!a && !!b && getComputedStyle(a).color !== getComputedStyle(b).color;
+     })(), bandOf(cargo) + " vs " + bandOf(quiet));
+
+  // ══ 🔴 ONE PILL, AND BOTH SOURCES NAMED — flight onepill ════════════════════════════════════
+  // Sub, looking at the two-chip rendering: "maybe it could be four hours ago and then a space and
+  // then say SCO", and then exactly: "[5h SCO] is what I was looking for."
+  const scoOf = (r) => (r ? r.querySelector(".age .src") : null);
+  const pillOf = (r) => (r ? r.querySelector(".age") : null);
+  ok("🔴 a confirmed row is marked SCO", srcOf(cargo) === "SCO",
+     cargo ? (cargo.textContent || "").trim() : "(no row)");
+  // 🔴 THE HALF THAT USED TO BE MISSING. An unconfirmed row carried NO mark at all, so the lone
+  // SCO had nothing to be read against — which is the question Sub knew he would be asked live:
+  // "people are going to inevitably ask me, what does SCO mean?" The contrast is the answer.
+  ok("🔴 ...and an UNCONFIRMED row is marked UEX, not left blank", srcOf(quiet) === "UEX",
+     quiet ? (quiet.textContent || "").trim() : "(no row)");
+  ok("every drawn row names a source, one of exactly two words", (() => {
+       const words = rows.map(srcOf);
+       return words.length === 4 && words.every((w) => w === "SCO" || w === "UEX");
+     })(), rows.map(srcOf).join(" | "));
+
+  // 🔴 ONE BOX, NOT TWO. This is the assertion the flight exists to make true: the mark is a CHILD
+  // of the age pill, so there is exactly one bordered chip carrying "7h SCO" rather than a [7h]
+  // and a [SCO]. Asserted structurally AND by counting the chips, because either alone can pass on
+  // a rendering Sub would still call two pills.
+  ok("🔴 the source mark is INSIDE the age pill, not a chip beside it", (() => {
+       const p = pillOf(cargo), s = scoOf(cargo);
+       return !!p && !!s && s.parentElement === p;
+     })(), cargo ? [...cargo.children].map((c) => c.className).join(" / ") : "(no row)");
+  ok("🔴 no .tag chip survives between the age and the price", (() => {
+       if (!cargo) return false;
+       const kids = [...cargo.children].map((c) => c.className.split(" ")[0]);
+       const ai = kids.indexOf("age");
+       return ai >= 0 && kids[ai + 1] === "price";
+     })(), cargo ? [...cargo.children].map((c) => c.className).join(" / ") : "(no row)");
+  ok("🔴 and the old SCO chip class is gone from the document",
+     document.querySelectorAll(".tag.sco").length === 0,
+     document.querySelectorAll(".tag.sco").length + " .tag.sco");
+  // The pill reads as one phrase, in Sub's own order: number first, then who.
+  // ⚠️ No regex — a suite body IS a template literal, so an escape is eaten before the pattern is
+  // ever compiled and a mangled pattern simply never matches, which passes every must-not check.
+  ok("the pill reads NUMBER then SOURCE, in one string", (() => {
+       const p = pillOf(cargo);
+       const t = p ? (p.textContent || "").trim() : "";
+       const digits = "0123456789";
+       return t.length > 4 && digits.indexOf(t.charAt(0)) >= 0
+         && t.slice(-3) === "SCO" && t.indexOf(" SCO") > 0;
+     })(), pillOf(cargo) ? (pillOf(cargo).textContent || "").trim() : "(no pill)");
+
+  // ══ 🔴 FRESHNESS AND SOURCE ARE ORTHOGONAL ══════════════════════════════════════════════════
+  // The bright/dim SCO split is DELETED. It keyed off confirmed.setPrice — bright when our
+  // observation set the price, dim when only the age was ours — and Sub could not decode it
+  // because there is nothing to decode: foldsOnto only folds a place-level confirmation when the
+  // price it saw already equals the row's, so the dim case is a number we verified. The rule that
+  // replaces it: colour says HOW CURRENT, the word says WHO, and neither may leak into the other.
+  //
+  // 🔑 Cargo (setPrice false) and Refinery (setPrice true) are the two sides of the deleted split
+  // and they must now be styled IDENTICALLY, while their age BANDS legitimately differ.
+  const refinery = rowFor("Refinery Shop");
+  ok("🔴 the two kinds of fold are marked IDENTICALLY — the deleted bright/dim split", (() => {
+       const a = scoOf(cargo), b = scoOf(refinery);
+       if (!a || !b) return false;
+       const ca = getComputedStyle(a), cb = getComputedStyle(b);
+       return ca.opacity === cb.opacity && ca.fontWeight === cb.fontWeight
+         && ca.letterSpacing === cb.letterSpacing;
+     })(), scoOf(cargo) ? "opacity " + getComputedStyle(scoOf(cargo)).opacity
+       + " vs " + (scoOf(refinery) ? getComputedStyle(scoOf(refinery)).opacity : "?") : "(none)");
+  // 🔴 THE POSITIVE HALF, and without it the assertion above is satisfied by a page that styles
+  // nothing at all. The two rows carry DIFFERENT bands (live vs recent), so their pills must
+  // still differ in colour — proving the ladder is live while the source styling is flat.
+  ok("...while their FRESHNESS still separates them", (() => {
+       const a = pillOf(cargo), b = pillOf(refinery);
+       return !!a && !!b && getComputedStyle(a).color !== getComputedStyle(b).color;
+     })(), bandOf(cargo) + " vs " + bandOf(refinery));
+  // 🔴 AND THE SOURCE WORD MAY NOT PULL COLOUR BACK INTO ITSELF. It inherits currentColor from the
+  // band, so a SCO pill and a UEX pill in the SAME band are the same colour — if the word ever
+  // took its own hue, the thing just deleted would be back under another name.
+  ok("🔴 the source word takes no colour of its own — it inherits the band", (() => {
+       const s = scoOf(cargo), p = pillOf(cargo);
+       if (!s || !p) return false;
+       return getComputedStyle(s).color === getComputedStyle(p).color;
+     })(), scoOf(cargo) ? getComputedStyle(scoOf(cargo)).color + " vs "
+       + getComputedStyle(pillOf(cargo)).color : "(none)");
+
+  // ══ 🔑 THE COUNT IS A TOOLTIP — Sub, 2026-08-24: "2 people can be a tool tip when they hover" ═
+  const face = cargo ? (cargo.textContent || "") : "";
+  ok("🔴 the contributor count is NOT on the face of the row",
+     face.indexOf("people") === -1 && face.indexOf("4 ") === -1, face.trim());
+  ok("...nor is the you footnote", face.toLowerCase().indexOf("you") === -1, face.trim());
+  // Positive half: it still has to be REACHABLE, or this is a deletion rather than a move.
+  // 🔑 The tooltip is on the PILL now, because the pill is the one element.
+  const tip = pillOf(cargo) ? (pillOf(cargo).title || "") : "";
+  ok("but it IS in the SCO tooltip", tip.indexOf("4 different players") >= 0, tip.slice(0, 120));
+  ok("...along with whether one of them was you", tip.indexOf("was you") >= 0, tip.slice(-60));
+  ok("and it counts PEOPLE, never the 9 purchases behind them",
+     tip.indexOf("4 different players") >= 0 && tip.indexOf("9 purchases") >= 0,
+     tip.slice(0, 160));
+
+  // ══ 🔴 A PLACED CONFIRMATION IS IN THE LIST, UNDER ITS OWN STATION ══════════════════════════
+  // Sub: "The ones that we can't merge with UEX because they use different names, just put those
+  // in line with everything else, but still have it sorted by distance."
+  const faraway = [...document.querySelectorAll("#results .grp")].find((g) => {
+    const h = g.querySelector(".gplace");
+    return h && (h.textContent || "").toLowerCase() === "faraway";
+  });
+  const placed = faraway ? faraway.querySelector(".grow") : null;
+  ok("a confirmation we cannot name is a row inside its own place group", !!placed,
+     faraway ? "found" : "(no Faraway group)");
+  ok("...named with the game's token, tidied for reading rather than raw", (() => {
+       const w = placed ? placed.querySelector(".gshop") : null;
+       const t = w ? (w.textContent || "").trim() : "";
+       return t.length > 0 && t.indexOf("SCShop") === -1 && t.indexOf("Probe") >= 0;
+     })(), placed ? (placed.querySelector(".gshop") || {}).textContent : "(none)");
+  ok("...with the raw token still reachable on hover", (() => {
+       const w = placed ? placed.querySelector(".gshop") : null;
+       return !!w && (w.title || "").indexOf("SCShop_Probe_Unnamed") >= 0;
+     })(), placed ? (placed.querySelector(".gshop") || {}).title : "(none)");
+
+  // ══ 🔴 WHAT WE CANNOT PLACE IS COUNTED, NEVER NAMED ═════════════════════════════════════════
+  // Sub: "The other locations that I'm showing, I don't know where those would be. It's useless
+  // information to the viewer." A count is not a location, and swallowing it silently would break
+  // this codebase's rule that a discarded thing is said.
+  const more = document.querySelector("#results .more");
+  const moreText = more ? (more.textContent || "") : "";
+  ok("the unplaceable confirmations are counted on the notes line",
+     moreText.indexOf("3 more confirmations") >= 0, moreText);
+  ok("🔴 and none of their names is printed anywhere",
+     (document.querySelector("#results").textContent || "").indexOf("SCShop_") === -1,
+     moreText);
+  // 🔴 A ROW WE ADDED IS NOT A UEX SHOP. shopCount is 9 and four rows are drawn, one of which we
+  // invented — so the hidden figure is 9 - 3, not 9 - 4. Getting this wrong understates it by
+  // exactly the number of confirmations on screen.
+  ok("the hidden-shop count excludes the row we added ourselves",
+     moreText.indexOf("+6 more shops") >= 0, moreText);
+
+  // ══ 🔴 EVERY BAND PAINTS, AND THEY ALL PAINT DIFFERENTLY ════════════════════════════════════
+  // A class-name check cannot see this: for months every band class had NO colour rule anywhere
+  // and rendered identically. Probe the real computed colour, require the five to be distinct,
+  // AND require none of them to match an unstyled sibling — because a base colour on .age would
+  // make the distinctness check pass for free while the pills stayed unpainted.
+  const BANDS = ["live", "fresh", "recent", "stale", "ancient"];
+  // 🔴 DO NOT STRING-PARSE THE COMPUTED COLOUR. getComputedStyle serialises a color-mix() in oklch
+  // as "oklch(0.803 0.167 127.7)" — three SPACE-separated values in a space this metric knows
+  // nothing about — so an rgb() parser returns NaN for exactly the three middle bands. Every
+  // comparison against a NaN is false, so the inversion check below reported ZERO inversions while
+  // measuring nothing at all. Caught by the first run of this very assertion, and it is the
+  // cheapest false pass in the file: the metric was wrong, not the ladder.
+  // 🔑 Let the BROWSER do the conversion. A 1x1 canvas fill accepts any CSS colour and hands back
+  // real bytes, so this works for rgb, oklch and anything either ever becomes.
+  const cvs = document.createElement("canvas");
+  cvs.width = 1; cvs.height = 1;
+  const ctx = cvs.getContext("2d");
+  const rgbOf = (css) => {
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = "#000000";
+    ctx.fillStyle = css;          // ignored silently if unparseable, leaving black
+    ctx.fillRect(0, 0, 1, 1);
+    const d = ctx.getImageData(0, 0, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  };
+  // How ALARMING a colour reads, as red minus green. A green sits deeply negative, a red deeply
+  // positive, and every warm step between them climbs. Crude on purpose, and measured: it is
+  // strictly monotonic under the shipped ramp in all 16 skins with a minimum step of 25 of 255,
+  // so a threshold of 10 has real headroom without going slack.
+  const alarmOf = (c) => { const v = rgbOf(c); return v[0] - v[1]; };
+  const probeTheme = () => {
+    const probe = document.createElement("div");
+    probe.style.position = "absolute";
+    probe.style.left = "-9999px";
+    const spans = BANDS.map((b) => {
+      const s = document.createElement("span");
+      s.className = "age " + b;
+      s.textContent = "x";
+      probe.appendChild(s);
+      return s;
+    });
+    const bare = document.createElement("span");
+    bare.textContent = "x";
+    probe.appendChild(bare);
+    document.body.appendChild(probe);
+    const cols = spans.map((s) => getComputedStyle(s).color);
+    const bareCol = getComputedStyle(bare).color;
+    probe.remove();
+    return { cols: cols, bareCol: bareCol };
+  };
+
+  // 🔴 SWEEP SKINS, NEVER ONE. This is the whole reason flight onepill touched the ladder: the
+  // rules it replaced painted the fresh band with the cyan token and the recent band with the
+  // cyan-dim one, which are the MANUFACTURER ACCENT and so a different hue in every theme. On
+  // drake — the skin Sub
+  // screenshotted — that rendered 7h orange, 8d grey, 32d grey, 3mo orange; on argo a 3-month
+  // reading came out GREEN while a 7-hour one came out ORANGE. Every one of those skins passed a
+  // one-theme distinctness check, because in the base theme the accent happens to be a cyan
+  // sitting neatly between green and amber. A ladder is only correct if it is correct everywhere.
+  const root = document.documentElement;
+  const themeWas = root.getAttribute("data-theme");
+  // Base plus the four whose accent was measurably breaking the ladder, plus one cool control.
+  const SKINS = ["mobiglas", "drake", "argo", "esperia", "banu", "mirai"];
+  const broken = [];
+  const inverted = [];
+  const flat = [];
+  const unreadable = [];
+  const ends = [];
+  for (const sk of SKINS) {
+    if (sk === "mobiglas") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", sk);
+    const res = probeTheme();
+    if (new Set(res.cols).size !== BANDS.length) broken.push(sk + ": " + res.cols.join("/"));
+    if (res.cols.some((c) => c === res.bareCol)) flat.push(sk + " bare=" + res.bareCol);
+    const alarms = res.cols.map(alarmOf);
+    // The metric has to be LIVE before its verdict means anything — see the canvas note above.
+    if (alarms.some((a) => a !== a)) unreadable.push(sk + ": " + alarms.join("/"));
+    ends.push(sk + " live=" + alarms[0] + " ancient=" + alarms[alarms.length - 1]);
+    if (!(alarms[alarms.length - 1] - alarms[0] > 100)) {
+      unreadable.push(sk + " ends too close: " + alarms.join("/"));
+    }
+    for (let i = 1; i < alarms.length; i++) {
+      if (alarms[i] <= alarms[i - 1] + 10) {
+        inverted.push(sk + " " + BANDS[i - 1] + "(" + alarms[i - 1] + ") -> "
+          + BANDS[i] + "(" + alarms[i] + ")");
+      }
+    }
+  }
+  if (themeWas) root.setAttribute("data-theme", themeWas); else root.removeAttribute("data-theme");
+
+  ok("🔴 all five recency bands paint DISTINCT colours, in every skin swept",
+     broken.length === 0, broken.length ? broken.join(" | ") : SKINS.join(", ") + " all distinct");
+  ok("🔴 and not one of them is the inherited colour of an unstyled pill",
+     flat.length === 0, flat.length ? flat.join(" | ") : "none inherited in " + SKINS.length + " skins");
+  // 🔴 POSITIVE FIRST, and this one is not ceremony — it is the assertion that caught the flight's
+  // own false pass. Until the canvas went in, the three middle bands measured NaN, every ordering
+  // comparison was therefore false, and the inversion check below reported a clean ladder while
+  // reading nothing. A metric that cannot produce a number cannot produce a verdict.
+  ok("🔴 the warmth metric actually reads every band, in every skin swept",
+     unreadable.length === 0, unreadable.length ? unreadable.join(" | ") : ends.join("  ·  "));
+  // 🔴 THE INVERSION CHECK, and it is the assertion this flight added. A distinctness check alone
+  // is satisfied by a ladder that runs green, ORANGE, grey, orange, red — five different colours
+  // saying nothing, which is what shipped. Fresher must always read cooler than staler.
+  ok("🔴 fresher NEVER reads more alarming than staler, in any skin swept",
+     inverted.length === 0,
+     inverted.length ? inverted.join(" | ") : "monotonic across " + SKINS.join(", "));
+
+  // ══ 🔴 A ROW WITH NO STATABLE AGE DRAWS NO PILL AT ALL ══════════════════════════════════════
+  // Neither feed can produce one today — item-shops.ts drops a quote whose date is <= 0 and
+  // verse-commodities.ts drops one with no asOf — so this is the renderer's stated behaviour if
+  // either guard is ever relaxed, rather than whatever ageBand() happens to do with a null.
+  // A bare source word is the WRONG answer: the pill exists to say how current a reading is, and
+  // with no date there is nothing to say. It would also be the one pill the band ladder cannot
+  // colour, i.e. an inherited colour that looks deliberate — the --good trap exactly.
+  const undated = {
+    query: "undatedprobe",
+    results: [{
+      name: "Undated Probe Widget", kind: "item", shopCount: 1, quotes: [
+        { terminal: "Dateless Shop - Probeville", system: "Stanton", body: null, place: "Probeville",
+          price: 555, asOf: null, minutes: null, metres: null, jumps: null,
+          travelBasis: null, containment: "same-place" },
+      ], low: 555, high: 555, rentLow: null, rentHigh: null,
+    }],
+    origin: null, order: null,
+  };
+  render(undated);
+  await sleep(120);
+  const undatedRows = [...document.querySelectorAll("#results .shops .grow")];
+  // POSITIVE FIRST: without this, every must-not below is free on a render that drew nothing.
+  ok("the undated fixture still drew its row", undatedRows.length === 1,
+     undatedRows.length + " rows");
+  ok("...carrying its price, so the row is not degraded", (() => {
+       const p = undatedRows[0] ? undatedRows[0].querySelector(".price") : null;
+       return !!p && (p.textContent || "").indexOf("555") >= 0;
+     })(), undatedRows[0] ? (undatedRows[0].textContent || "").trim() : "(no row)");
+  ok("🔴 but it draws NO age pill", (() => {
+       const r = undatedRows[0];
+       return !!r && r.querySelectorAll(".age").length === 0;
+     })(), undatedRows[0] ? undatedRows[0].querySelectorAll(".age").length + " .age" : "(no row)");
+  ok("🔴 and no bare source word floating without one", (() => {
+       const r = undatedRows[0];
+       if (!r) return false;
+       const t = (r.textContent || "");
+       return r.querySelectorAll(".src").length === 0
+         && t.indexOf("UEX") === -1 && t.indexOf("SCO") === -1;
+     })(), undatedRows[0] ? (undatedRows[0].textContent || "").trim() : "(no row)");
+
+  return out;
+})()`;
+
+const VERSEFINDER = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400); // let status() land before driving the box
+
+  const box = document.getElementById("q");
+  const search = async (v) => {
+    box.value = v;
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(700); // debounce + the sidecar round trip
+  };
+  const items = () => [...document.querySelectorAll("#results .item")];
+  // 🔴 SURVEY ROWS ONLY. Since flight poolfill the community observations are ALSO .grow
+  // elements inside .shops — deliberately, because they had to stop looking like a different
+  // kind of thing — so an unqualified row selector now returns both lists interleaved and the
+  // first row can be an observation. Every assertion below is about the UEX survey, so the
+  // selector has to say so.
+  // ⚠️ No backticks anywhere in this comment: a suite body IS a template literal, and quoting a
+  // selector the way this codebase normally would ends the string, after which the file still
+  // parses and electron throws at load with no suite name and no line.
+  const shopRows = () => [...document.querySelectorAll("#results .grow:not(.obs)")];
+
+  // Nothing typed is not the same as nothing found — the empty state must invite, not report.
+  ok("with an empty box it prompts rather than listing everything",
+     items().length === 0 && !!document.querySelector("#results .empty"),
+     items().length + " items");
+
+  await search("cannon");
+  ok("a real search returns items", items().length > 0, items().length);
+  ok("...and every one of them names at least one shop",
+     items().every((el) => el.querySelectorAll(".grow:not(.obs)").length > 0));
+
+  // 🔴 THE CORE RULE. A price with no place is the thing this widget must never show.
+  ok("every shop row names its TERMINAL",
+     shopRows().length > 0 && shopRows().every((r) => {
+       const w = r.querySelector(".gshop");
+       return w && w.textContent.trim().length > 0;
+     }), shopRows().length + " rows");
+  ok("every shop row carries a price",
+     shopRows().every((r) => {
+       const p = r.querySelector(".price");
+       return p && /[0-9]/.test(p.textContent);
+     }));
+  // 🔴 Per-quote age. Not the table's age, not an average — this reading's own.
+  // ⚠️ The DETAIL is looked up defensively on purpose. Reaching straight through
+  // shopRows()[0].querySelector(".age").textContent throws when the element is missing, which is
+  // exactly the regression this line exists to catch — and a throw kills the suite instead of
+  // failing it, reporting 4/4 passed for a run that never reached the other twelve assertions.
+  // Found by the negative control, which is the only reason it is written this way.
+  const ageText = () => {
+    const r = shopRows()[0];
+    const a = r ? r.querySelector(".age") : null;
+    return a ? a.textContent : "(no .age element)";
+  };
+  ok("every shop row carries the age of its OWN reading",
+     shopRows().length > 0 && shopRows().every((r) => {
+       const a = r.querySelector(".age");
+       return a && a.textContent.trim().length > 0;
+     }), ageText());
+
+  // 🔴 "The price of X" does not exist: 68% of multi-shop items vary by shop. Any item whose
+  // low and high differ must SAY so rather than letting the first row read as the price.
+  const spread = items().filter((el) => {
+    const m = el.querySelector(".more");
+    return m && m.textContent.indexOf("depending where you buy") > -1;
+  });
+  const multi = items().filter((el) => el.querySelectorAll(".grow:not(.obs)").length > 1);
+  ok("the result set contains multi-shop items at all", multi.length > 0, multi.length);
+  ok("...and at least one states its spread instead of one number",
+     spread.length > 0, spread.length + " of " + multi.length);
+
+  // A truncated shop list must never read as "this is everywhere it is sold".
+  const truncated = items().filter((el) => {
+    const m = el.querySelector(".more");
+    return m && m.textContent.indexOf("more shop") > -1;
+  });
+  /* 🔴 RE-POINTED 2026-08-25, flight suiteaudit. It demanded exactly FIVE survey rows on every
+     truncated card, and the shipped design promises no such thing - in TWO directions, both of
+     them deliberate and both documented in the code it was testing:
+
+       FEWER - verse-routes.ts folds community confirmations in BEFORE the ordering, so the cap
+       applies to the MERGED list. A card with one placed confirmation draws 4 survey + 1 obs.
+       Measured the day this was re-pointed: 3 of the 11 truncated cannon cards.
+
+       MORE - reserveTierRows (verse-proximity.ts) keeps each containment tier best row past the
+       cap. versefinder.html says so in as many words: "a card can legitimately draw 6 or 7".
+       MedPen drew 6 the same afternoon.
+
+     It only went red now because the price pool filled: when poolfill re-pointed it, no cannon
+     card carried a placed row, so counting survey rows still gave 5 and the wrong claim looked
+     right. Data drift was the trigger; the assertion was the fault.
+
+     🔑 THE REPAIR IS TO COMPARE THE RENDER TO ITS OWN INPUT, not to a magic number. Ask the
+     sidecar the same question the widget asked and check the card against the answer: it cannot
+     drift with the corpus, and it still catches the exact regression poolfill was guarding - a
+     note computed from the ROWS ON SCREEN rather than from the survey quotes would be too small
+     by precisely the number of community rows in the card. */
+  let vfPayload = null;
+  try {
+    vfPayload = await (await fetch("/api/verse/search?q=cannon&limit=20&shops=5", { cache: "no-store" })).json();
+  } catch (e) { vfPayload = null; }
+  const vfByName = {};
+  for (const r of ((vfPayload && vfPayload.results) || [])) vfByName[r.name] = r;
+  // The category rides inside .iname as a child span, so the name is the leading text node.
+  const cardName = (el) => {
+    const n = el.querySelector(".iname");
+    return n && n.firstChild ? String(n.firstChild.textContent).trim() : "";
+  };
+  /* POSITIVE FIRST, TWICE. Both assertions further down are must-not-contain over lists this loop
+     fills, so an empty payload, or a result set with nothing truncated, satisfies them for free. */
+  ok("the sidecar answered, so there is something to check the render against",
+     Object.keys(vfByName).length > 0, Object.keys(vfByName).length + " items in the payload");
+  ok("there are truncated cards to check at all", truncated.length > 0, truncated.length + " truncated");
+  const rowMismatch = [], noteMismatch = [];
+  for (const el of truncated) {
+    const nm = cardName(el);
+    const r = vfByName[nm];
+    if (!r) { rowMismatch.push(nm + " is not in the payload"); continue; }
+    const survey = (r.quotes || []).filter((q) => !q.observedOnly).length;
+    const drawn = el.querySelectorAll(".grow:not(.obs)").length;
+    if (drawn !== survey) rowMismatch.push(nm + " drew " + drawn + " survey rows of " + survey);
+    const moreEl = el.querySelector(".more");
+    const txt = moreEl ? moreEl.textContent : "";
+    const at = txt.indexOf("+");
+    const said = at < 0 ? -1 : parseInt(txt.slice(at + 1), 10);
+    const want = r.shopCount - survey;
+    if (said !== want) noteMismatch.push(nm + " says +" + said + ", the payload says +" + want);
+  }
+  ok("a truncated card draws exactly the survey rows it was handed",
+     rowMismatch.length === 0, rowMismatch.slice(0, 4).join(" | "));
+  ok("...and its +N counts the SURVEY shops left out, never the rows on screen",
+     noteMismatch.length === 0, noteMismatch.slice(0, 4).join(" | "));
+
+  // 🔴 The provenance footer. Sub's requirement is that the user knows when they are on a
+  // fallback, and only the screen they are looking at can say so.
+  const src = document.getElementById("src");
+  ok("the footer names where the table came from", !!src && src.textContent.trim().length > 4,
+     src ? src.textContent : "none");
+  // ⚠️ RE-POINTED 2026-08-22. This read the whole #src span and matched /UEX|offline/, which passed
+  // only because the live sentence used to begin "UEX via subliminal.gg". The credit moved to a
+  // badge, so the word left the sentence and this failed on working code. The tier wording is what
+  // the assertion was ever about, so it now reads the element that carries the tier.
+  // ⚠️ RE-POINTED AGAIN 2026-08-22. It matched on "subliminal.gg", which left the assertion tied to
+  // a phrase whose whole job was to name our plumbing — and Sub cut that phrase for exactly that
+  // reason ("we don't need to have that in there"). Chasing the wording a second time would be the
+  // trap; the RULING has never changed, so this now checks the thing the ruling is about: the line
+  // states WHICH TIER the table came from. Live says how fresh it is, the two fallbacks say they
+  // are offline. A footer that said neither would be the regression.
+  const srctext = document.getElementById("srctext");
+  // 2026-08-22: the live tier dropped the word "updated" (Sub) and now prints the bare age,
+  // so the live marker is the age itself - " ago" or "just now". The RULING is unchanged.
+  const tierWords = [" ago", "just now", "offline"];
+  ok("...and it says one of the three tiers, not something vague",
+     !!srctext && tierWords.some((w) => srctext.textContent.indexOf(w) > -1),
+     srctext ? srctext.textContent : "(no #srctext)");
+  // 🔴 Paired with the positive: the credit must NOT have crept back into the sentence. The badge
+  // carries the attribution; the sentence carries the age. Both halves asserted, because "does not
+  // mention subliminal.gg" alone is satisfied for free by an empty footer.
+  ok("...and does not re-narrate whose proxy it came through",
+     !!srctext && srctext.textContent.indexOf("subliminal.gg") === -1,
+     srctext ? srctext.textContent : "(no #srctext)");
+  // 🔴 THE UEX CREDIT IS ITS OWN ASSERTION NOW, because it is its own requirement (Sub,
+  // 2026-08-22: "this is really mainly just them. All we're doing is putting up a wrapper for
+  // it."). Previously it was only ever incidental to the tier check above — which is exactly how
+  // it disappeared from the sentence without anything noticing.
+  // 🔑 EITHER the badge OR the words satisfy it, because the markup deliberately swaps one for the
+  // other when the image cannot load. Asserting on the <img> alone would go red for the fallback
+  // that exists to keep the attribution present.
+  {
+    const badge = document.getElementById("uexmark");
+    const words = document.getElementById("uexname");
+    const credited = (badge && /uex/i.test(badge.getAttribute("alt") || "")) ||
+                     (words && /uex/i.test(words.textContent || ""));
+    ok("🔴 UEX is credited in the footer, by badge or by name",
+       !!credited,
+       badge ? "badge alt=" + badge.getAttribute("alt") : words ? "words=" + words.textContent : "(neither present)");
+  }
+
+  // 🔴 The age pill's colour band. Asserted as a CONSISTENCY rule between the number rendered and
+  // the class chosen, rather than against hardcoded expectations — the table ages every day, so a
+  // test that expected specific colours would rot within a week.
+  await search("cannon");
+  const pills = [...document.querySelectorAll("#results .age")];
+  // 🔴 RE-POINTED 2026-08-24, flight poolfill: a FIFTH band, live, sits at the fresh end for a
+  // reading from the last hour — the band the community pool exists to produce. The old list of
+  // four would go red on a perfectly correct pill the first time UEX served a row somebody had
+  // updated that morning.
+  const BANDS = ["live", "fresh", "recent", "stale", "ancient"];
+  ok("every age pill carries exactly one band class", pills.length > 0 && pills.every((p) => {
+    const hit = BANDS.filter((b) => p.classList.contains(b));
+    return hit.length === 1;
+  }), pills.length + " pills");
+  // 🔴 AND THE BANDS MUST ACTUALLY BE PAINTED. This is what was missing for months: every one of
+  // these classes was being applied and NONE of them had a colour rule anywhere — not in this
+  // page, not in widget-theme.css, not in any of the 15 skins — so a computed band produced no
+  // visible difference at all, and a comment in the page asserted the opposite. Assert the
+  // rendered colours DIFFER rather than naming values, which would rot with every skin.
+  {
+    const probe = document.createElement("div");
+    document.body.appendChild(probe);
+    const seen = {};
+    for (const band of BANDS) {
+      const el = document.createElement("span");
+      el.className = "age " + band;
+      el.textContent = "1d";
+      probe.appendChild(el);
+      seen[band] = getComputedStyle(el).color;
+    }
+    const vals = BANDS.map((k) => seen[k]);
+    ok("🔴 each recency band paints its own colour", vals.filter((v, i) => vals.indexOf(v) === i).length >= 4,
+       BANDS.map((k) => k + "=" + seen[k]).join("  "));
+    // A colourless token — the --good trap, defined in no theme — resolves to the INHERITED
+    // colour, so every band would read identically while looking deliberate in the source.
+    // Naming that failure separately makes it diagnosable instead of a bare count.
+    const bare = document.createElement("span");
+    bare.className = "age";
+    probe.appendChild(bare);
+    const inherited = getComputedStyle(bare).color;
+    ok("no band falls back to the unstyled pill's inherited colour",
+       BANDS.filter((k) => seen[k] === inherited).length === 0,
+       "inherited=" + inherited + "  " + BANDS.map((k) => k + "=" + seen[k]).join("  "));
+    probe.remove();
+  }
+  // Parse the rendered text back and check it agrees with the band it was given.
+  const bandOf = (txt) => {
+    const m = /^(\\d+)(d|mo)$/.exec(txt.trim());
+    // ⚠️ "today" covers BOTH live and fresh — the printed text cannot separate an hour from six
+    // days, so this accepts either rather than pretending to a precision it does not have.
+    if (txt.trim() === "today") return "today";
+    if (!m) return null;
+    const d = m[2] === "mo" ? Number(m[1]) * 30 : Number(m[1]);
+    return d <= 7 ? "fresh" : d <= 45 ? "recent" : d <= 100 ? "stale" : "ancient";
+  };
+  const agrees = (want, got) => (want === "today" ? (got === "live" || got === "fresh") : want === got);
+  // 🔴 RE-POINTED, flight onepill: the pill now carries the SOURCE WORD inside it, so its
+  // textContent reads "8d UEX" and the anchored pattern above matched none of them. That drove
+  // the checked list to zero and the assertion went red on its own non-empty guard, not on a
+  // wrong band — which is the guard doing exactly its job, and the reason it is written that way.
+  // The mark is appended LAST, so trimming its length off the end recovers the age exactly.
+  const ageTextOf = (p) => {
+    const s = p.querySelector(".src");
+    const whole = p.textContent || "";
+    const mark = s ? (s.textContent || "") : "";
+    return mark && whole.slice(-mark.length) === mark
+      ? whole.slice(0, whole.length - mark.length) : whole;
+  };
+  const checked = pills.map((p) => ({ want: bandOf(ageTextOf(p)), got: BANDS.find((b) => p.classList.contains(b)) }))
+    .filter((x) => x.want !== null);
+  ok("the band really matches the age it prints", checked.length > 0 && checked.every((x) => agrees(x.want, x.got)),
+     checked.length + " checked, first mismatch: "
+     + (checked.find((x) => !agrees(x.want, x.got)) ? JSON.stringify(checked.find((x) => !agrees(x.want, x.got))) : "none"));
+
+  // 🔑 Price and age stay TOGETHER (Sub, 2026-08-21) — they answer the same question, and
+  // splitting them to opposite edges made the eye travel to reconcile two halves of one fact.
+  // ⚠️ RE-POINTED 2026-08-22 for the grouped layout. They used to be stacked inside a .pricecol
+  // element and this asserted that element existed; they are now adjacent siblings at the end of
+  // the row. The RULING was never about the wrapper — it was about the two not being separated —
+  // so the assertion now checks adjacency, which is the thing that must not regress.
+  {
+    const rows = [...document.querySelectorAll("#results .grow")];
+    ok("there are rows to check the price/age pairing on", rows.length > 0, rows.length + " rows");
+    const paired = rows.filter((r) => {
+      const kids = [...r.children];
+      const ai = kids.findIndex((k) => k.classList.contains("age"));
+      const pi = kids.findIndex((k) => k.classList.contains("price"));
+      return ai >= 0 && pi >= 0 && Math.abs(ai - pi) === 1;
+    });
+    ok("price and age sit next to each other, never at opposite ends",
+       rows.length > 0 && paired.length === rows.length, paired.length + " of " + rows.length);
+  }
+
+  // A miss must distinguish "no shop known" from "no such item" — the former is the common case.
+  //
+  // ⚠️ RE-POINTED 2026-08-22, and the reason is that the widget got BETTER at the thing this was
+  // guarding. It used to demand the literal words "No shop known" for every miss, which was the
+  // right defence when the app held only a COUNT of unpriced items and therefore could never tell
+  // a real armour set from a typo — one cautious sentence for both was all it was entitled to say.
+  // The table now ships the 4,962 names, so a nonsense string really has been checked against
+  // everything we hold and "Nothing found" is the honest answer rather than a flat denial that the
+  // thing exists. The RULING was never about that wording; it was that the two cases must not read
+  // the same. That is now asserted where it can actually fail, in the VERSEDEALERS suite, which
+  // drives a real unsold item and a typo and compares the two pages. Here the claim narrows to
+  // what this query can prove: a miss says something, and it does not pretend to have found
+  // anything.
+  await search("zzzqqxwv");
+  const empty = document.querySelector("#results .empty");
+  ok("a miss renders the empty state", !!empty, empty ? "yes" : "no");
+  ok("...naming what was searched for rather than a bare failure",
+     !!empty && empty.textContent.indexOf("zzzqqxwv") > -1, empty ? empty.textContent.slice(0, 70) : "");
+  ok("...and no result row is drawn beside it",
+     document.querySelectorAll("#results .item").length === 0,
+     document.querySelectorAll("#results .item").length + " items");
+
+  // ── The eye: how well we can see where the player is ──────────────────────────────────────
+  // Defensive lookups on BOTH the condition and the DETAIL. A detail expression is evaluated
+  // eagerly, so reaching straight through a missing element there kills the whole suite and the
+  // run still prints a small passing number - which is exactly how twelve assertions once went
+  // unexecuted while the summary read 4/4.
+  const eyeEl = () => document.getElementById("eye");
+  const eyeTxt = () => { const e = document.getElementById("eyelbl"); return e ? e.textContent.trim() : "(no eyelbl)"; };
+  const eyeCls = () => { const e = eyeEl(); return e ? e.className : "(no eye)"; };
+
+  ok("the location eye is present", !!eyeEl(), eyeCls());
+  ok("...drawn as an SVG, never a glyph the OS font might not have",
+     !!(eyeEl() && eyeEl().querySelector("svg path")),
+     eyeEl() ? (eyeEl().querySelector("svg") ? "svg" : "no svg") : "(no eye)");
+  // 🔴 IT IS A CIRCLED i, NOT AN EYE (Sub, 2026-08-22). An eye reads as a visibility toggle, which
+  // is the wrong verb for "there is more to read here".
+  // 🔑 Asserted on the SHAPE, because that is the thing that can regress. The eye was one <path>
+  // outline plus a pupil <circle>; the i is a ring <circle> plus a stem and a dot, both <path>.
+  // Counting "a circle and two paths" is what tells them apart — checking merely that an <svg>
+  // exists passes just as happily for the eye, which is how this could have been missed.
+  {
+    const svg = eyeEl() && eyeEl().querySelector("svg");
+    const circles = svg ? svg.querySelectorAll("circle").length : 0;
+    const paths = svg ? svg.querySelectorAll("path").length : 0;
+    ok("...as a circled i (ring + stem + dot), not the old eye outline",
+       circles === 1 && paths === 2, "circle=" + circles + " path=" + paths);
+  }
+  ok("...and it always says something rather than sitting blank",
+     eyeTxt().length > 0, eyeTxt());
+  // Three states and only three, because there are exactly three claims it can make.
+  ok("...in exactly one of the three confidence states",
+     ["precise", "rough", "none"].filter((c) => eyeCls().split(" ").indexOf(c) >= 0).length === 1,
+     eyeCls());
+  ok("...and the hover explains it in words", (eyeEl() && eyeEl().title || "").length > 20,
+     (eyeEl() && eyeEl().title || "(no title)").slice(0, 70));
+
+  // 🔴 THE POPOVER MUST TAKE NO SPACE IN LAYOUT. That is the whole reason it is a popover in the
+  // top layer rather than an absolutely-positioned box - an earlier widget in this app measured
+  // 541px -> 743px making exactly this mistake.
+  //
+  // 🔑 MEASURE THE FOOT AND THE RESULTS, NOT THE PANEL. The first version of this assertion
+  // compared the PANEL height open vs closed and could never have failed: this page pins
+  // #panel to height 480px (100% when embedded), so it is fixed by construction and the check
+  // was a tautology wearing the most on-point name in the suite. An in-flow box inside .foot
+  // would grow the foot and, because the panel cannot grow, steal that space from #results -
+  // and both of those are free to move.
+  const footEl = document.querySelector(".foot");
+  const resEl = document.getElementById("results");
+  const popEl = document.getElementById("eyepop");
+  const footClosed = footEl ? footEl.getBoundingClientRect().height : -1;
+  const resClosed = resEl ? resEl.getBoundingClientRect().height : -1;
+  // 🔴 showPopover() EXISTS ON EVERY HTMLElement AND THROWS WITHOUT THE popover ATTRIBUTE
+  // (InvalidStateError). So a feature-test on the METHOD is not a guard at all: dropping the
+  // attribute killed this whole suite and it reported "4/4 passed" for twenty-nine assertions.
+  // Catch it, record it, and let the assertions below fail honestly instead.
+  let popOpenErr = "";
+  try { if (popEl && popEl.showPopover) popEl.showPopover(); }
+  catch (e) { popOpenErr = (e && e.name) ? e.name : String(e); }
+  await sleep(60);
+  ok("the eye box is a real popover, not a plain div",
+     popOpenErr === "", popOpenErr || "opened cleanly");
+  const footOpen = footEl ? footEl.getBoundingClientRect().height : -2;
+  const resOpen = resEl ? resEl.getBoundingClientRect().height : -2;
+  const popShown = popEl ? popEl.getBoundingClientRect().width > 0 : false;
+  ok("the eye popover really opens", popShown, popShown ? "visible" : "not visible");
+  ok("...and does not grow the footer it lives in",
+     footClosed > 0 && footClosed === footOpen, footClosed + "px closed / " + footOpen + "px open");
+  ok("...nor steal any height from the results list",
+     resClosed > 0 && resClosed === resOpen, resClosed + "px closed / " + resOpen + "px open");
+  ok("...and carries the explanation, not just a title",
+     !!(popEl && popEl.textContent.trim().length > 20),
+     popEl ? popEl.textContent.trim().slice(0, 60) : "(no popover)");
+  try { if (popEl && popEl.hidePopover) popEl.hidePopover(); } catch (e) { /* reported above */ }
+  await sleep(40);
+
+  // 🔴 A ROW MAY ONLY CLAIM A DISTANCE THE SERVER ACTUALLY GAVE IT. The sidecar under test has
+  // whatever origin the real log affords, so rather than assert a particular basis, assert the
+  // INVARIANT that holds either way: a distance is shown only when the response said so.
+  await search("cannon");
+  const noteEl = document.getElementById("ordernote");
+  const basisShown = !!(noteEl && !noteEl.hidden && noteEl.textContent.trim().length > 0);
+  const distCells = [...document.querySelectorAll("#results .cpill")];
+  ok("the order note appears only when an ordering was actually applied",
+     basisShown === (distCells.length > 0) || eyeCls().indexOf("none") >= 0,
+     "note=" + basisShown + " distCells=" + distCells.length + " eye=" + eyeCls());
+  ok("...and no distance cell is ever empty",
+     distCells.every((c) => c.textContent.trim().length > 0),
+     distCells.length + " cells");
+
+  // ── 🔴 NO DEAD GUTTER DOWN THE LEFT (Sub, 2026-08-22: "a lot of wasted space") ──────────────
+  //
+  // The price column was a fixed 82px box with right-aligned contents, placed FIRST — so a 20px
+  // price rendered 62px in from the panel edge and every shop name started at x=99. The fix was
+  // both halves: move it off the left AND size it to its contents. Guarded because it is invisible
+  // to every other assertion here — the rows were correct, complete and readable throughout.
+  {
+    const panelRect = document.getElementById("panel").getBoundingClientRect();
+    const rows = [...document.querySelectorAll("#results .grow")];
+    const leftOf = (el) => Math.round(el.getBoundingClientRect().left - panelRect.left);
+    const rightOf = (el) => Math.round(el.getBoundingClientRect().right - panelRect.left);
+    // 🔑 POSITIVE FIRST: every claim below is free with no rows on screen.
+    ok("there are shop rows to measure the gutter on", rows.length > 0, rows.length + " rows");
+    const names = rows.map((r) => r.querySelector(".gshop")).filter(Boolean);
+    const starts = [...new Set(names.map(leftOf))];
+    // The item's own left padding is 7px, so a name should begin within a pixel or two of that.
+    // 99px was the bug. Anything past ~20 means a fixed-width column crept back onto the left.
+    ok("🔴 shop names start at the panel edge, not behind a reserved column",
+       starts.length > 0 && Math.max(...starts) <= 20,
+       "name left edges: " + starts.join(","));
+    // 🔑 AND THE ALIGNMENT MUST SURVIVE. The price is the last thing in the row and the shop name
+    // is the only flexible item, so every price should land on one right edge across every group.
+    const prices = rows.map((r) => r.querySelector(".price")).filter(Boolean);
+    const edges = [...new Set(prices.map(rightOf))];
+    ok("there are prices to check alignment on", prices.length > 1, prices.length + " prices");
+    ok("...and every price still right-aligns to the same column",
+       edges.length === 1, "right edges: " + edges.join(","));
+    // 🔴 NOTHING IN THE ROW MAY RESERVE SPACE IT DOES NOT USE — the general form of the 82px
+    // gutter. Every row item except the shop name is flex:none and shrink-to-fit, so each box
+    // should measure its own content. A fixed width creeping back onto any of them shows up here
+    // as slack, which neither the gutter check nor the alignment check can see.
+    {
+      const boxes = [];
+      for (const r of rows) {
+        for (const k of [...r.children]) {
+          if (k.classList.contains("gshop")) continue;   // the one item that may flex
+          boxes.push({ cls: k.className, slack: Math.round(k.getBoundingClientRect().width - k.scrollWidth) });
+        }
+      }
+      ok("there are fixed row items to measure slack in", boxes.length > 0, boxes.length + " items");
+      const worst = boxes.reduce((m, b) => (b.slack > m.slack ? b : m), { cls: "-", slack: -1 });
+      ok("🔴 no row item reserves space beyond its content",
+         boxes.length > 0 && worst.slack <= 2,
+         "worst " + worst.slack + "px on ." + String(worst.cls).split(" ")[0] + " across " + boxes.length + " items");
+    }
+    // ── 🔴 AT 320px, THE WIDTH THAT ACTUALLY BINDS ──────────────────────────────────────────
+    //
+    // Sub, 2026-08-22: a 16:9 window centred on a 21:9 screen leaves a bar each side, and that bar
+    // is the narrowest anyone would sensibly make this widget. On a 2560x1080 ultrawide it is
+    // 320px. The widget had been designed and previewed at 460 — wider than the worst case, which
+    // is how you ship something that falls apart exactly where it counts.
+    //
+    // 🔑 THE PANEL MUST BE NARROWED BEFORE MEASURING, and the negative control is what proved it:
+    // the age-pill assertion below passed at the harness's default 460px even with the bug
+    // deliberately re-injected, because nothing is squeezed when there is room to spare. An
+    // assertion about narrow-width behaviour that never narrows anything cannot fail.
+    {
+      const panelEl = document.getElementById("panel");
+      const restore = panelEl.style.width;
+      panelEl.style.width = "320px";
+      await sleep(260);
+
+      const narrowRows = [...document.querySelectorAll("#results .grow")];
+      ok("there are rows to measure at 320px", narrowRows.length > 0, narrowRows.length + " rows");
+
+      // 🔴 THE TWO-LINE PILL. A flex item defaults to flex:0-1-auto, so at a narrow width the
+      // browser shrinks the pill's BOX below its content. A white-space:nowrap keeps the TEXT on
+      // one line but does nothing to stop the box collapsing, so the pill grows a second line
+      // while its text sits on one. Measured against the pill's own line-height, not a constant.
+      const ages = narrowRows.map((r) => r.querySelector(".age")).filter(Boolean);
+      const tall = ages.filter((a) => {
+        const line = parseFloat(getComputedStyle(a).lineHeight) || 12;
+        return a.getBoundingClientRect().height > line * 1.7;
+      });
+      ok("there are age pills to measure at 320px", ages.length > 0, ages.length + " pills");
+      ok("🔴 no age pill has collapsed to two lines at 320px",
+         tall.length === 0,
+         tall.length ? tall.length + " tall, e.g. " + tall[0].textContent : ages.length + " single-line");
+
+      // The same collapse would hit the price, and it is the more expensive one to misread.
+      const pricesN = narrowRows.map((r) => r.querySelector(".price")).filter(Boolean);
+      const tallP = pricesN.filter((p) => {
+         const line = parseFloat(getComputedStyle(p).lineHeight) || 12;
+         return p.getBoundingClientRect().height > line * 1.7;
+      });
+      ok("...nor has any price", tallP.length === 0,
+         tallP.length ? tallP.length + " tall" : pricesN.length + " single-line");
+
+      // 🔴 AND NOTHING MAY SPILL OUT OF THE PANEL. #results clips overflow-x, so a row that is
+      // too wide gets silently cut rather than scrolling — the reader never learns it was there.
+      const pr = panelEl.getBoundingClientRect();
+      const spill = narrowRows.filter((r) => r.getBoundingClientRect().right > pr.right + 1);
+      ok("🔴 no row spills past the panel edge at 320px",
+         spill.length === 0,
+         spill.length ? spill.length + " of " + narrowRows.length + " spill"
+                      : narrowRows.length + " rows inside " + Math.round(pr.width) + "px");
+
+      panelEl.style.width = restore;
+      await sleep(160);
+    }
+
+    // ── 🔴 THE PRICE NAMES ITS CURRENCY (Sub, 2026-08-22: "it just says seven") ───────────────
+    // A bare number in a widget that also prints distances, ages and sizes is the same ambiguity
+    // that made him read "4M away" as a distance.
+    {
+      const units = rows.map((r) => r.querySelector(".price .unit")).filter(Boolean);
+      ok("every price carries a currency unit", units.length === rows.length,
+         units.length + " of " + rows.length + " rows");
+      const texts = [...new Set(units.map((u) => u.textContent.trim()))];
+      ok("...and it says aUEC", texts.length === 1 && texts[0] === "aUEC", texts.join(","));
+      // 🔑 The unit must be a CHILD of .price, not appended into its text: the alignment assertions
+      // above measure .price, and the suite would still pass while the column drifted.
+      const first = rows[0].querySelector(".price");
+      ok("...as a child element, so the number is still addressable on its own",
+         !!first && first.childElementCount >= 1 && first.firstChild.nodeType === 3,
+         first ? "children=" + first.childElementCount + " text=" + first.firstChild.textContent : "(none)");
+    }
+  }
+
+  // ── 🔴 THE CATEGORY RIDES THE NAME, AND IS NOT ALSO A CHIP (Sub, 2026-08-22) ────────────────
+  // "CRUZ Lux" does not say drink. The category is what makes a row identifiable, so it belongs in
+  // the identity rather than as one more attribute chip.
+  await search("lux");
+  {
+    const item = document.querySelector("#results .item");
+    const nameEl = item && item.querySelector(".iname");
+    const catEl = item && item.querySelector(".iname .icat");
+    ok("the search returned an item to inspect", !!nameEl,
+       nameEl ? nameEl.textContent.slice(0, 40) : "(no item)");
+    ok("the category is part of the name", !!catEl,
+       nameEl ? nameEl.textContent.slice(0, 40) : "(no name)");
+    if (catEl) {
+      const t = catEl.textContent;
+      ok("...introduced by a dash, not just jammed on", t.indexOf("-") >= 0 || t.indexOf("–") >= 0, t);
+      // 🔴 AND NOT DUPLICATED. Mirroring it into a chip as well is the same fact in two places,
+      // which is what makes a reader wonder what the difference is.
+      const chipTexts = [...item.querySelectorAll(".chip")].map((c) => c.textContent.trim());
+      const catWord = t.replace("–", "").replace("-", "").trim();
+      ok("...and NOT repeated as a chip",
+         chipTexts.every((c) => c.toLowerCase() !== catWord.toLowerCase()),
+         "chips: " + (chipTexts.join(",") || "(none)") + " vs category " + catWord);
+    }
+  }
+
+  // ── 🔴 GROUPED BY PLACE, WITH THE PLACE OFF THE SHOP NAME (Sub picked this 2026-08-22) ──────
+  await search("medpen");
+  {
+    const groups = [...document.querySelectorAll("#results .grp")];
+    ok("results are grouped by place", groups.length > 0, groups.length + " groups");
+    ok("...and every group states its place once, in a heading",
+       groups.length > 0 && groups.every((g) => {
+         const h = g.querySelector(".ghead .gplace");
+         return h && h.textContent.trim().length > 0;
+       }),
+       groups.map((g) => (g.querySelector(".gplace") || {}).textContent).join(" | "));
+    // 🔴 A GROUP MUST NEVER BREAK A CONSECUTIVE RUN. Grouping walks consecutive runs precisely so
+    // it preserves the proximity order rather than re-sorting it, and a bug in that walk shows up
+    // as two ADJACENT groups carrying the same heading.
+    //
+    // ⚠️ RE-POINTED 2026-08-22, and the reason is worth more than the fix. This asserted that no
+    // place appears twice ANYWHERE in the list, which is a claim about the ORDERING, not about the
+    // grouping - and it is only true while the ordering has something to order by. It went red on
+    // untouched code the moment the origin aged past its trust window: on the containment basis,
+    // with all eight MedPen shops landing in the same same-body bucket, there is no signal left,
+    // the stable sort keeps the incoming cheapest-first order, and Lorville legitimately appears at
+    // positions 1 and 5. The widget is behaving exactly as designed; the assertion had made the
+    // freshness of whoever last played the game part of its pass condition. Same family as the
+    // scan-box suite that asserted a user preference and went red for Sub because he had it on.
+    //
+    // The invariant that survives is adjacency: two groups in a row may not be the same place.
+    const places = groups.map((g) => (g.querySelector(".gplace") || {}).textContent);
+    const runBreaks = places.filter((p, i) => i > 0 && p === places[i - 1]);
+    ok("...and no two ADJACENT groups repeat a place, which would be a broken run",
+       runBreaks.length === 0, places.join(" | "));
+    // 🔴 THE PLACE IS NOT REPEATED ON THE SHOPS UNDER IT — the whole point of the heading.
+    let repeats = [];
+    for (const g of groups) {
+      const place = ((g.querySelector(".gplace") || {}).textContent || "").toLowerCase();
+      const squash = (x) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+      for (const r of [...g.querySelectorAll(".grow .gshop")]) {
+        // A shop legitimately named after its place keeps its name (never strip to nothing), so
+        // only flag a name that ENDS with the place as a trailing segment.
+        const n = r.textContent;
+        const tail = n.split(" - ").pop().trim();
+        if (place && squash(tail) && squash(place).indexOf(squash(tail)) === 0 && n.indexOf(" - ") >= 0) {
+          repeats.push(n + "  under  " + place);
+        }
+      }
+    }
+    ok("...and no shop name still trails the place its heading already names",
+       repeats.length === 0, repeats.length ? repeats.slice(0, 3).join(" ; ") : "clean");
+    // 🔑 THE FULL NAME STAYS REACHABLE. Stripping is a display convenience; the name UEX
+    // publishes is what a player would search for or report a problem about.
+    const firstShop = document.querySelector("#results .grow .gshop");
+    ok("...while the full terminal name survives on hover",
+       !!firstShop && (firstShop.title || "").length >= firstShop.textContent.length,
+       firstShop ? firstShop.textContent + "  →  " + firstShop.title : "(none)");
+  }
+
+  // ── 🔴 CONTAINMENT IS A PILL, LIKE THE REST OF THE WIDGET FAMILY (Sub, 2026-08-22) ──────────
+  {
+    const pills = [...document.querySelectorAll("#results .cpill")];
+    // POSITIVE FIRST — everything below is free with no pills on screen. Which state the live
+    // sidecar is in depends on Sub's log, so this is reported rather than demanded.
+    if (pills.length === 0) {
+      skip("containment pills - the origin is precise enough this run for distances instead",
+           "the whole pill block below is UNTESTED whenever the player position is fresh");
+    } else {
+      ok("containment rows render as pills", pills.length > 0, pills.length + " pills");
+      const cs0 = getComputedStyle(pills[0]);
+      ok("...with a real chip border and radius",
+         cs0.borderTopWidth !== "0px" && parseFloat(cs0.borderTopLeftRadius) > 0,
+         "border " + cs0.borderTopWidth + " radius " + cs0.borderTopLeftRadius);
+      // 🔴 A pill must SHRINK TO ITS TEXT. Styling the fixed-width slot as the pill made "here" and
+      // "same body" render identically wide and clipped the longer one — which is what stops it
+      // reading as a pill at all.
+      const clipped = pills.filter((p) => p.scrollWidth > p.clientWidth + 1).map((p) => p.textContent);
+      ok("...and none of them is clipped by its slot",
+         clipped.length === 0, clipped.length ? "clipped: " + clipped.join(",") : pills.length + " checked");
+      const byText = new Map();
+      for (const p of pills) byText.set(p.textContent.trim(), Math.round(p.getBoundingClientRect().width));
+      const distinctTexts = [...byText.keys()];
+      const distinctWidths = [...new Set(byText.values())];
+      // Only meaningful when two different labels are on screen; say so rather than passing quietly.
+      ok(distinctTexts.length > 1
+           ? "...and pills of different text are different widths"
+           : "(only one containment label on screen, width variation not testable)",
+         distinctTexts.length > 1 ? distinctWidths.length > 1 : true,
+         distinctTexts.map((t) => t + "=" + byText.get(t) + "px").join(" "));
+    }
+  }
+
+  // 🔑 CAPTURED FROM THE LIVE RESPONSE, BEFORE THE FIXTURE BELOW REPLACES IT. These two strings are
+  // built by the SERVER (originSummary and orderByProximity's note), so they are the only place the
+  // real age wording can be tested. The first version of the bare-age assertion ran after the
+  // fixture render and therefore read the fixture's own hand-written strings — a tautology that
+  // stayed green when the server was reverted to "19m ago". The control is what exposed it.
+  const liveNote = document.getElementById("ordernote");
+  const liveEyeLbl = document.getElementById("eyelbl");
+  // 🔑 #srctext joins them (2026-08-22). It is a THIRD age in the same footer — how old our copy of
+  // the table is — so it is exposed to the identical misreading and now shares the bare-Nm check
+  // below rather than needing its own. Captured here for the same reason as the other two: it is
+  // composed from a server value and the fixture render must not get a chance to overwrite it.
+  const liveSrcText = document.getElementById("srctext");
+  const liveFooterAge = liveSrcText ? liveSrcText.textContent : "";
+  const liveAgeText = (liveNote ? liveNote.textContent : "") + " " + (liveEyeLbl ? liveEyeLbl.textContent : "")
+    + " " + liveFooterAge;
+
+  // ── 🔴 DISTANCE, NOT MINUTES (Sub, 2026-08-22) ─────────────────────────────────────────────
+  //
+  // 🔑 DRIVEN FROM A FIXTURE THROUGH render(), NOT FROM THE LIVE SIDECAR, and that is the only way
+  // this can be tested at all. The sidecar's origin comes from Sub's real log, so which tier he is
+  // in is a property of when he last played — and all four tiers can never coexist in one real
+  // response. The fixture carries the exact numbers from his report so the case that shipped wrong
+  // is the case under test.
+  {
+    const q = (place, sys, price, metres, jumps, basis, contain) => ({
+      terminal: "Shop - " + place, system: sys, body: "b", place: place, price: price,
+      asOf: 1786511612, minutes: 0, metres: metres, jumps: jumps, travelBasis: basis,
+      containment: contain,
+    });
+    render({
+      query: "fixture", source: "live", fetchedAt: Date.now(), itemCount: 1, terminalCount: 461,
+      origin: { tier: "place", label: "Seraphim Station", summary: "Seraphim Station . just now",
+                ageMin: 0, stale: false, from: "a test", howToImprove: "x" },
+      order: { basis: "travel-time", note: "Nearest first, from Seraphim Station." },
+      results: [{
+        name: "Fixture Item", company: "c", category: "k", size: null, uuid: "u",
+        shopCount: 4, low: 265, high: 400,
+        quotes: [
+          q("Seraphim Station", "Stanton", 265, 0, 0, "measured", "same-place"),
+          q("Orison", "Stanton", 280, 830050, 0, "measured", "same-body"),
+          q("New Babbage", "Stanton", 300, 57477000000, 0, "measured", "same-system"),
+          q("Ruin Station", "Pyro", 400, null, 1, "estimated", "elsewhere"),
+        ],
+      }],
+    });
+    await sleep(80);
+    const heads = [...document.querySelectorAll("#results .grp")];
+    const distOf = (i) => {
+      const d = heads[i] && heads[i].querySelector(".gdist");
+      return d ? d.textContent.trim() : "(none)";
+    };
+    const texts = [distOf(0), distOf(1), distOf(2), distOf(3)];
+    // POSITIVE FIRST — every claim below is free if the fixture drew nothing at all.
+    ok("the fixture really drew four shop rows",
+       document.querySelectorAll("#results .grow").length === 4,
+       document.querySelectorAll("#results .grow").length + " rows");
+    ok("...in four groups, one per place",
+       heads.length === 4, heads.length + " groups: " + texts.join(" | "));
+    ok("Sub's 830 km hop reads as a DISTANCE, not as minutes", texts[1] === "830 km", texts[1]);
+    ok("...and the far one is a distance too, at its own scale", texts[2] === "57 Gm", texts[2]);
+    // 🔴 The regression that started all this: 830 km used to render as "15m" and 57 Gm as "4m",
+    // so the nearer shop looked further. Asserting the strings pins BOTH the unit and the order.
+    ok("🔴 the near shop no longer reads as further than the far one",
+       texts[1].indexOf("km") >= 0 && texts[2].indexOf("Gm") >= 0,
+       texts[1] + " then " + texts[2]);
+    // 🔴 Cross-system has NO distance, because the coordinate frames are per-system. The system
+    // name carries "how far" there instead, which is asserted with the tier ladder below.
+    ok("a shop in another system states no distance at all", texts[3] === "(none)", texts[3]);
+    // ⚠️ STRING METHODS ONLY BELOW — NO REGEX. This block is inside a template literal, where a
+    // backslash escape is eaten before any RegExp is built: "\b" becomes a backspace byte and
+    // "\d"/"\s" lose their backslash. The first version of these assertions used all three; one
+    // went honestly red and the OTHER TWO PASSED WITHOUT TESTING ANYTHING, because a pattern that
+    // can never match makes a "must not contain" check free forever.
+    const lastWord = (t) => { const p = t.trim().split(" "); return p[p.length - 1]; };
+    const UNITS = ["km", "Mm", "Gm"];
+    const measured = texts.slice(0, 3);
+    ok("every distance spells its unit out",
+       measured.every((t) => UNITS.indexOf(lastWord(t)) >= 0),
+       measured.map((t) => t + " -> " + lastWord(t)).join(" | "));
+    // 🔴 THE LABELLING TRAP ITSELF: a one-character unit is what let "4m" be read as a distance.
+    const unitOf = (t) => {
+      let u = lastWord(t);
+      while (u.length && ("0123456789.,<~".indexOf(u[0]) >= 0)) u = u.slice(1);
+      return u;
+    };
+    ok("...and no unit is a single letter, which is what made 4m ambiguous",
+       measured.every((t) => unitOf(t).length >= 2),
+       measured.map((t) => t + " -> unit " + (unitOf(t) || "(none)")).join(" | "));
+    // 🔴 THE FOUR-STEP TIER LADDER. It can only be exercised from a fixture: the live sidecar
+    // shows whichever single tier Sub's own log puts him in.
+    {
+      const pills = [...document.querySelectorAll("#results .cpill")];
+      const seen = pills.map((p) => p.textContent.trim() + ":" + String(p.className).split(" ")[1]);
+      ok("the fixture produced a pill per group", pills.length === 4, seen.join(" | "));
+      const want = ["here:t-here", "same body:t-body", "in system:t-sys", "Pyro:t-away"];
+      ok("🔴 each tier gets its own class, in the near-to-far order the results are sorted in",
+         seen.join(" | ") === want.join(" | "), seen.join(" | "));
+      // 🔴 THE FAR TIER NAMES THE SYSTEM (Sub: "instead of saying out of system, just put Nyx or
+      // Pyro"). "elsewhere" told the player nothing they did not already know.
+      const away = pills.find((p) => String(p.className).indexOf("t-away") >= 0);
+      ok("...and the far one is the SYSTEM NAME, not the word elsewhere",
+         !!away && away.textContent.trim() === "Pyro", away ? away.textContent : "(no far pill)");
+      // ⚠️ A proper noun must not be lower-cased by the styling that lower-cases the tier words.
+      ok("...rendered as a proper noun, not lower-cased like the tier words",
+         !!away && getComputedStyle(away).textTransform === "none",
+         away ? getComputedStyle(away).textTransform : "-");
+      const colours = [...new Set(pills.map((p) => getComputedStyle(p).color))];
+      ok("...and the four tiers are four distinct colours", colours.length === 4, colours.join(" | "));
+    }
+    // The age itself, captured from the LIVE footer rather than the fixture - a fixture cannot
+    // test a string the SERVER composes.
+    const hasAge = liveAgeText.indexOf(" ago") >= 0 || liveAgeText.indexOf("just now") >= 0;
+    ok("the live footer really printed an age to check", hasAge, liveAgeText.trim().slice(0, 70) || "(empty)");
+    // 🔴 SUB OVERTURNED THE BARE-m RULE on 2026-08-22: "it doesn't even need to say updated 34
+    // minutes ago it could just say 34m ago". This assertion was written to enforce the OLDER
+    // ruling and fires only when the age happens to fall in the minutes band, which is why it
+    // passed one run and failed the next. What still holds is the half that was never in doubt:
+    // DISTANCES keep their spelled-out units, so a bare m can never be a distance. That is
+    // asserted above against Mm/Gm. The age is now allowed to read 6m, by instruction.
+    ok("the live footer prints an age at all", hasAge,
+       liveAgeText.trim().slice(0, 70) || "(empty)");
+
+    // 🔴 HOW OLD OUR COPY IS, AND HOW OLD A QUOTE IS, ARE TWO LADDERS (Sub, 2026-08-22: "how about
+    // we do updated and then the minutes ago?"). The footer used ageOf, which is built for quote
+    // ages with a median of 34 DAYS — so its lowest rung is the word "today" and every possible
+    // footer value collapsed onto it, while the table is actually refreshed every six hours and the
+    // whole interesting range sits under a day.
+    // ⚠️ Extractor written FIRST and its output printed, so a failure names the string it read
+    // rather than the whole line — the ELEVENTH control lesson, which cost an assertion that
+    // measured the wrong slice.
+    {
+      // The footer IS the age now - no "updated " prefix to slice off (Sub, 2026-08-22).
+      const at = liveFooterAge.indexOf("offline") > -1 ? -1 : 0;
+      const stated = at < 0 ? "(footer is on a fallback tier)" : liveFooterAge.trim();
+      // Positive first: on a cache/bundled tier the footer legitimately says "offline - ..." and
+      // there is no freshness to check, so say which case ran rather than passing silently.
+      const isLive = at >= 0;
+      ok("the footer states when our copy was last updated", isLive || liveFooterAge.indexOf("offline") > -1,
+         liveFooterAge || "(empty)");
+      if (isLive) {
+        const relative = stated.indexOf(" ago") > -1 || stated === "just now";
+        ok("...as a relative time, not a quote-age band",
+           relative, "extracted: [" + stated + "]");
+        // The exact bands ageOf would have produced. Their presence IS the regression.
+        const bands = ["today", "1d", "mo"];
+        const band = bands.filter((b) => stated === b || (b === "mo" && stated.indexOf("mo") > -1));
+        ok("...and never the quote ladder's wording", band.length === 0,
+           "extracted: [" + stated + "] matched: " + (band.join(",") || "none"));
+      }
+    }
+  }
+
+  /* ── 🔴 THE CREDIT ENDS THE LINE, AND THE ⓘ KEEPS TWO AGES APART (Sub, 2026-08-22) ──────────
+     "UEX logo right-justified, the age beside it, and an information icon explaining how often
+     the table refreshes."
+
+     🔴 TWO ASSERTIONS THAT LOOK RIGHT AND CANNOT FAIL WERE WRITTEN FIRST, and both survived the
+     control (restoring flex:1 on #src). They are recorded because the reasoning behind each is
+     the trap:
+       - "nothing sits to the right of the mark" - under flex:1 the block stretches to the right
+         edge and its children still PACK LEFT, so the dead space that appears after the mark is
+         empty space, not an element. Nothing to find.
+       - "the age sits beside the badge" - same reason. The gaps between the three children stay
+         at the flex gap of 7px whether the box is 119px or 1040px; only the slack after the last
+         child changes.
+     What actually moves is the BOX: sized to its contents it is 119px, stretched it is whatever is
+     left of the footer, and its right edge slides 160px off the inset. So both of those are what
+     get measured. Same lesson as the Verse Finder's own price column - the dead space belongs to
+     the box, and only measuring the box against its contents finds it. */
+  {
+    var creditFoot = document.querySelector(".foot");
+    var creditMark = document.getElementById("uexmark") || document.getElementById("uexname");
+    var creditAge = document.getElementById("srctext");
+    var creditBlock = document.getElementById("src");
+    var creditInfo = document.getElementById("fresh");
+    ok("the footer carries a credit, an age and the ⓘ that qualifies it",
+       !!creditFoot && !!creditMark && !!creditAge && !!creditInfo,
+       [creditFoot ? "foot" : "no foot", creditMark ? "mark" : "no mark",
+        creditAge ? "age" : "no age", creditInfo ? "info" : "no info"].join(" "));
+
+    if (creditFoot && creditMark && creditAge && creditInfo && creditBlock) {
+      var fR = creditFoot.getBoundingClientRect();
+      var mR = creditMark.getBoundingClientRect();
+      var bR = creditBlock.getBoundingClientRect();
+      // The mark is the LAST thing in the credit block - the order half of the requirement, which
+      // a DOM-order check states more directly than any geometry could.
+      var blockKids = [].slice.call(creditBlock.children);
+      ok("the UEX mark is the last thing in the credit block",
+         blockKids.length > 1 && blockKids[blockKids.length - 1] === creditMark,
+         blockKids.map(function (c) { return c.id || c.tagName; }).join(" then "));
+
+      /* 🔴 AND IT REACHES THE FOOTER'S RIGHT INSET. Measured against the footer's OWN computed
+         padding rather than a number written here - the padding is the only thing that can say
+         where the inset is, and picking a number is how a layout assertion rots. */
+      var footPad = parseFloat(getComputedStyle(creditFoot).paddingRight) || 0;
+      var markInset = Math.round(fR.right - footPad - mR.right);
+      ok("🔴 ...and it reaches the footer's right inset, not some spot short of it",
+         Math.abs(markInset) <= 2,
+         "mark ends " + markInset + "px short of the " + Math.round(footPad) + "px inset");
+
+      /* 🔴 THE BLOCK RESERVES NO DEAD SPACE. This is the assertion that survives the control,
+         because it measures the BOX against what is in it. Under flex:1 the block is whatever is
+         left of the footer while its contents are ~119px, and the slack is invisible to any check
+         made on the children alone. */
+      var kidsWidth = blockKids.reduce(function (a, c) {
+        return a + c.getBoundingClientRect().width;
+      }, 0);
+      var blockGap = parseFloat(getComputedStyle(creditBlock).columnGap) || 0;
+      var blockSlack = Math.round(bR.width - kidsWidth - blockGap * (blockKids.length - 1));
+      ok("🔴 ...because the credit block is sized to its contents and reserves nothing",
+         blockSlack <= 2,
+         "block " + Math.round(bR.width) + "px holding " + Math.round(kidsWidth) + "px of contents plus "
+           + (blockKids.length - 1) + " gaps: " + blockSlack + "px of slack");
+    }
+
+    // The ⓘ itself. Positive first: it must really open, or every claim about its words below is
+    // a claim about an empty string.
+    var freshPop = document.getElementById("freshpop");
+    var freshOpened = false;
+    if (creditInfo && freshPop) {
+      /* 🔑 MEASURED ON BOXES THAT ARE FREE TO MOVE. #panel is pinned to 480px in this page's own
+         CSS, so "the panel did not grow" can never fail and would read as the most on-point check
+         here. The footer and the results list are in flow and really do move.
+
+         🔴 AND MEASURED AGAINST A REFERENCE THAT CANNOT CONTAIN THE POPOVER, not as a before/after
+         delta around the click. The delta version came back GREEN under a control that put the box
+         in normal flow at 151px tall - because there it was in flow BEFORE the click too, so both
+         readings already carried it and the difference was zero while the footer sat at 169px
+         instead of 35px. The claim is absolute ("this costs the layout nothing"), so the baseline
+         has to be the layout with the box explicitly taken out. Setting display:none is a no-op on
+         a closed popover and a real removal under the control, which is exactly the discriminator
+         that was missing. */
+      /* ⚠️ EVERY LOCAL HERE IS PREFIXED, AND THAT IS NOT STYLE. This block first used footOpen and
+         resOpen - names the eye-popover check 500 lines above already holds as CONST, in the same
+         function scope. A var beside a const of the same name is a SyntaxError, so the suite threw
+         with no name and no line, which is the PRELUDE-collision failure wearing a different hat:
+         the six prelude names are not the only ones taken. Grep the WHOLE suite for an identifier
+         before using it, or prefix it and skip the question. */
+      freshPop.style.display = "none";
+      var freshFootBare = creditFoot ? creditFoot.getBoundingClientRect().height : 0;
+      var freshResBare = document.getElementById("results").getBoundingClientRect().height;
+      freshPop.style.display = "";
+      creditInfo.click();
+      freshOpened = freshPop.matches(":popover-open");
+      var freshFootOpen = creditFoot ? creditFoot.getBoundingClientRect().height : 0;
+      var freshResOpen = document.getElementById("results").getBoundingClientRect().height;
+      var freshPopH = freshPop.getBoundingClientRect().height;
+      ok("the refresh ⓘ opens on a click", freshOpened, freshOpened ? "open" : "did not open");
+      // Positive first: a box of zero height would satisfy "it costs nothing" for free.
+      ok("...and there is a real box of it to cost anything", freshPopH > 20,
+         Math.round(freshPopH) + "px tall");
+      ok("🔴 ...and open, it still costs the footer and the results nothing",
+         freshFootOpen === freshFootBare && freshResOpen === freshResBare,
+         "foot " + Math.round(freshFootBare) + " without it, " + Math.round(freshFootOpen)
+           + " with it open; results " + Math.round(freshResBare) + " vs " + Math.round(freshResOpen));
+
+      /* 🔴 WHAT IT HAS TO SAY, as a RULING rather than as wording. Two claims, and the second is
+         the load-bearing one: the six-hour cadence is how often OUR COPY is redownloaded, and a
+         reader must not carry that number over onto the prices. Measured against the live table
+         on 2026-08-22 a quote's median age is 38 days, so someone reading "34m ago" as the price
+         age is wrong by about five weeks. An ⓘ that stated only the cadence would MAKE that
+         misreading rather than prevent it, which is why the denial is asserted separately.
+         ⚠️ If the wording is rewritten, move these tokens - do not delete the rule. */
+      var freshWords = freshPop.textContent.toLowerCase();
+      ok("...it states how often our copy is refreshed",
+         freshWords.indexOf("6 hours") > -1 || freshWords.indexOf("six hours") > -1,
+         // ⚠️ fromCharCode, not an escape, and this comment cost a run to learn: a suite body is
+         // a template literal, so EVERY backslash in it - including one inside a comment - is
+         // consumed before the code exists. A whitespace regex loses its backslash and silently
+         // matches the bare letter instead; a newline escape becomes a real newline, which ends
+         // the comment it was written in and turns the rest of the line into code.
+         freshPop.textContent.split(String.fromCharCode(10)).join(" ").trim().slice(0, 80));
+      var freshDenial = freshWords.indexOf("not how old the prices are");
+      ok("🔴 ...and says outright that this is NOT how old the prices are",
+         freshDenial > -1,
+         freshDenial > -1 ? "denial at char " + freshDenial
+                          : (freshWords.indexOf("not") > -1
+                              ? "there is a 'not' but it is not about the prices"
+                              : "no denial anywhere in the popover"));
+      creditInfo.click();
+      ok("...and closes again on a second click", !freshPop.matches(":popover-open"),
+         freshPop.matches(":popover-open") ? "still open" : "closed");
+    }
+  }
+
+  return out;
+})()`;
+
+// ── Suite: Verse Finder — the eye, and which terminal placed you ─────────────────────────────
+//
+// 🔴 EVERY ASSERTION HERE IS FIXTURE-DRIVEN, AND THAT IS THE POINT. The obvious test for this
+// flight is "the eye no longer says Location unknown" against the live sidecar — and that would be
+// an assertion about HOW LONG AGO SUB LAST PLAYED, not about the code. This widget already went
+// red once on untouched code for exactly that reason. The live acceptance is a thing to look at;
+// what belongs in a suite is the render, driven from origins the fixture chooses.
+//
+// ⚠️ NO REGEX AND NO BACKSLASH ESCAPES IN THIS BODY, comments included — a template literal eats
+// them before the code exists. indexOf and character comparison only.
+const VERSEEYE = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400);
+
+  // Defensive lookups. A missing element must FAIL its own assertion, not throw and take the run
+  // down — and the DETAIL argument is evaluated eagerly, so it needs the same care as the
+  // condition. A suite that dies here reports a small PASS for everything it never reached.
+  const eyeLbl = () => { const e = document.getElementById("eyelbl"); return e ? e.textContent : "(no #eyelbl)"; };
+  const eyePop = () => { const e = document.getElementById("eyepop"); return e ? e.textContent : "(no #eyepop)"; };
+  const eyeCls = () => { const e = document.getElementById("eye"); return e ? e.className : "(no #eye)"; };
+  const eyeTitle = () => { const e = document.getElementById("eye"); return e ? (e.title || "") : "(no #eye)"; };
+
+  const TERMDETAIL = "Levski Cargo Office Commodities";
+  const originOf = (over) => Object.assign({
+    tier: "place", label: "Levski", summary: "Levski . just now", ageMin: 0, stale: false,
+    from: "the shop terminal you used names this place", detail: null, howToImprove: "improve me",
+  }, over);
+
+  // ── 1. A TERMINAL FIX. Positive first: the fix has to RENDER before anything about where its
+  //       parts landed can mean a thing, and a renderEye that silently did nothing would satisfy
+  //       every must-not check below for free.
+  {
+    renderEye(originOf({ detail: TERMDETAIL }), null);
+    await sleep(60);
+    ok("a terminal-sourced fix renders its summary on the face",
+       eyeLbl().indexOf("Levski") >= 0, eyeLbl());
+    ok("...and the face reads as a precise fix, not as unknown",
+       eyeCls().indexOf("precise") >= 0, eyeCls());
+
+    // 🔑 THE PRECISION HALF — which desk inside the station. Sub's ask was the difference between
+    // "at Levski" and "meet me at the cargo office at Levski".
+    ok("...the popover names WHICH terminal placed you",
+       eyePop().indexOf(TERMDETAIL) >= 0, eyePop().slice(0, 150));
+    ok("...and the hover carries the same words as the click",
+       eyeTitle().indexOf(TERMDETAIL) >= 0, eyeTitle().slice(0, 150));
+
+    // 🔴 AND IT STAYS OFF THE FACE. That is a decision, not an omission: the face sits a few pixels
+    // from an age, a distance and a travel time, and the last thing appended there was read as a
+    // distance. Paired with the positive above, so an empty render cannot satisfy it.
+    ok("...but the FACE stays the place alone, beside three other quantities",
+       eyeLbl().indexOf("Cargo Office") < 0, eyeLbl());
+  }
+
+  // ── 2. THE LINE IS CONDITIONAL. Every other tier carries no detail, and must not grow a
+  //       sentence about a terminal nobody touched.
+  {
+    renderEye(originOf({ from: "an ASOP terminal named this place", detail: null }), null);
+    await sleep(60);
+    ok("a fix with no terminal still renders", eyeLbl().indexOf("Levski") >= 0, eyeLbl());
+    ok("...and says nothing about where you were standing",
+       eyePop().indexOf("You were at") < 0, eyePop().slice(0, 150));
+  }
+
+  // ── 3. UNKNOWN still says so, and still asks for something. This is the state the flight exists
+  //       to make rare — it must stay correct rather than being papered over.
+  {
+    renderEye({ tier: "unknown", label: "Unknown", summary: "Location unknown", ageMin: null,
+                stale: true, from: "nothing in this session has said where you are",
+                detail: null, howToImprove: "Opening your inventory will." }, null);
+    await sleep(60);
+    ok("an unknown origin still says Location unknown",
+       eyeLbl() === "Location unknown", eyeLbl());
+    ok("...and wears the state that asks the player for something",
+       eyeCls().indexOf("none") >= 0, eyeCls());
+    ok("...and still tells them what to do about it",
+       eyePop().indexOf("Opening your inventory") >= 0, eyePop().slice(0, 150));
+  }
+
+  // ── 4. THE WIDGET DOES NOT COMPOSE THE SUMMARY. It is the server's own string, worded once in
+  //       originSummary so every surface says it identically. A widget that rebuilt it would be a
+  //       second place for the spelled-out age rule to drift out of.
+  {
+    renderEye(originOf({ summary: "somewhere in Pyro . 3h ago", tier: "system", label: "Pyro" }), null);
+    await sleep(60);
+    ok("the face is the server's summary verbatim",
+       eyeLbl() === "somewhere in Pyro . 3h ago", eyeLbl());
+  }
+
+  return out;
+})()`;
+
+// ── Suite: Verse Finder — ships, commodities, and which kind of blank ────────────────────────
+//
+// Its own suite rather than more assertions in VERSEFINDER, because it drives five DIFFERENT
+// queries and the existing suite is built around one ("cannon") whose rows it re-reads throughout.
+//
+// 🔴 EVERY NEGATIVE HERE IS PAIRED WITH A POSITIVE ABOUT THE SAME SET, and it is not decoration.
+// "No cannon row carries a rent tag" is satisfied for free by a page with no rows on it — and a
+// broken search is exactly what would empty it. The positive assertion above each negative is what
+// separates "the rule held" from "nothing was rendered at all".
+//
+// ⚠️ NO REGEX ANYWHERE IN THIS BODY. A backslash escape inside a template literal is eaten before
+// the pattern is ever compiled: \\b silently becomes a backspace byte and \\d loses its backslash,
+// so the regex compiles and never matches — which makes every "must not contain" assertion pass
+// forever. Two of three regex assertions in this widget's last suite were false passes for exactly
+// that reason. indexOf and character comparison only.
+const VERSEDEALERS = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400);
+
+  const box = document.getElementById("q");
+  const search = async (v) => {
+    box.value = v;
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(800);
+  };
+  const items = () => [...document.querySelectorAll("#results .item")];
+  const rows = () => [...document.querySelectorAll("#results .grow")];
+  const rents = () => [...document.querySelectorAll("#results .tag.rent")];
+  const stocks = () => [...document.querySelectorAll("#results .tag.stock")];
+  const hints = () => [...document.querySelectorAll("#results .hint .hrow")];
+  const emptyText = () => {
+    const e = document.querySelector("#results .empty");
+    return e ? e.textContent : "(no .empty element)";
+  };
+  const moreOf = (el) => {
+    const m = el ? el.querySelector(".more") : null;
+    return m ? m.textContent : "(no .more element)";
+  };
+
+  // ══ 1. SHIPS ══════════════════════════════════════════════════════════════════════════════
+  // 🔑 The query is a real hull that is BOTH sold and rented (49 vehicles are; 130 are sale-only),
+  // because a ship with only purchase rows could never fail the rent assertions and a rental-only
+  // one does not exist in the data at all. Both halves of the rule have to be populated or the
+  // pairing below is a tautology.
+  await search("100i");
+  const ship = items()[0] || null;
+  ok("🔴 a ship is a result at all", !!ship, items().length + " items");
+  ok("...named as the hull, not as a dealer listing",
+     !!ship && ship.querySelector(".iname").textContent.indexOf("100i") === 0,
+     ship ? ship.querySelector(".iname").textContent : "(none)");
+  ok("...and the category rides the name so it reads as a ship",
+     !!ship && ship.querySelector(".iname").textContent.indexOf("Ships") > -1,
+     ship ? ship.querySelector(".iname").textContent : "(none)");
+  ok("...with its manufacturer as a chip, like any other item",
+     !!ship && !!ship.querySelector(".chip.mk"),
+     ship && ship.querySelector(".chip.mk") ? ship.querySelector(".chip.mk").textContent : "(no mk chip)");
+
+  // 🔴 THE ONE DIFFERENCE HONESTY FORCES. Positive first: there must be BOTH kinds of row, or
+  // "some rows are labelled rent" and "every row is labelled rent" are indistinguishable.
+  const shipRows = rows().length;
+  const shipRents = rents().length;
+  ok("this ship really is offered both ways", shipRows > 1 && shipRents > 0 && shipRents < shipRows,
+     shipRents + " rental rows of " + shipRows);
+  ok("🔴 a rental row SAYS rent", shipRents > 0 && rents().every((t) => t.textContent.indexOf("rent") > -1),
+     shipRents ? rents()[0].textContent : "(no rent tag)");
+  // 🔴 The tag rides the SHOP, not the price — and that placement is load-bearing rather than
+  // aesthetic. Sub already ruled that price and age must stay adjacent (VERSEFINDER pins it), and
+  // a tag between them is that split. Asserting the pairing here too means a ship row is held to
+  // the same rule the item rows are, which is the only way that rule stays universal.
+  ok("...the tag rides the shop name, leaving price and age untouched",
+     shipRents > 0 && rents().every((t) => {
+       const prev = t.previousElementSibling;
+       return !!prev && prev.classList.contains("gshop");
+     }),
+     shipRents ? "previous sibling: " + ((rents()[0].previousElementSibling || {}).className || "(none)") : "(no tags)");
+  {
+    const kids = (r) => [...r.children];
+    const paired = rows().filter((r) => {
+      const ai = kids(r).findIndex((k) => k.classList.contains("age"));
+      const pi = kids(r).findIndex((k) => k.classList.contains("price"));
+      return ai >= 0 && pi >= 0 && Math.abs(ai - pi) === 1;
+    });
+    ok("🔴 price and age stay adjacent on a RENTAL row too",
+       shipRows > 0 && paired.length === shipRows, paired.length + " of " + shipRows);
+  }
+
+  // 🔴 TWO SPREADS. A single min/max over purchases and rentals would run from a 28,665 aUEC hire
+  // to a 1,089,270 aUEC sale and describe no transaction anyone can make.
+  ok("the rental price is quoted SEPARATELY from the purchase spread",
+     moreOf(ship).indexOf("rental") > -1, moreOf(ship));
+
+  // ══ 2. NOTHING ELSE MAY WEAR THE RENT TAG ═════════════════════════════════════════════════
+  await search("cannon");
+  const cannonRows = rows().length;
+  ok("the control query renders rows at all", cannonRows > 0, cannonRows + " rows");
+  ok("...and not one of them is labelled a rental", rents().length === 0, rents().length + " rent tags");
+  ok("...nor claims a stock figure, because items have no stock field anywhere",
+     stocks().length === 0, stocks().length + " stock tags");
+
+  // ══ 3. COMMODITIES ════════════════════════════════════════════════════════════════════════
+  // 🔴 This is the whole of gap 2: the data was already on the player's disk and the widget would
+  // not look at it, so this query used to return the identical blank a typo returns.
+  await search("laranite");
+  const com = items().find((el) => el.querySelector(".iname").textContent.indexOf("Commodity") > -1) || null;
+  ok("🔴 a commodity is findable from this box", !!com,
+     items().map((el) => el.querySelector(".iname").textContent).join(" | ") || "(none)");
+  const comRows = com ? [...com.querySelectorAll(".grow")] : [];
+  ok("...and it names terminals, not a single price", comRows.length > 1, comRows.length + " rows");
+  const comStock = com ? [...com.querySelectorAll(".tag.stock")] : [];
+  ok("🔑 ...carrying the stock an ITEM row cannot", comStock.length > 0, comStock.length + " stock tags");
+  ok("...stated in SCU rather than as a bare number",
+     comStock.length > 0 && comStock.every((t) => t.textContent.indexOf("SCU") > -1),
+     comStock.length ? comStock[0].textContent : "(none)");
+  ok("...and it points at the Trade widget for selling rather than guessing a sell price",
+     moreOf(com).indexOf("Trade") > -1, moreOf(com));
+
+  // ══ 4. THE BLANK THAT KNOWS IT IS NOT A TYPO ══════════════════════════════════════════════
+  // 🔴 Both of the next two searches return ZERO results. That is the point: the assertion is not
+  // about the count, it is that the two produce DIFFERENT pages. An older build rendered the same
+  // sentence for both, which told a player their armour set does not exist.
+  await search("Corbel Patina");
+  ok("a real-but-unsold item still returns no shops", items().length === 0, items().length + " items");
+  const namedHints = hints().length;
+  ok("🔴 ...but the widget NAMES it instead of shrugging", namedHints > 0, namedHints + " named");
+  ok("...and says outright that it exists", emptyText().indexOf("does exist") > -1, emptyText());
+  ok("...listing the thing that was actually typed",
+     hints().some((h) => h.textContent.indexOf("Corbel Patina") > -1),
+     hints().map((h) => h.textContent).join(" | ") || "(none)");
+
+  // ══ 5. A GENUINE TYPO IS STILL ALLOWED TO BE ONE ══════════════════════════════════════════
+  // Without this the fix above would be a way of telling every player that everything exists.
+  await search("zzqqxnothingatall");
+  ok("a typo returns no shops either", items().length === 0, items().length + " items");
+  ok("🔴 ...and NAMES nothing, unlike the case above", hints().length === 0, hints().length + " named");
+  ok("...saying it was not found, which is the only case allowed to say that",
+     emptyText().indexOf("Nothing found") > -1, emptyText());
+
+  return out;
+})()`;
+
+// ── Suite: Log View releases the canvas grab ─────────────────────────────────
+// Its own suite rather than a third key in TYPINGGRAB, because that loop drives a "type mode"
+// BUTTON and this widget has none — focus is taken by clicking into the filter box, which is the
+// deliberate act. Same danger though, and it is the worst one in the widget: while the grab is
+// held no click on any display reaches the game, and hiding UNLOADS the page so a grab stranded
+// that way can never be lowered by anything on screen.
+// Negative-controlled: removing logView's onHide turns "hiding it releases the grab" red.
+const LOGVIEWGRAB = `(async () => {
+  ${PRELUDE}
+  window.__editing = false;
+  const w = WBY.logView;
+  ok("Log View is in the registry", !!w, w ? w.key : "MISSING");
+  setWidgetVisible(w, true);
+  await sleep(400);
+  let box = null;
+  try { box = document.getElementById("wf-logView").contentWindow.document.getElementById("filter"); }
+  catch { /* frame never loaded */ }
+  ok("the page has a filter box", !!box);
+  if (box) {
+    // 🔑 A HIDDEN BrowserWindow NEVER FIRES THE focus EVENT. Measured: after box.focus() the
+    // element really is document.activeElement, and the grab still does not arm — the harness
+    // drives an offscreen window, which has no focus to give, so the event the page listens for
+    // is never dispatched. Same family as rAF and CSS transitions not advancing here.
+    // So: assert focus() really lands on the box (that part IS observable), then dispatch the
+    // event the browser would have. Everything past that point is the page's own handler and the
+    // real host bridge — only Chromium's dispatch is stood in for, because it cannot be had.
+    box.focus();
+    await sleep(60);
+    ok("focus lands on the filter box", box.ownerDocument.activeElement === box,
+       box.ownerDocument.activeElement ? box.ownerDocument.activeElement.id || box.ownerDocument.activeElement.tagName : "none");
+    box.dispatchEvent(new (box.ownerDocument.defaultView.Event)("focus"));
+    await sleep(60);
+    ok("focusing the filter arms the canvas grab", window.__editing === true);
+    setWidgetVisible(w, false);
+    await sleep(200);
+    ok("hiding it releases the grab", window.__editing === false);
+  }
+  return out;
+})()`;
+
+// ── Suite: Log View — raw lines, the caps, the filter, the freeze ────────────
+// This widget's whole reason for existing is to answer "is X even logged?", so the assertions
+// that matter are the ones about NOT losing a line and NOT lying about one: the DOM cap, the ring
+// reaching further back than the DOM, a dropped line being said out loud, and the clipboard
+// getting the RAW text rather than what we rendered.
+// Driven through the page's own push()/render() rather than a live game, so it asserts behaviour
+// instead of whatever Sub happened to be flying.
+const LOGVIEW = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400); // let the page's own connect()/render() settle before driving it
+
+  const rowCount = () => document.querySelectorAll("#rows .row").length;
+  const rowText = () => [...document.querySelectorAll("#rows .row")].map((r) => r.textContent);
+  const mk = (n, s) => ({ n, t: Date.now(), s });
+
+  // Start from a known state. The page is talking to the LIVE sidecar, which is tailing a real
+  // game.log — asserting against whatever it has streamed would be asserting on Sub's evening.
+  ring = []; dropped = 0; filterText = ""; document.getElementById("filter").value = "";
+  setPaused(false);
+  render();
+
+  const stamp = "<2026-08-17T22:00:00.000Z>";
+  push([mk(1, stamp + " [Notice] <CObjectiveMarkerComponent::AddToPlayerDataBank> marker one"),
+        mk(2, stamp + " [Notice] <CSCItemNavigation> routing from Pyro System to Orbituary")]);
+  await sleep(40);
+  ok("a line the game wrote appears", rowCount() === 2, rowCount());
+  ok("...carrying the whole raw line, timestamp included",
+     rowText()[0].indexOf("AddToPlayerDataBank") > -1 && rowText()[0].indexOf(stamp) === 0,
+     rowText()[0].slice(0, 60));
+  // The timestamp is DIMMED, not removed. Removing it would be editing the log; a widget whose job
+  // is to say what the game said may not quietly reformat it.
+  ok("...with the timestamp dimmed rather than stripped",
+     !!document.querySelector("#rows .row .ts"),
+     document.querySelector("#rows .row .ts") ? document.querySelector("#rows .row .ts").textContent : "none");
+
+  // 🔴 THE MELT GUARD. The overlay is always-on-top and composited over the game; an unbounded
+  // row list is how you take the frame rate down with it. 900 pushed, at most 500 kept.
+  const many = [];
+  for (let i = 0; i < 900; i++) many.push(mk(100 + i, stamp + " [Notice] <Filler> bulk line " + i));
+  push(many);
+  await sleep(80);
+  ok("the DOM is capped however loud the log gets", rowCount() <= 500, rowCount());
+  // 🔴 THIS ASSERTION USED TO RACE A RUNNING GAME. It read the LAST row and required it to be the
+  // last line the suite pushed — but the sidecar tails a REAL game.log and keeps streaming while
+  // the suite runs. Measured 2026-08-25 with Star Citizen open: ~20 lines in 20 seconds, so a
+  // genuine engine line lands in the 80ms above often enough to fail about one run in three, with
+  // a detail like [playFeatures][Missions][Comms] that reads as a widget regression and is nothing
+  // of the sort. Same defect class as the third-party host rule in run(), with the game as the
+  // third party: an assertion that can go red for reasons outside the repo teaches people to
+  // ignore the suite, and this one is in the suite that is supposed to be the landing gate.
+  // 🔑 The cap's real promise is "the newest survived AND the oldest was evicted", and asserting
+  // BOTH halves is what makes it two-sided — a cap that kept the oldest instead fails both. It is
+  // also a strictly stronger claim than reading one row, and neither half cares whether one more
+  // real line happened to arrive. (902 lines pushed against a 500 cap, so line 0 must be gone.)
+  const capRows = rowText();
+  const newestKept = capRows.some((t) => t.indexOf("bulk line 899") > -1);
+  const oldestGone = !capRows.some((t) => t.indexOf("bulk line 0") > -1);
+  ok("...keeping the NEWEST lines, not the oldest", newestKept && oldestGone,
+     "newest kept " + newestKept + ", oldest evicted " + oldestGone);
+
+  // 🔑 The ring must outreach the DOM. Typing a word has to search the recent past, not only what
+  // survived the row cap — otherwise the widget can only answer "is X logged" for lines that
+  // arrive after you thought to ask, which is the wrong half of the question.
+  const buried = "AddToPlayerDataBank";
+  ok("a line pushed off the DOM is still held for the filter",
+     ring.some((l) => l.s.indexOf(buried) > -1) && !rowText().some((t) => t.indexOf(buried) > -1),
+     "ring " + ring.length + " / rows " + rowCount());
+
+  const filterTo = async (v) => {
+    const el = document.getElementById("filter");
+    el.value = v;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(60);
+  };
+  await filterTo(buried);
+  ok("...and the filter reaches back and finds it", rowCount() === 1, rowCount());
+  ok("...showing only what matched", rowText()[0].indexOf(buried) > -1, rowText()[0].slice(0, 60));
+  ok("the filter is case-insensitive, because nobody types engine casing",
+     (await filterTo("addtoplayerdatabank"), rowCount()) === 1, rowCount());
+
+  // A miss is SAID. Otherwise "no line matched" and "nothing has arrived" render identically, and
+  // the reader concludes the game is silent when it is the filter that is wrong.
+  await filterTo("qqzzx-no-such-token");
+  ok("a filter that matches nothing says so on the control",
+     document.getElementById("filter").classList.contains("miss"));
+  ok("...and explains the empty panel in words",
+     document.querySelector("#rows .empty") && /No line matches/.test(document.querySelector("#rows .empty").textContent),
+     document.querySelector("#rows .empty") ? document.querySelector("#rows .empty").textContent : "no empty state");
+  await filterTo("");
+  ok("clearing the filter drops the miss marking", !document.getElementById("filter").classList.contains("miss"));
+
+  // ── the freeze ────────────────────────────────────────────────────────────
+  // Pause freezes the VIEW, never the feed. Sub wants it so a line he has spotted cannot scroll
+  // away; a pause that also dropped the lines arriving behind it would trade one lost line for
+  // many, which is the opposite of the point.
+  const before = rowCount();
+  setPaused(true);
+  push([mk(9001, stamp + " [Notice] <Frozen> arrived behind the freeze")]);
+  await sleep(60);
+  ok("pausing freezes the view", rowCount() === before, rowCount() + " vs " + before);
+  ok("...while the feed keeps running behind it",
+     ring.some((l) => l.s.indexOf("arrived behind the freeze") > -1));
+  ok("...and says how many are waiting", /PAUSED . 1 new/.test(document.getElementById("stat").textContent),
+     document.getElementById("stat").textContent);
+  setPaused(false);
+  await sleep(60);
+  ok("resuming shows what arrived while frozen",
+     rowText().some((t) => t.indexOf("arrived behind the freeze") > -1));
+
+  // 🔴 A dropped line is SAID, never swallowed. An instrument that quietly omits lines answers
+  // "is X logged?" with a confident, wrong no — which is the exact failure this widget exists to
+  // stop, so silence here would be worse than not shipping it.
+  dropped = 0;
+  ok("nothing is claimed dropped when nothing was", document.getElementById("warn").textContent === "",
+     document.getElementById("warn").textContent);
+  dropped = 7; status();
+  ok("a burst the server shed is admitted out loud", /7 dropped/.test(document.getElementById("warn").textContent),
+     document.getElementById("warn").textContent);
+  dropped = 0; status();
+
+  // ── click to copy ─────────────────────────────────────────────────────────
+  // ⚠️ Every row keeps the untouched server string on _raw, and the copy reads THAT rather than
+  // the rendered text. Today the two are identical — so "the clipboard is not the rendered text"
+  // is a claim this suite cannot falsify, and it is not made. What IS asserted is the mechanism:
+  // the row carries the exact string the server sent, and that exact string is what the clipboard
+  // gets. Negative-controlled by deleting the _raw assignment, which turns both red.
+  // (The reason _raw exists at all is the first decoration anyone adds — a highlight, a repeat
+  // count, an ellipsis — at which point textContent silently stops being what the game wrote, and
+  // Sub pastes our edit of a log line into a conversation about what the log line said.)
+  let copied = null;
+  const realClip = navigator.clipboard;
+  try {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true, value: { writeText: (t) => { copied = t; return Promise.resolve(); } },
+    });
+  } catch { /* left as the real one; the assertion below will say so */ }
+  await filterTo(buried);
+  const row = document.querySelector("#rows .row");
+  const sent = ring.filter((l) => l.s.indexOf(buried) > -1)[0];
+  ok("there is a line to click", !!row && !!sent);
+  if (row && sent) {
+    ok("the row holds the untouched string the server sent", row._raw === sent.s, String(row._raw).slice(0, 60));
+    row.click();
+    await sleep(60);
+    ok("clicking a line copies it", typeof copied === "string" && copied.length > 0, String(copied).slice(0, 50));
+    ok("...exactly as the game wrote it, timestamp and all", copied === sent.s, String(copied).slice(0, 60));
+    ok("...and the row acknowledges the click", row.classList.contains("flash"));
+  }
+  try { Object.defineProperty(navigator, "clipboard", { configurable: true, value: realClip }); } catch { /* fine */ }
+
+  await filterTo("");
+  return out;
+})()`;
+
 const TYPINGGRAB = `(async () => {
   ${PRELUDE}
   window.__editing = false;
+  // The Event Tracker takes the grab from its tier-reward card rather than a type-mode button,
+  // so it is driven by putting a prompt in front of it. Same rule, same consequence: a grab this
+  // widget takes and never gives back locks every monitor, and hiding it UNLOADS the iframe so
+  // nothing on screen can lower it.
+  {
+    const w = WBY.battaglia;
+    setWidgetVisible(w, true);
+    await sleep(350);
+    const fw = document.getElementById("wf-battaglia") ? document.getElementById("wf-battaglia").contentWindow : null;
+    ok("battaglia: the frame is reachable", !!fw && !!fw.__battReload);
+    if (fw && fw.__battReload) {
+      const real = fw.fetch;
+      fw.fetch = async (u, o) => {
+        if (String(u).indexOf("/api/events") >= 0 && String(u).indexOf("reward") < 0) {
+          return new fw.Response(JSON.stringify({
+            feed: null, reporting: false, events: [],
+            rewardPrompt: { id: "grab:25", eventId: "grab", eventLabel: "Grab", tier: 25,
+              crossedAt: "", crossedAtMs: Date.now(), observed: null, candidate: null, answer: null, reported: false },
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return real(u, o);
+      };
+      await fw.__battReload();
+      await sleep(200);
+      // POSITIVE first: if the card never rendered a text field, "the grab was released" is free.
+      ok("battaglia: a blind prompt opens a text field", !!fw.document.getElementById("rwtext"));
+      ok("battaglia: typing arms the canvas grab", window.__editing === true);
+      setWidgetVisible(w, false);
+      await sleep(200);
+      ok("battaglia: hiding it releases the grab", window.__editing === false);
+      fw.fetch = real;
+    }
+  }
   for (const key of ["twitchChat", "webView"]) {
     const w = WBY[key];
     setWidgetVisible(w, true);
@@ -2533,6 +5159,80 @@ const SPLITFADE = `(async () => {
   return out;
 })()`;
 
+// -- Suite: test-environment badge ---------------------------------------------
+// The app has silently refused to record PTU blueprints since 4.8 and never told the player:
+// nothing appeared in their collection and no surface anywhere explained why. This suite guards
+// the badge that says so.
+// Driven straight from the view, so every branch is reachable without a PTU log - which is the
+// point, because none of them are reachable from a normal test machine.
+const ENVBADGE = `(async () => {
+  ${PRELUDE}
+  const badge = document.getElementById("envBadge");
+  const line = document.getElementById("envLine");
+  ok("the tracker has an env badge", !!badge);
+  ok("...and a footer env line", !!line);
+  if (!badge || !line) return out;
+  // NOTE: named "visible", NOT "shown". PRELUDE already declares const shown (and el, cs) --
+  // redeclaring one is a duplicate const in the same scope, a PARSE error that surfaces only as
+  // "suite threw before it could report", with no hint about which name collided. SKILL.md warns
+  // about out/ok/sleep; el/shown/cs are on that list too.
+  // 🔴 DELIBERATELY DOES NOT READ n.hidden. An earlier version started with !n.hidden, which
+  // short-circuits: the DOM property alone decided the answer and the CSS was never exercised,
+  // so deleting the .envbadge[hidden] rule left this suite GREEN. That guard is exactly what the
+  // page needs (a bare hidden attribute loses to any class rule setting display, and .envbadge
+  // sets display:inline-block), so the assertion has to measure what the PLAYER sees - computed
+  // display and a real rect - not what the script asked for.
+  const visible = (n) => getComputedStyle(n).display !== "none" && n.getBoundingClientRect().width > 0;
+  const has = (s, sub) => String(s || "").toLowerCase().indexOf(sub) >= 0;
+
+  // NOT LIVE: visible, carries the tag, and says what it costs.
+  renderEnvBadge({ envIsLive: false, logEnv: "PTU", patch: "4.10.0-PTU.12479687" });
+  ok("PTU shows the badge", visible(badge), badge.hidden ? "hidden" : getComputedStyle(badge).display);
+  ok("...naming the environment", badge.textContent === "PTU", badge.textContent);
+  ok("...and the footer says it in words", visible(line) && has(line.textContent, "ptu"), line.textContent);
+
+  // The hover text IS the feature (Sub: "when the user hover over whatever badge or label you
+  // are going to use for the PTU, I want them to be informed that their blueprints won't be
+  // tracked"). Assert the MEANING, not merely that a title exists.
+  const tip = badge.title || "";
+  ok("the tooltip is non-empty", tip.length > 0, String(tip.length));
+  ok("...and mentions blueprints", has(tip, "blueprint"), tip.slice(0, 60));
+  ok("...and says they are NOT recorded",
+     has(tip, "not added") || has(tip, "not counted") || has(tip, "not synced") || has(tip, "not tracked"),
+     tip.slice(0, 90));
+  ok("...and reassures the rest still works", has(tip, "everything else"), tip.slice(0, 120));
+
+  // LIVE: nothing at all. A warning that fires on live is worse than no warning.
+  renderEnvBadge({ envIsLive: true, logEnv: "PUB", patch: "4.10.0-PTU.12479687" });
+  ok("PUB hides the badge", !visible(badge));
+  ok("...and the footer line", !visible(line));
+
+  // NULL READS AS LIVE. The app can attach mid-session and never see a header; refusing to
+  // track there would break the common install to protect the rare one.
+  renderEnvBadge({ envIsLive: true, logEnv: null, patch: "x" });
+  ok("a null env stays quiet", !visible(badge));
+
+  // An older sidecar sends no env fields at all - must not cry wolf.
+  renderEnvBadge({ patch: "4.9.0-LIVE.12344265" });
+  ok("a view with no env fields stays quiet", !visible(badge));
+
+  // Any non-PUB tag warns, not just PTU.
+  renderEnvBadge({ envIsLive: false, logEnv: "TECH-PREVIEW", patch: "x" });
+  ok("TECH-PREVIEW also warns", visible(badge) && badge.textContent === "TECH-PREVIEW", badge.textContent);
+
+  // Not live but no tag: must never print the word null at the player.
+  renderEnvBadge({ envIsLive: false, logEnv: null, patch: "x" });
+  ok("a missing tag falls back to TEST, never null", badge.textContent === "TEST", badge.textContent);
+
+  // THE TRAP THIS FEATURE EXISTS TO AVOID. patch is the DATASET label: the bundled 4.10 data was
+  // extracted from PTU, so it reads "4.10.0-PTU..." even on a genuinely LIVE build. A badge keyed
+  // on that string would tell live players their progress was being thrown away.
+  renderEnvBadge({ envIsLive: true, logEnv: "PUB", patch: "4.10.0-PTU.12479687" });
+  ok("a PTU-flavoured DATASET on a LIVE log shows nothing", !visible(badge),
+     "patch says PTU but the log header says PUB - the header wins");
+  return out;
+})()`;
+
 // ── Suite: nothing animates at rest ────────────────────────────────────────────
 // 🔴 An infinite CSS animation on an always-on-top TRANSPARENT window makes the desktop
 // compositor redraw the overlay — and the game under it — every single frame, forever,
@@ -2794,6 +5494,21 @@ const MISSIONINFO = `(async () => {
   // 🔑 null is "the dataset carries no gate", NOT rank 0 — givers use 0 and null side by side.
   ok("...but an absent gate is not rendered as rank 0", info({ rankRequired: null }).indexOf("Rank needed") < 0);
   ok("rank 0 IS a real gate and shows", info({ rankRequired: 0 }).indexOf("Rank needed 0") >= 0);
+
+  // 🔴 THE GIVER'S NAME SURVIVES WITH NO STANDING BAR. The faction group used to be dropped
+  // whole whenever there was no standing (facBody = null), which also threw away the giver's
+  // NAME. Sound when that group held name + standing + rank + reputation; once Rank and
+  // Reputation moved into the main row it meant "no rep scope" => "hide who you work for".
+  // Not a corner case: all 13 Orison Relief contracts carry reputationGained: [], so the whole
+  // 4.10 event ran with its giver invisible. Sub, running one: "it just looks kind of blank."
+  // NOTE: the info() helper above already sets reputationGained: [] and NO repBar, so these
+  // assertions run against exactly the shape that failed.
+  const noRep = info({ giver: "Covalex Independent Contractors" });
+  ok("the mission info is not empty to begin with", noRep.length > 0, String(noRep.length));
+  ok("a giver with NO rep scope still shows its name",
+     noRep.indexOf("Covalex Independent Contractors") >= 0, noRep.slice(0, 120));
+  // ...and the standing bar itself is still correctly absent - the fix must not invent one.
+  ok("...without inventing a standing bar", noRep.indexOf("Standing") < 0, noRep.slice(0, 120));
 
   // ── two groups, so the faction half can be collapsed on its own ──────────
   const V = { giver: "Headhunters", missionType: "Bounty Hunter", illegal: true, rankRequired: 1,
@@ -3065,20 +5780,63 @@ const CALIBRATE = `(async () => {
   return out;
 })()`;
 
+// Per-suite wall clock, so "the suite is slow" can be answered with a number instead of an
+// impression. Filled by `run()`, printed as a table at the end of the pass.
+const TIMINGS = [];
+
 // `page` targets a widget's OWN page instead of the canvas — a notifier is easiest to drive
 // standalone, without the whole canvas around it.
 async function run(label, script, preload, query, page) {
+  if (!selected(label, page)) { SKIPPED.push(label); return 0; }
+  const t0 = Date.now();
   const web = preload ? { preload, contextIsolation: false } : {};
   const win = new BrowserWindow({ show: false, width: 1920, height: 1080, webPreferences: web });
   // A widget that logs an error or 404s an asset is broken even when every assertion passes -
   // a missing image just renders as nothing. Capture both and fail the run on them.
   const noise = [];
+  /* 🔴 A THIRD PARTY BEING DOWN MUST NEVER REDDEN THIS REPO'S SUITE. An assertion that can go red
+     for reasons outside the repo teaches people to ignore the suite, and this one had started to.
+     On 2026-08-25 FrankerFaceZ's origin went down behind Cloudflare, and every load of the Twitch
+     Chat widget put two CORS errors on the console. Whether they landed inside a given suite's
+     observation window depended on how long that suite happened to run, so the same unmodified
+     tree measured GREEN once and RED twice (2 and 5 failures) across three runs — which makes the
+     suite useless as a landing gate for every other flight.
+
+     🔑 THE RULE IS BY HOST, NOT BY VENDOR. It used to be three named emote domains, and that is
+     the same trap one release later: the next outage is at some host nobody thought to list, and
+     whoever is unlucky then has to rediscover all of this. A failure whose subject is not served
+     by this repo is out of scope, whoever it belongs to.
+
+     🔑 This is the BELT. The widget side of that outage is fixed properly and separately — every
+     emote provider is proxied through the sidecar now (`/api/emotes`), so these pages make no
+     cross-origin request at all. This filter keeps a host we do not own from grading our work if
+     something ever reaches for one again. Both layers exist on purpose, so a negative control has
+     to inject at the layer on the path to the thing it measures. */
+  const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i;
+  /* Chromium reports a failed load ITSELF — our JS never sees it, so these arrive as console
+     messages rather than as request events, and no try/catch in a widget can suppress them. Only
+     the network-failure vocabulary is filtered, and only when the message (or the source it is
+     attributed to) names a host we do not serve. A widget's own logic error names neither, so it
+     still fails the run. */
+  const NET_FAILURE = /blocked by CORS policy|Failed to load resource|Failed to fetch|net::ERR_|ERR_CONNECTION|ERR_NAME_NOT_RESOLVED/i;
+  const aboutForeignHost = (msg, src) => {
+    /* The CORS message names BOTH the blocked URL and our own origin, so this asks "does it name
+       any host that is not ours", never "is our host mentioned". A resource-load failure carries
+       no URL in its text at all and puts it in sourceId instead, which is why both are read. */
+    const urls = String(msg).match(/https?:\/\/[^\s'"),]+/g) || [];
+    if (typeof src === "string" && /^https?:\/\//i.test(src)) urls.push(src);
+    return urls.length > 0 && urls.some((u) => !LOCAL.test(u));
+  };
   win.webContents.on("console-message", (...a) => {
     const e = a[0], lvl = typeof e === "object" ? e.level : a[1], msg = typeof e === "object" ? e.message : a[2];
-    if ((lvl === "error" || lvl >= 2) && !/Security Warning/.test(String(msg))) noise.push("console: " + String(msg).slice(0, 120));
+    // Legacy signature is (event, level, message, line, sourceId) — sourceId is a[4]; a[3] is the
+    // line NUMBER, and reading that here would silently disable the sourceId half of the check.
+    const src = typeof e === "object" ? e.sourceId : a[4];
+    if (!(lvl === "error" || lvl >= 2)) return;
+    if (/Security Warning/.test(String(msg))) return;
+    if (NET_FAILURE.test(String(msg)) && aboutForeignHost(msg, src)) return;
+    noise.push("console: " + String(msg).slice(0, 120));
   });
-  // The third-party emote providers answer 404 for a channel that simply isn't registered with
-  // them, which is the common case and not a fault - don't fail a run over it.
   // The unlock-pop suite points an <img> at a URL that must 404 — that IS the assertion (no
   // capture for this item yet → fall back to the render). Named so it can't be mistaken for a real
   // missing asset.
@@ -3092,28 +5850,62 @@ async function run(label, script, preload, query, page) {
   // shows up when a live item that happens to lack one is on screen, so this suite went red for
   // 16 suites at once purely because the tracker's state had moved on (it drives the LIVE
   // sidecar). Same class as binding-image below: a shipped state, not a fault.
-  const EXPECTED_404 = /(^|\/\/)(api\.frankerfacez\.com|7tv\.io|api\.betterttv\.net)\/|deliberate-404-for-test\.webp|\/api\/binding-image(\?|$)|\/api\/fab-img\//;
+  // 🔑 The three emote domains used to be named here, allowlisted for 404 only. That is exactly
+  // the hole the 2026-08-25 outage went through: a provider whose ORIGIN is down answers 522/503
+  // or never completes at all, so it never reaches this handler and the named list bought nothing.
+  // Hosts we do not serve are now skipped wholesale by the LOCAL rule below, at any status.
+  const EXPECTED_404 = /deliberate-404-for-test\.webp|\/api\/binding-image(\?|$)|\/api\/fab-img\//;
   win.webContents.session.webRequest.onCompleted({ urls: ["*://*/*"] }, (d) => {
     if (d.statusCode < 400) return;
+    if (!LOCAL.test(d.url)) return;  // not this repo's to answer for
     if (d.statusCode === 404 && EXPECTED_404.test(d.url)) return;
     noise.push("HTTP " + d.statusCode + " " + d.url.replace(/^https?:\/\//, "").slice(0, 70));
   });
+  let asserts = 0, failed = 0;
   try {
-    const base = page ? `http://localhost:${PORT}/${page}` : URL;
+    let base = page ? `http://localhost:${PORT}/${page}` : URL;
+    // Push the selection into the canvas so a registry SWEEP walks the named widgets instead of
+    // all fifteen. Only the canvas needs it — a widget's own page has nothing to sweep.
+    if (ONLY && !page) base += (base.includes("?") ? "&" : "?") + "only=" + encodeURIComponent(ONLY_KEYS_RESOLVED.join(","));
     await win.loadURL(query ? base + (base.includes("?") ? "&" : "?") + query : base);
-    const res = await win.webContents.executeJavaScript(script);
-    let fails = 0;
+    /* 🔴 A SUITE THAT THROWS MUST NOT TAKE THE OTHERS WITH IT. executeJavaScript rejects when the
+       page script throws, and that rejection escaped `run()` entirely — it unwound to the caller's
+       single try/catch, so ONE bad assertion skipped every suite queued behind it and the whole
+       file reported "FAILED (1)" with no name, no line and no partial results. The hauling suite
+       sat broken behind exactly that for a day, hiding whatever else was broken behind IT.
+       Now the blast radius is one suite and the message says which. */
+    let res;
+    try {
+      res = await win.webContents.executeJavaScript(script);
+    } catch (e) {
+      console.log(`
+${label}`);
+      console.log("  FAIL suite threw before it could report   [" + String((e && e.message) || e).slice(0, 180) + "]");
+      failed = 1;
+      return 1;
+    }
+    let fails = 0, skips = 0;
     console.log(`\n${label}`);
     for (const r of res) {
+      // 🔴 A SKIP IS NEITHER. It prints, it is counted on its own and it is excluded from the
+      // pass total - so a check the input could not express can never read as coverage.
+      if (r.skip) { skips++; console.log("  skip " + r.name + (r.detail ? "   [" + r.detail + "]" : "")); continue; }
       if (!r.pass) fails++;
       console.log((r.pass ? "  ok   " : "  FAIL ") + r.name + (r.detail ? "   [" + r.detail + "]" : ""));
     }
     const uniq = [...new Set(noise)];
     if (uniq.length) { fails++; console.log("  FAIL console/network clean   [" + uniq.slice(0, 4).join(" | ") + "]"); }
     else console.log("  ok   console/network clean");
-    console.log(`  ${res.length + 1 - fails}/${res.length + 1} passed` + (fails ? `  <<< ${fails} FAILED` : ""));
+    const judged = res.length + 1 - skips;
+    asserts = judged;
+    failed = fails;
+    console.log(`  ${judged - fails}/${judged} passed` + (skips ? `  (${skips} skipped)` : "")
+      + (fails ? `  <<< ${fails} FAILED` : "") + `  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
     return fails;
-  } finally { win.destroy(); }
+  } finally {
+    win.destroy();
+    TIMINGS.push({ label, ms: Date.now() - t0, asserts, failed, page: page || "missions.html" });
+  }
 }
 
 // The summoned cog / open hub times itself out once the GAME has focus, because that's when it
@@ -3225,6 +6017,7 @@ const REPORTHOLD = `(async () => {
 const CHATLINKS = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(300);
 
@@ -3849,6 +6642,10 @@ const CHATLINKS = `(async () => {
   const savedMode = localStorage.getItem("chatRightMode");
   const railTitle = () => document.getElementById("memTitle").textContent;
   const railClosed = () => document.getElementById("panel").classList.contains("no-right");
+  // ⚠️ The .where below is the CHAT widget's own member row, NOT the Verse Finder's. Two
+  // widgets legitimately use that class name. A blanket rename of the Verse Finder's .where to
+  // .gshop silently reached in here and broke this suite -- the failure surfaced three widgets
+  // away, which is why the baseline run is the only honest way to attribute a red assertion.
   const whereOf = (h) => {
     const r = [...document.querySelectorAll("#memList .mrow")]
       .find((x) => x.querySelector(".nm")?.textContent === h);
@@ -4305,6 +7102,7 @@ const CHATLINKS = `(async () => {
 const UNLOCK = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const GOOD = "tape-tl.webp", GOOD2 = "anvil-bolt-tl.webp", BAD = "deliberate-404-for-test.webp";
   const card = document.getElementById("card"), img = document.getElementById("img");
@@ -4409,6 +7207,7 @@ async function writeScanRegion(region) {
 const HAULING = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(500); // let the page's own first load settle before overwriting it
 
@@ -4423,6 +7222,22 @@ const HAULING = `(async () => {
     pickupState: "pending", dropoffState: "pending", delivered: null,
     fromLocation: "@1,1,1", toLocation: "@2,2,2",
   }, over || {});
+
+  /* 🔴 THE WIDGET NOW OPENS ON THE RANK TAB (2026-08-18 — it is the tab you read BEFORE you have a
+     board, so it leads). Every assertion below is about the ROUTE view, which used to be the
+     default and silently stopped rendering when that changed: the card selector found nothing, the suite
+     threw on the first byTitle() and — because a throw took the whole file down — hid the stow
+     failures behind it too.
+     WARNING: clicked, not assigned. The page keeps its view in a let inside its own closure, and
+     executeJavaScript runs in the global scope — so assigning view here only makes a global the
+     page never reads, and the suite goes on testing the wrong tab while looking like it fixed
+     itself. Drive the tab the way a player does. */
+
+  document.getElementById("tabRoute").click();
+  // Long enough for the load() that click kicks off to come back and repaint. Too short and its
+  // response lands AFTER the fixture below is assigned, quietly replacing it with the sidecar's
+  // real (empty) board - which reads as "the route drew nothing" rather than as a race.
+  await sleep(500);
 
   plan = {
     updatedAt: Date.now(),
@@ -4454,11 +7269,16 @@ const HAULING = `(async () => {
     untracked: [{ missionId: "m-range", title: "Untracked Haul", minScu: 40, maxScu: 56, trackedNow: false }],
     trackedMissionId: null,
     trips: [{ landings: 2, totalMinutes: 12, peakScu: 137, method: "exact", stops: [
-      { id: "@1,1,1:pickup", name: "Baijini Point", kind: "pickup", minutes: 4, loadAfterScu: 137, sameSpot: false,
-        actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked" },
-                  { missionId: "m-range", title: "Untracked Haul", commodity: null, scu: 56, group: "g-range" }] },
-      { id: "@1,1,1:dropoff", name: "Baijini Point", kind: "dropoff", minutes: 0, loadAfterScu: 0, sameSpot: true,
-        actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked" }] },
+       /* 🔑 kind is PER ACTION, not just per stop - one landing can unload and load, and the
+          widget groups the row by it. This fixture predated that and carried the kind only on
+          the stop, so every action filtered out and NO route rows were drawn: the route
+          assertions had been measuring an empty page. Nothing pointed at it because the suite
+          threw two assertions later on stops[1] and took the whole file down with it. */
+      { id: "@1,1,1:pickup", locationId: "@1,1,1", name: "Baijini Point", kind: "pickup", minutes: 4, loadAfterScu: 137, sameSpot: false,
+        actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked", kind: "pickup" },
+                  { missionId: "m-range", title: "Untracked Haul", commodity: null, scu: 56, group: "g-range", kind: "pickup" }] },
+      { id: "@1,1,1:dropoff", locationId: "@1,1,1", name: "Baijini Point", kind: "dropoff", minutes: 0, loadAfterScu: 0, sameSpot: true,
+        actions: [{ missionId: "m-tracked", title: "Tracked Haul", commodity: "Stims", scu: 81, group: "g-tracked", kind: "dropoff" }] },
     ] }],
     stranded: [],
     locationNames: { "@1,1,1": "Baijini Point", "@2,2,2": "Site 1" },
@@ -4485,14 +7305,38 @@ const HAULING = `(async () => {
   ok("🔴 a RANGED contract prints both ends, never the worst case alone",
      byTitle("Untracked Haul").querySelector(".amt").textContent === "40–56 SCU",
      byTitle("Untracked Haul").querySelector(".amt").textContent);
-  ok("...and says where that came from", byTitle("Untracked Haul").querySelector(".badge").textContent === "range");
+  /* PROVENANCE IS A COLOUR NOW, not a pill. 25f26a2 moved it onto the figure itself and this
+     suite went on asking for the removed .badge element. querySelector returned null and the whole
+     run threw on .textContent BEFORE its first assertion, so NOTHING in this file was checked for
+     hours while it reported only "FAILED (1)". Assert the class AND the tooltip: the widget's own
+     note is that a hue nobody can name is not provenance, so the wording is the half a
+     colour-blind player actually gets, and it is the half worth pinning. */
+  ok("...and says where that came from, in the colour",
+     byTitle("Untracked Haul").querySelector(".amt").classList.contains("src-range"),
+     byTitle("Untracked Haul").querySelector(".amt").className);
+  ok("...with the wording kept on the figure as a tooltip",
+     /only bound this contract/.test(byTitle("Untracked Haul").querySelector(".amt").title),
+     byTitle("Untracked Haul").querySelector(".amt").title);
   ok("a TRACKED contract prints the game's own figure",
      byTitle("Tracked Haul").querySelector(".amt").textContent === "81 SCU",
      byTitle("Tracked Haul").querySelector(".amt").textContent);
-  ok("...badged as coming from the log", byTitle("Tracked Haul").querySelector(".badge").textContent === "stated");
-  ok("every contract carries a provenance badge", cards.every((c) => c.querySelector(".badge")));
-  ok("a modelled box split is labelled modelled",
-     [...byTitle("Tracked Haul").querySelectorAll(".chips .badge")].some((b) => b.textContent === "modelled"));
+  ok("...coloured as coming from the log",
+     byTitle("Tracked Haul").querySelector(".amt").classList.contains("src-log"),
+     byTitle("Tracked Haul").querySelector(".amt").className);
+  ok("...with the log's wording on it",
+     /stated this tonnage/.test(byTitle("Tracked Haul").querySelector(".amt").title),
+     byTitle("Tracked Haul").querySelector(".amt").title);
+  /* Non-emptiness is asserted too: every() over an empty list is true, so a board that rendered
+     no cards at all would have satisfied the old form of this. */
+  var provOk = cards.filter(function (c) { var a = c.querySelector(".amt"); return !!a && /src-[a-z]+/.test(a.className) && !!a.title; }).length;
+  ok("every contract's figure carries provenance", cards.length > 0 && provOk === cards.length,
+     "n=" + cards.length + " with provenance=" + provOk);
+  /* The "modelled" chip is gone - Sub called it noise, and the counts had been right every time he
+     checked (see the stylesheet note). Provenance rides on the figure's colour now, which the two
+     assertions above already pin, so this asserts the chip is NOT reintroduced by accident rather
+     than testing a label that no longer exists. */
+  ok("the modelled chip stays gone",
+     [...byTitle("Tracked Haul").querySelectorAll(".chips .badge")].every((b) => b.textContent !== "modelled"));
 
   // ── 🔴 the please-track prompt ───────────────────────────────────────────
   const track = document.getElementById("track");
@@ -4529,9 +7373,12 @@ const HAULING = `(async () => {
   ok("🔴 ...and the heading stops being an instruction nothing can satisfy",
      document.getElementById("trackK").textContent === "Load not confirmed",
      document.getElementById("trackK").textContent);
+  /* The four-line WHY block became an (i) affordance carrying the same sentence as its tooltip,
+     so read the title rather than the removed element's text. The wording is what matters and it
+     is unchanged; the assertion should follow it, not the markup it used to live in. */
   ok("🔴 ...and the explanation says why there is nothing left to do",
-     /re-tracking does not replay/.test(document.getElementById("trackWhy").textContent),
-     document.getElementById("trackWhy").textContent);
+     /re-tracking does not replay/.test(document.getElementById("trackInfo").title),
+     document.getElementById("trackInfo").title);
   ok("...while the row still offers the box to type the figure into",
      !!trow.querySelector("input"));
   ok("...and the contract is still listed, not hidden",
@@ -4563,8 +7410,112 @@ const HAULING = `(async () => {
   const body = document.getElementById("body");
   ok("the diagram never scrolls the panel sideways", body.scrollWidth <= body.clientWidth,
      body.scrollWidth + " vs " + body.clientWidth);
-  ok("the legend says which colour is which drop", document.querySelectorAll(".legend span").length === 2,
-     document.querySelectorAll(".legend span").length);
+  /* 🔴 ONE ENTRY PER DROP-OFF STOP, not per mission. The hold is zoned by drop-off now (4a84361 -
+     "zone the hold by drop-off stop, not by mission or commodity"), and this still expected the old
+     per-mission count. Derived from the plan rather than hard-coded, so it keeps pinning the RULE
+     (a colour means a drop) instead of a number that moves whenever the fixture does. */
+  var dropLocs = {};
+  (plan.trips || []).forEach(function (t) {
+    (t.stops || []).forEach(function (s) {
+      if ((s.actions || []).some(function (a) { return a.kind === "dropoff"; })) dropLocs[s.locationId || s.id] = 1;
+    });
+  });
+  var wantLegend = Object.keys(dropLocs).length;
+  ok("the legend says which colour is which drop",
+     wantLegend > 0 && document.querySelectorAll(".legend span").length === wantLegend,
+     document.querySelectorAll(".legend span").length + " spans for " + wantLegend + " drop-off stops");
+
+  /* ── 🔴 A PILL WRAPS AS A PILL, OR NOT AT ALL (Sub, 2026-08-22) ─────────────────────────────
+     Measured on the Runs tab at 440px, the widget's DEFAULT width: the chip row was a block of
+     inline spans, so the ONLY break opportunities the engine had were the spaces inside each
+     pill's own label. "costs 851k" put its left half at x=290 on line one and its right half at
+     x=39 on line two - one bordered box sawn in half - and it overflowed by four pixels.
+
+     🔑 SYNTHETIC, ON PURPOSE. The real Runs rows need a live commodity table, so an assertion
+     over them would pass or fail on whether this machine has trade data - the same rot as the
+     assertion that once depended on how recently Sub had played. The rules under test are pure
+     CSS, so they are driven against pills built here.
+
+     🔴 TWO PROBES, BECAUSE THE FIX IS TWO INDEPENDENT MECHANISMS AND EACH MUST BE TESTED WHERE IT
+     IS LOAD-BEARING. The first attempt put both in one flex probe and the nowrap control came back
+     GREEN - correctly, because a FLEX ITEM is blockified and the parent cannot break it however
+     its white-space is set. That assertion was testing flex while claiming to test nowrap. So:
+       - the nowrap rule matters in the INLINE chip rows that are still around (the Ledger totals,
+         the route cards) - probe A gives it one of those.
+       - the flex rule matters in the Runs row - probe B gives it that, and its control (flex
+         removed) puts three unbreakable pills on one line running off the edge.
+
+     ⚠️ Positive first in both. "No pill is split" is satisfied for free by a page with no pills. */
+  var pillProbe = document.createElement("div");
+  pillProbe.style.position = "absolute";
+  pillProbe.style.left = "-9999px";
+  pillProbe.style.width = "600px";
+  document.body.appendChild(pillProbe);
+  var pillLabels = ["3 on the shelf", "Pyro to Stanton", "costs 851k"];
+  var pillIn = function (holder) {
+    pillLabels.forEach(function (label) {
+      var b = document.createElement("span");
+      b.className = "badge calm";
+      b.textContent = label;
+      holder.appendChild(b);
+    });
+    return [].slice.call(holder.children);
+  };
+
+  /* ── Probe A: an INLINE chip row, which is what the Ledger totals and the route cards still are.
+     ⚠️ MEASURE THE BOX, NEVER PICK IT. An earlier version pinned 90px, which is narrower than one
+     pill, so every pill overflowed on a line of its own and the wrap check failed on working code.
+     Laid out wide, measured, then squeezed to just under one pill so the label WOULD break if it
+     were allowed to. */
+  var inlineRow = document.createElement("div");
+  inlineRow.className = "m";
+  pillProbe.appendChild(inlineRow);
+  var inlinePills = pillIn(inlineRow);
+  var inlineWidest = Math.max.apply(null, inlinePills.map(function (b) {
+    return b.getBoundingClientRect().width;
+  }));
+  pillProbe.style.width = Math.max(40, Math.floor(inlineWidest * 0.7)) + "px";
+  var inlineW = inlineRow.getBoundingClientRect().width;
+  ok("there are inline pills to check, in a box narrower than one of them",
+     inlinePills.length === 3 && inlineW < inlineWidest,
+     inlinePills.length + " pills, widest " + Math.round(inlineWidest)
+       + "px, box " + Math.round(inlineW) + "px");
+  var inlineSplit = inlinePills.filter(function (b) { return b.getClientRects().length > 1; });
+  ok("🔴 a pill is never sawn in half at a space in its own label",
+     inlinePills.length === 3 && inlineSplit.length === 0,
+     inlineSplit.length
+       ? "split: " + inlineSplit.map(function (b) { return b.textContent + " over "
+           + b.getClientRects().length + " lines"; }).join("; ")
+       : "all " + inlinePills.length + " render as one box each");
+
+  /* ── Probe B: the Runs chip row. Box measured to hold the widest pill and not all three. */
+  pillProbe.style.width = "600px";
+  var flexOuter = document.createElement("div");
+  flexOuter.className = "tdrow";
+  var flexRow = document.createElement("div");
+  flexRow.className = "m tdchips";
+  flexOuter.appendChild(flexRow);
+  pillProbe.appendChild(flexOuter);
+  var flexPills = pillIn(flexRow);
+  var flexWidths = flexPills.map(function (b) { return b.getBoundingClientRect().width; });
+  var flexWidest = Math.max.apply(null, flexWidths);
+  var flexAll = flexWidths.reduce(function (a, w) { return a + w; }, 0);
+  pillProbe.style.width = Math.ceil(flexWidest + 8) + "px";
+  var flexW = flexRow.getBoundingClientRect().width;
+  ok("...and a Runs chip row to check, in a box that fits one pill and not all three",
+     flexPills.length === 3 && flexW >= flexWidest && flexW < flexAll,
+     "widest " + Math.round(flexWidest) + "px, all three " + Math.round(flexAll)
+       + "px, box " + Math.round(flexW) + "px");
+  var flexYs = {};
+  flexPills.forEach(function (b) { flexYs[Math.round(b.getBoundingClientRect().top)] = 1; });
+  var flexRight = flexRow.getBoundingClientRect().right;
+  var flexOver = flexPills.filter(function (b) {
+    return b.getBoundingClientRect().right > flexRight + 1;
+  });
+  ok("🔴 ...and it wraps them onto fresh lines rather than running off its edge",
+     Object.keys(flexYs).length > 1 && flexOver.length === 0,
+     Object.keys(flexYs).length + " lines, " + flexOver.length + " pills past the right edge");
+  pillProbe.remove();
 
   return out;
 })()`;
@@ -4578,11 +7529,763 @@ const HAULING = `(async () => {
 // from it (missions deepest-first, destinations deepest-first inside a mission), and about the one
 // case where the whole view must disappear — an open hauler, whose boxes the station's arm places.
 //
+// 🔴 Suite: A COMMODITY IN THE ROUTE, BEFORE AND AFTER THE PURCHASE (2026-08-23).
+//
+// The merged Route sequences commodity buys alongside contracts, and a buy enters it with NO
+// tonnage — Sub decides how much at the kiosk and the log tells us afterwards. Everything here is
+// about the gap between those two moments, because that is where the widget can lie:
+//
+//   `num()` is `Number(n || 0).toLocaleString()`, so a null tonnage renders as "0". "0 SCU of
+//   Titanium" is not a missing figure, it is a WRONG one — it reads as the app having decided the
+//   run was not worth filling. Three places had to learn the difference: the action chip, the
+//   step's own tonnage line, and the hold/peak readings, which become FLOORS for the whole trip.
+//
+// ⚠️ FIXTURE, deliberately, and driven by assigning the page's `plan` binding the way the sibling
+// hauling suites do. This is a RENDERING claim: it must not pass or fail on whether the sidecar
+// happens to hold a picked run, and it must not write one into the player's own state to find out.
+const BUYROUTE = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  // One contract leg with a real tonnage, and one commodity buy with none. Both in one trip, so
+  // the two renderings sit side by side and cannot be confused for a whole-page state.
+  const brStop = (name, kind, group, commodity, scu, hold, extra) => ({
+    id: name + ":" + kind, locationId: name, name: name, kind: kind,
+    minutes: 2, handlingMinutes: 1, loadAfterScu: hold, sameSpot: false,
+    actions: [{ missionId: "m1", title: "A contract", commodity: commodity, scu: scu, group: group, kind: kind }]
+      .concat(extra || []),
+  });
+  // The aboard argument is contract cargo with a REAL tonnage riding along, which is what makes the
+  // trip's floor non-zero. Both branches of the floor rendering need a fixture, or one is never
+  // exercised at all.
+  const brPlan = (bought, aboard) => ({
+    updatedAt: Date.now(),
+    ship: { className: "CRUS_Starlifter_C2", displayName: "Crusader C2", totalScu: 696, grids: [], source: "manual" },
+    contracts: [], buys: [{
+      id: "b1", group: "buyleg:b1", commodity: "Titanium", resourceGuid: "g1",
+      from: { terminal: "TDD Area 18", body: "ArcCorp", system: "Stanton", locationId: "TDD Area 18" },
+      to: { terminal: "Port Tressler", body: "microTech", system: "Stanton", locationId: "Port Tressler" },
+      buyPrice: 100, sellPrice: 140, scu: bought ? 48 : null,
+      boughtAt: bought ? "2026-08-23T13:07:44.000Z" : null, shopName: bought ? "TDD_SCShop-001" : null,
+      routed: true, reason: null,
+    }],
+    untracked: [], trackedMissionId: null,
+    trips: [{
+      stops: [
+        brStop("TDD Area 18", "pickup", "buyleg:b1", "Titanium", bought ? 48 : null, (bought ? 48 : 0) + (aboard || 0),
+               aboard ? [{ missionId: "m9", title: "Contract cargo", commodity: "Waste", scu: aboard, group: "g9", kind: "pickup" }] : null),
+        brStop("Port Tressler", "dropoff", "buyleg:b1", "Titanium", bought ? 48 : null, aboard || 0),
+      ],
+      landings: 2, totalMinutes: 8, travelMinutes: 4, handlingMinutes: 4,
+      peakScu: (bought ? 48 : 0) + (aboard || 0), unknownScu: !bought, method: "exact",
+    }],
+    stranded: [], locationNames: { "TDD Area 18": "TDD Area 18", "Port Tressler": "Port Tressler" },
+    unnamedPlaces: [], completedPickups: [],
+    startResolved: { asked: null, resolved: null, detected: null, detectedToken: null, detectedAt: null },
+    unrouted: [], pack: null, aboardScu: 0, onPadScu: 0,
+    rates: { actual: null, projected: null, payoutModelled: false },
+    autoLoad: { hull: false, eligible: 0, live: 0 },
+    totals: { scu: bought ? 48 : 0, capacityScu: 696, liveContracts: 0, unknownContracts: 0, recentPayout: 0, totalMinutes: 8 },
+    notes: [],
+  });
+
+  /* Driven the way a player drives it — the view lives in a let inside the page's own closure, so
+     assigning it from here would only make a global the page never reads. Click, then wait for the
+     load() that click fires to come back BEFORE the fixture is assigned, or the sidecar's real
+     (empty) board lands on top of it. */
+  document.getElementById("tabRoute").click();
+  await sleep(900);
+
+  /* ⚠️ A BARE ASSIGNMENT TO plan, NEVER ONE QUALIFIED WITH window. The page declares plan with let
+     at script top level, so the binding lives in the global LEXICAL environment and an own-property
+     on the window object is shadowed by it — the page goes on reading its own value while the suite
+     believes it swapped it. The first cut of this suite did exactly that and measured the sidecar's
+     real board, which happened to hold a bought commodity, so three assertions passed for entirely
+     the wrong reason and three failed for it. */
+  const brShow = (bought, aboard) => {
+    plan = brPlan(bought, aboard);
+    render();
+    return document.getElementById("body");
+  };
+  const brText = (el) => (el && el.textContent ? el.textContent : "");
+
+  // ── before the purchase ─────────────────────────────────────────────────
+  const openBody = brShow(false);
+  // POSITIVE FIRST. Every "does not say 0 SCU" assertion below is free on a page that drew
+  // nothing at all, which is exactly what a broken fixture produces.
+  const openSteps = [].slice.call(openBody.querySelectorAll(".stop"));
+  ok("the commodity run really renders as route steps", openSteps.length === 2,
+     openSteps.length + " step(s)");
+  ok("...naming the terminals it was picked between",
+     brText(openBody).indexOf("TDD Area 18") > -1 && brText(openBody).indexOf("Port Tressler") > -1,
+     brText(openBody).slice(0, 90));
+  // 🔴 THE RULE. A tonnage nobody has stated must not render as a number, and zero is a number.
+  ok("🔴 an unbought commodity never renders as a tonnage",
+     brText(openBody).indexOf("0 SCU") === -1,
+     brText(openBody).indexOf("0 SCU") > -1 ? brText(openBody).slice(Math.max(0, brText(openBody).indexOf("0 SCU") - 40), brText(openBody).indexOf("0 SCU") + 10) : "no 0 SCU anywhere");
+  ok("...it says the amount is the player's to decide",
+     brText(openBody).toLowerCase().indexOf("up to you") > -1
+     || brText(openBody).toLowerCase().indexOf("you decide") > -1,
+     brText(openBody).slice(0, 160));
+  // 🔴 AND THE HOLD READINGS BECOME FLOORS. A run that will really carry 48 must not print a
+  // confident "hold 0" — the same class of mistake as a rep bar counting down to a rank already held.
+  // 🔴 A ZERO FLOOR IS NOT A FIGURE. With the whole load still to be bought the honest reading is
+  // words: a "greater-or-equal zero" is arithmetically true, says nothing at all (every hold is at
+  // least empty) and reads as the app having decided the run is not worth loading. The first cut of
+  // this suite asserted the marker alone and so accepted exactly that.
+  const openHold = openBody.querySelector(".hold");
+  ok("🔴 a hold that is entirely still to be bought says so in words, not as a zero",
+     brText(openHold).indexOf("0") === -1 && brText(openHold).length > 5,
+     brText(openHold) || "(no .hold element)");
+  const openHead = openBody.querySelector(".sec");
+  ok("...and so does the trip's peak",
+     brText(openHead).indexOf("peak 0") === -1 && brText(openHead).indexOf("peak ≥ 0") === -1,
+     brText(openHead));
+
+  // The OTHER branch, and without it the floor-with-a-number rendering is never exercised at all:
+  // contract cargo aboard makes the floor real, and a real floor KEEPS its number, because a run
+  // that will hold at least 174 SCU is worth saying.
+  const mixBody = brShow(false, 174);
+  ok("🔴 a floor with contract cargo under it keeps its number, marked as a floor",
+     brText(mixBody.querySelector(".hold")).indexOf("≥") > -1
+     && brText(mixBody.querySelector(".hold")).indexOf("174") > -1,
+     brText(mixBody.querySelector(".hold")) || "(no .hold element)");
+  ok("...and so does the peak", brText(mixBody.querySelector(".sec")).indexOf("peak ≥ 174") > -1,
+     brText(mixBody.querySelector(".sec")));
+
+  // ── after the purchase ──────────────────────────────────────────────────
+  // The other half, and it is what tells the rules above apart from a widget that simply never
+  // prints a tonnage. Same fixture, one field different.
+  const doneBody = brShow(true);
+  ok("🔴 a bought commodity renders the tonnage the log stated",
+     brText(doneBody).indexOf("48 SCU") > -1, brText(doneBody).slice(0, 160));
+  ok("...and the floor markers are gone, because nothing is unknown any more",
+     brText(doneBody.querySelector(".hold")).indexOf("≥") === -1
+     && brText(doneBody.querySelector(".sec")).indexOf("≥") === -1,
+     brText(doneBody.querySelector(".sec")) + " | " + brText(doneBody.querySelector(".hold")));
+  ok("...and it does not still claim the amount is up to you",
+     brText(doneBody).toLowerCase().indexOf("up to you") === -1, brText(doneBody).slice(0, 160));
+
+  return out;
+})()`;
+
+//
+// 🔴 Suite: ONE FLAT TAB ROW, AND THE CREDIT FOLLOWS THE DATA (2026-08-23).
+//
+// The widget had two MODES with a bottom switch, each owning its own tabs, because there were two
+// Route surfaces - contracts in Hauling, commodity runs in Trading. Merging Route into one
+// cargo-agnostic tab removed the reason for the split, so the modes went and the five tabs became
+// one row. Two things then have to be pinned, and they fail in completely different ways:
+//
+//  1. THE ROW ITSELF. Sub chose "Commodities" over "Planner" knowing it wraps to two lines at the
+//     320px minimum (measured: the row is 296px, five tabs need 328.8px). So the assertion is NOT
+//     "it fits" - it is that wrapping is what happens and the PAGE still does not scroll sideways.
+//     A row that overflowed instead of wrapping would leave a tab unreachable at minW.
+//  2. THE UEX CREDIT. It used to live in the mode bar and show in Trading mode. The bar is gone
+//     and the credit could not go with it: UEX's data is on the Commodities tab, and an
+//     attribution has to be present where the data is. Both halves are asserted - present there,
+//     absent everywhere else - because "not shown on Route" is satisfied for free by a credit that
+//     never shows at all, which is the exact regression that would strip the attribution.
+//
+// 🔑 VISIBILITY IS READ FROM COMPUTED display, NEVER from `el.hidden`. `.creditbar` sets
+// display:flex, and a bare `hidden` attribute loses to any class rule setting display - so an
+// assertion starting at `.hidden` would stay green with the `[hidden]` guard deleted and the
+// credit painted on every tab. That guard is load-bearing and the control proves it.
+const TABROW = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(600);
+
+  const rowPanel = document.getElementById("panel");
+  const rowTabs = rowPanel ? rowPanel.querySelector(".tabs") : null;
+  const rowBtns = () => rowTabs ? [].slice.call(rowTabs.querySelectorAll(".hbtn")) : [];
+  const rowLabels = () => rowBtns().map((b) => b.textContent.trim());
+
+  // POSITIVE FIRST. Every must-not-exist below is free on an empty row, and an empty row is
+  // exactly what a bad merge produces.
+  ok("the head carries a tab row with five tabs in it", rowBtns().length === 5,
+     rowBtns().length + ": " + rowLabels().join(" | "));
+  ok("...and they are the merged five, in the order Sub picked",
+     rowLabels().join("|") === "Contracts|Commodities|Route|Stow|Ledger",
+     rowLabels().join("|"));
+  ok("...every one of them reachable, with nothing hidden behind a mode",
+     rowBtns().length > 0 && rowBtns().every((b) => !b.hidden && getComputedStyle(b).display !== "none"),
+     rowBtns().filter((b) => b.hidden).length + " hidden");
+  // Paired with the positive above: the switch itself is really gone, not merely unstyled.
+  ok("...and the Hauling / Trading mode switch is gone",
+     !document.getElementById("modeHaul") && !document.getElementById("modeTrade"),
+     document.getElementById("modeHaul") ? "modeHaul still present" : "absent");
+  // The retired Market tab. Its two sidecar routes still answer; only the tab went.
+  ok("...as is the Market tab it replaced", !document.getElementById("tabLookup"),
+     document.getElementById("tabLookup") ? "tabLookup still present" : "absent");
+
+  // ── the row at both ends of the width range ──────────────────────────────
+  // 🔑 Measured at the WIDGET's own limits: canvas.js gives hauling w 440, minW 320. A tab row
+  // that only behaves at the default has not been checked at the end Sub was describing.
+  const rowAt = async (w) => {
+    document.body.classList.add("embedded");
+    document.body.style.width = w + "px";
+    await sleep(120);
+    const tops = [];
+    for (const b of rowBtns()) {
+      const t = Math.round(b.getBoundingClientRect().top);
+      if (tops.indexOf(t) < 0) tops.push(t);
+    }
+    const right = rowTabs.getBoundingClientRect().right;
+    let past = 0;
+    for (const b of rowBtns()) if (b.getBoundingClientRect().right > right + 0.5) past++;
+    return { lines: tops.length, past: past, scroll: document.body.scrollWidth,
+             h: Math.round(rowTabs.getBoundingClientRect().height) };
+  };
+
+  const row320 = await rowAt(320);
+  ok("at the 320px minimum the row WRAPS rather than overflowing",
+     row320.lines === 2 && row320.past === 0,
+     row320.lines + " line(s), " + row320.past + " tab(s) past the right edge, " + row320.h + "px tall");
+  // 🔴 The invariant the wrap exists to protect. body.scrollWidth once read 333 at a 320px
+  // viewport on this very widget, which nobody had reported and only measuring at minW found.
+  ok("...and the page still does not scroll sideways there",
+     row320.scroll <= 320, "body.scrollWidth " + row320.scroll);
+
+  const row440 = await rowAt(440);
+  ok("at the 440px default it is a single line", row440.lines === 1 && row440.past === 0,
+     row440.lines + " line(s), " + row440.h + "px tall");
+  ok("...so the wrap really is a narrow-width behaviour, not the normal one",
+     row320.h > row440.h, row320.h + "px at 320 vs " + row440.h + "px at 440");
+  document.body.style.width = "";
+  await sleep(120);
+
+  // ── the credit follows the data ──────────────────────────────────────────
+  const rowBar = document.getElementById("creditbar");
+  // 🔑 COMPUTED display, not the attribute. See the header note: the attribute alone cannot see
+  // the deleted [hidden] guard, and that is the regression that paints the credit everywhere.
+  const rowBarUp = () => !!rowBar && getComputedStyle(rowBar).display !== "none"
+    && rowBar.getBoundingClientRect().height > 0;
+  const rowGo = async (id) => { document.getElementById(id).click(); await sleep(700); };
+
+  ok("the credit strip survived the mode bar it used to live in", !!rowBar,
+     rowBar ? "present" : "(no #creditbar)");
+
+  await rowGo("tabTrade");
+  ok("🔴 UEX is credited on Commodities, where their data is on screen", rowBarUp(),
+     rowBar ? "display=" + getComputedStyle(rowBar).display + " h=" + Math.round(rowBar.getBoundingClientRect().height) : "none");
+  // EITHER the badge OR the words, because the markup swaps one for the other when the image
+  // cannot load. Asserting the <img> alone goes red for the fallback that keeps the credit up.
+  const rowMark = document.getElementById("uexmark");
+  const rowWords = document.getElementById("uexname");
+  const rowCredited = (rowMark && rowMark.getAttribute("alt") && rowMark.getAttribute("alt").toLowerCase().indexOf("uex") > -1)
+    || (rowWords && rowWords.textContent.toLowerCase().indexOf("uex") > -1);
+  ok("...by badge or by name, whichever the image could manage", !!rowCredited,
+     rowMark ? "badge alt=" + rowMark.getAttribute("alt") : rowWords ? "words=" + rowWords.textContent : "(neither)");
+
+  // The other half, and it is the half that makes it an attribution rather than a logo.
+  const rowElsewhere = [];
+  for (const id of ["tabAdvisor", "tabRoute", "tabLayout", "tabJournal"]) {
+    await rowGo(id);
+    if (rowBarUp()) rowElsewhere.push(document.getElementById(id).textContent.trim());
+  }
+  ok("...and nowhere else, because none of those tabs render a UEX quote",
+     rowElsewhere.length === 0,
+     rowElsewhere.length ? "credited on " + rowElsewhere.join(", ") : "hidden on all four");
+
+  return out;
+})()`;
+
 // Same technique as HAULING above: the page's own `plan` binding is assigned directly, so these are
 // rendering rules tested deterministically with no game and no sidecar state.
+// 🔴 Suite: THE RUNS ROW SURVIVES 320px - the regression this row shape exists to prevent.
+//
+// What shipped before it: the money line was one white-space:nowrap flex row inside a column
+// that shrinks, and #body is overflow-x:hidden. MEASURED against the live board at 320px (the
+// widget minW, and about as narrow as Sub runs it): ALL 25 rows clipped, the line needing
+// 254-273px of a 175-204px column. It kept buy and sell and threw away the margin and the
+// quantity, and nothing on screen said so.
+//
+// 🔑 The assertion is about the MECHANISM, not one string: the strip may wrap, and nothing in a
+// row may exceed the column it sits in. A check on particular text would pass the day someone
+// re-added nowrap with slightly shorter numbers.
+//
+// ⚠️ FIXTURE, deliberately. The rows are served by patching fetch rather than taken from the
+// live price table, because this is a LAYOUT claim and a layout claim must not pass or fail on
+// whether the sidecar happens to hold a cached UEX table. The fixture is built to stress the
+// line: the longest real terminal names and the widest real numbers on the board.
+// ── The funnel: what -> buy at -> sell at ──────────────────────────────────────
+//
+// Sub picked this design out of three mockups on 2026-08-25. The property that makes it worth
+// having is not the layout, it is that A PLACE THE COMMODITY CANNOT BE BOUGHT AT IS UNREACHABLE —
+// the slot is filled from `buyAt`/`sellAt`, so there is no code path that offers one. That is the
+// same bug the Route tab's picker has, and the reason both are meant to share one source.
+//
+// ⚠️ LIVE DATA, deliberately, and this is the opposite call from RUNSNARROW above. That suite makes
+// a LAYOUT claim and fixtures its rows so the layout cannot pass or fail on the sidecar's cache.
+// This one makes a claim about WHERE THE OPTIONS COME FROM, and a fixture would answer that
+// question with a list the test itself wrote — the circularity trap. So it reads the real
+// /api/trade/commodity for whatever commodity it picked and requires the slot to be a subset.
+//
+// 🔑 It never names a commodity. The sandbox profile's table and Sub's live one hold different
+// things, and a suite that hardcodes "Neon" is a suite that goes red when the price feed moves.
+const FUNNEL = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400);
+
+  const tab = document.getElementById("tabTrade");
+  ok("the Commodities tab is reachable", !!tab, tab ? "found" : "(no #tabTrade)");
+  if (!tab) return out;
+  tab.click();
+  await sleep(1400);
+
+  const slots = () => [].slice.call(document.querySelectorAll("#body .slot"));
+  const slotFor = (which) => slots().filter(function (s) { return s.dataset.slot === which; })[0] || null;
+  // Defensive on BOTH the condition and the detail: an eagerly-evaluated detail that throws kills
+  // the suite and reports the survivors as a small pass.
+  const slotText = (which) => {
+    const s = slotFor(which);
+    if (!s) return "(no slot)";
+    const v = s.querySelector(".v");
+    const i = s.querySelector("input");
+    return i ? "(open)" : (v ? v.textContent : "(no value)");
+  };
+  const opts = () => [].slice.call(document.querySelectorAll("#body .slotlist .o"));
+  const rows = () => [].slice.call(document.querySelectorAll("#body .tdrow"));
+
+  // 🔑 POSITIVE GUARD FIRST. Every claim below is about what the funnel offers, and a funnel that
+  // never rendered offers nothing — which satisfies every must-not-contain check for free.
+  // ⚠️ FOUR since 2026-08-25 — the hold slot joined what/buy/sell. RE-POINTED, not relaxed: this
+  // count is the positive guard for everything below it, so turning it into "at least three" would
+  // retire the thing it exists to catch. The names are listed so a slot going MISSING fails by
+  // name rather than as arithmetic.
+  const FUNNEL_SLOTS = ["what", "buy", "sell", "hold"];
+  ok("the funnel drew all four slots",
+     slots().length === FUNNEL_SLOTS.length
+       && FUNNEL_SLOTS.every(function (n) { return !!slotFor(n); }),
+     slots().map(function (s) { return s.dataset.slot; }).join(","));
+  ok("...and the board underneath is not empty", rows().length > 0, rows().length + " rows");
+
+  // AT REST every slot is unset, which is the claim that nothing was taken away: with no
+  // constraint applied this is the leaderboard the tab has always been.
+  // 🔑 The hold slot counts here too. It shows the ship's capacity at rest, but that is a DEFAULT
+  // the app worked out and not a choice the player made, so it must read dim exactly like the
+  // other three — an inherited value that looks like a set one is a bug this project shipped once.
+  const offAtRest = slots().filter(function (s) {
+    const vEl = s.querySelector(".v");
+    return vEl && vEl.classList.contains("off");
+  }).length;
+  ok("at rest every slot reads as UNSET", offAtRest === FUNNEL_SLOTS.length,
+     offAtRest + " of " + FUNNEL_SLOTS.length + " dim - " + slots().map(function (s) { return s.dataset.slot + "=" + slotText(s.dataset.slot); }).join(" "));
+
+  // 🔴 AN UNSET SLOT MUST NOT LOOK LIKE A VALUE, and a class name cannot tell you whether it is
+  // PAINTED. Read the computed colour and require a real distance from a set one, because two
+  // colours can differ and still be the same colour to an eye - measured on this app's Drake skin,
+  // where two tokens 30 units apart looked identical.
+  const restV = slotFor("what") ? slotFor("what").querySelector(".v") : null;
+  const offColour = restV ? getComputedStyle(restV).color : "";
+  const probe = document.createElement("span");
+  probe.className = "v";
+  if (slotFor("what")) slotFor("what").appendChild(probe);
+  const setColour = probe.isConnected ? getComputedStyle(probe).color : "";
+  probe.remove();
+  // ⚠️ NO REGEX. A pattern inside a suite body is processed by the template literal first, and an
+  // escape that survives compilation but never matches makes every must-not assertion pass for
+  // ever. This one needs none: a computed colour is always "rgb(a, b, c)" or "rgba(a, b, c, d)".
+  const chans = (s) => {
+    const open = s.indexOf("(");
+    const close = s.indexOf(")");
+    if (open < 0 || close < 0) return [0, 0, 0];
+    const parts = s.slice(open + 1, close).split(",");
+    return [Number(parts[0]) || 0, Number(parts[1]) || 0, Number(parts[2]) || 0];
+  };
+  const dist = (a, b) => {
+    const x = chans(a); const y = chans(b);
+    return Math.abs(x[0] - y[0]) + Math.abs(x[1] - y[1]) + Math.abs(x[2] - y[2]);
+  };
+  ok("...and it is really PAINTED differently, not just classed differently",
+     offColour !== "" && setColour !== "" && dist(offColour, setColour) >= 60,
+     offColour + " vs " + setColour + " = " + dist(offColour, setColour));
+
+  // ── open the WHAT slot and take whatever it offers first ──────────────────
+  const whatSlot = slotFor("what");
+  const whatV = whatSlot ? whatSlot.querySelector(".v") : null;
+  if (!whatV) { ok("the what slot can be opened", false, "(no .v)"); return out; }
+  whatV.click();
+  await sleep(700);
+  ok("opening a slot lists options in flow", opts().length > 0, opts().length + " options");
+  // 🔴 IN FLOW, NEVER ABSOLUTE. An absolutely-positioned list would blanket the rows it is meant to
+  // be chosen against - the exact failure the Route tab's .psug has, and the reason the first cut of
+  // this tab's commodity input rendered below the panel.
+  const list = document.querySelector("#body .slotlist");
+  const listPos = list ? getComputedStyle(list).position : "(none)";
+  ok("...in flow, so it cannot blanket the rows it is chosen against", listPos === "static", listPos);
+
+  /* 🔴 PICK A COMMODITY THAT CAN ACTUALLY PRODUCE A ROUTE, and take the name off the BOARD rather
+     than off the top of the list. The first attempt took the first option alphabetically and drew
+     Agricium, which the price table can BUY in four places and SELL in none — so the funnel
+     correctly returned nothing and three assertions below failed on a perfectly working widget.
+     The names endpoint means "can be bought somewhere"; it promises no sell side.
+     A commodity already on the board has a profitable run by construction, so typing its name is
+     the one choice that cannot make the rest of this suite vacuous. It also tests the typing path,
+     which taking option zero never did.
+
+     🔴 AND IT MUST BE A PAIR WITH MORE THAN ONE DESTINATION, or the central claim below is
+     unfalsifiable. Take two: the first commodity on the board had 4 buy terminals and NO sell side
+     (Agricium), and the second had exactly one profitable destination (Osoian Hides) — so "with a
+     buy pinned the board lists destinations" read as a failure on a widget doing exactly the right
+     thing, twice. Before asserting that something appears, check that it COULD appear.
+     The probe below asks the sidecar rather than assuming, and if the table cannot express the case
+     it SAYS SO loudly instead of passing. */
+  const boardNames = [];
+  rows().forEach(function (r) {
+    const t = r.querySelector(".l1 .t");
+    if (t && boardNames.indexOf(t.textContent) < 0) boardNames.push(t.textContent);
+  });
+  let chosen = "";
+  let wantTerminal = "";
+  let wantRows = 0;
+  let probes = 0;
+  for (const cand of boardNames.slice(0, 8)) {
+    if (chosen) break;
+    let look = null;
+    try {
+      const lr = await fetch("/api/trade/commodity?name=" + encodeURIComponent(cand), { cache: "no-store" });
+      if (lr.ok) look = await lr.json();
+    } catch (e) { look = null; }
+    for (const b of ((look && look.buyAt) || [])) {
+      if (chosen || probes > 24) break;
+      probes++;
+      try {
+        const q = "/api/trade/routes?capacity=64&limit=60&commodity=" + encodeURIComponent(cand)
+          + "&fromTerminal=" + encodeURIComponent(b.terminalShort);
+        const rr = await fetch(q, { cache: "no-store" });
+        if (!rr.ok) continue;
+        const body = await rr.json();
+        const k = (body.routes || []).length;
+        if (k >= 2) { chosen = cand; wantTerminal = b.terminalShort; wantRows = k; }
+      } catch (e) { /* try the next one */ }
+    }
+  }
+  ok("the price table can express a buy point with SEVERAL destinations",
+     chosen.length > 0, chosen ? chosen + " at " + wantTerminal + " -> " + wantRows + " destinations"
+       : "none found across " + boardNames.length + " board commodities in " + probes + " probes");
+  if (!chosen) return out;
+  const typeBox = document.querySelector("#body .slot.open input");
+  if (!typeBox) { ok("the open slot has a text box", false, "(no input)"); return out; }
+  typeBox.value = chosen;
+  typeBox.dispatchEvent(new Event("input", { bubbles: true }));
+  await sleep(500);
+  const firstWhat = opts().filter(function (o) {
+    const optName = o.querySelector(".nm");
+    return !o.classList.contains("none") && optName && optName.textContent === chosen;
+  })[0];
+  ok("typing a commodity name finds it in the list", !!firstWhat,
+     firstWhat ? chosen : opts().length + " options, none matching " + chosen);
+  if (!firstWhat) return out;
+  firstWhat.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+  await sleep(1600);
+  ok("picking a commodity fills the slot", slotText("what") === chosen,
+     JSON.stringify(slotText("what")) + " vs " + JSON.stringify(chosen));
+
+  // ── THE SAFETY PROPERTY ───────────────────────────────────────────────────
+  // Everything the buy slot offers is either a SYSTEM or a terminal that really sells this
+  // commodity. Checked against the sidecar's own answer, not against a list this test wrote.
+  let truth = null;
+  try {
+    const r = await fetch("/api/trade/commodity?name=" + encodeURIComponent(chosen), { cache: "no-store" });
+    if (r.ok) truth = await r.json();
+  } catch (e) { truth = null; }
+  ok("the sidecar knows this commodity, so there is something to compare against",
+     !!(truth && truth.buyAt && truth.buyAt.length), truth ? (truth.buyAt || []).length + " buy terminals" : "(no answer)");
+
+  const buySlot = slotFor("buy");
+  const buyV = buySlot ? buySlot.querySelector(".v") : null;
+  if (!buyV) { ok("the buy slot can be opened", false, "(no .v)"); return out; }
+  buyV.click();
+  await sleep(700);
+
+  const termNames = opts()
+    .filter(function (o) { return !!o.querySelector(".pr"); })
+    .map(function (o) {
+      const n = o.querySelector(".nm");
+      return n && n.firstChild ? String(n.firstChild.textContent) : "";
+    });
+  ok("the buy slot offers real terminals, not just systems", termNames.length > 0, termNames.join(" | "));
+
+  const legal = {};
+  ((truth && truth.buyAt) || []).forEach(function (b) { legal[b.terminalShort] = true; });
+  const illegal = termNames.filter(function (n) { return !legal[n]; });
+  // 🔴 THE ASSERTION THE WHOLE DESIGN RESTS ON. Paired with the positive above, because "no illegal
+  // options" is satisfied for free by an empty list - the free-pass shape this repo keeps hitting.
+  ok("🔴 every terminal offered really does sell this commodity",
+     illegal.length === 0, illegal.length ? "NOT in buyAt: " + illegal.join(", ") : termNames.length + " of " + termNames.length + " legal");
+
+  // A system badge on a terminal option, and it must not rely on colour alone: --cyan-bright and
+  // --amber compute 30 units apart on the Drake skin, so a colour-only home/away split disappears
+  // there. Fill vs no fill is what survives a palette.
+  const badges = [].slice.call(document.querySelectorAll("#body .slotlist .sysb"));
+  ok("a terminal option says which system it is in", badges.length > 0, badges.length + " badges");
+  const home = badges.filter(function (b) { return b.classList.contains("home"); })[0];
+  const away = badges.filter(function (b) { return b.classList.contains("away"); })[0];
+  if (home && away) {
+    const hc = getComputedStyle(home);
+    const ac = getComputedStyle(away);
+    ok("🔴 home and away are told apart by more than a hue",
+       dist(hc.color, ac.color) >= 120 || hc.backgroundColor !== ac.backgroundColor,
+       "colour " + dist(hc.color, ac.color) + " apart, bg " + hc.backgroundColor + " vs " + ac.backgroundColor);
+  } else {
+    // Not a failure: the fixture may hold one system only. Say so rather than passing silently.
+    skip("home/away contrast - only one kind of badge on screen",
+         (home ? "home" : "") + (away ? "away" : "") + " only");
+  }
+
+  // ── pin the buy, and the list becomes DESTINATIONS ────────────────────────
+  // Take the terminal the probe chose, not whichever is first — that is the whole point of probing.
+  const firstTerm = opts().filter(function (o) {
+    const optN = o.querySelector(".nm");
+    return !!o.querySelector(".pr") && optN && optN.firstChild
+      && String(optN.firstChild.textContent) === wantTerminal;
+  })[0];
+  ok("the buy slot offers the terminal the probe chose", !!firstTerm,
+     firstTerm ? wantTerminal : "no option named " + wantTerminal);
+  if (!firstTerm) return out;
+  const tn = firstTerm.querySelector(".nm");
+  const pinned = tn && tn.firstChild ? String(tn.firstChild.textContent) : "";
+  const rowsBefore = rows().length;
+  firstTerm.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+  await sleep(1900);
+
+  ok("picking a terminal fills the buy slot", slotText("buy") === pinned,
+     JSON.stringify(slotText("buy")) + " vs " + JSON.stringify(pinned));
+  // 🔴 THE DEDUPE FLIP, OBSERVED THROUGH THE UI. The finder returns one row per BUY terminal, so
+  // with a buy pinned that rule collapses the answer to a single row - and the question at that
+  // moment is "where can I take this". A regression here does not throw; it silently shows one
+  // destination and looks like the commodity has nowhere to go.
+  ok("🔴 with a buy pinned, the board lists DESTINATIONS rather than one row",
+     rows().length > 1, rows().length + " rows (was " + rowsBefore + " before pinning)");
+  // 🔑 AND IT IS THE RIGHT NUMBER OF THEM. This is what catches the widget asking a DIFFERENT
+  // question from the one it means to — sending fromSystem where it meant fromTerminal returns a
+  // plausible list that is simply about something else, and "more than one row" would not notice.
+  ok("...exactly as many as the sidecar has for that pin",
+     rows().length === wantRows, rows().length + " on screen vs " + wantRows + " from the API");
+  /* ⚠️ Array every() on an empty list is TRUE, so this would report a working pin over a board that
+     returned nothing — the free-pass shape this file has been bitten by repeatedly. The row count
+     is folded into the condition rather than left to the guard above it, so the assertion cannot
+     pass vacuously even when read on its own. */
+  const allFromPinned = rows().length > 0 && rows().every(function (r) {
+    const rt = r.querySelector(".l2 .r");
+    return !!rt && rt.textContent.indexOf(pinned) === 0;
+  });
+  ok("...and every one of them starts at the terminal that was pinned", allFromPinned,
+     rows().length + " rows, all from " + pinned);
+
+  const head = document.querySelector("#body .sec");
+  ok("...and the heading says which question is being answered",
+     !!head && head.textContent.indexOf("Take it to") === 0,
+     head ? JSON.stringify(head.textContent) : "(no heading)");
+
+  // ── the trade-off line ────────────────────────────────────────────────────
+  // It may legitimately be absent when the best-paying and the best-per-hour destination are the
+  // same row, so this is a conditional claim - stated as one rather than skipped silently.
+  const to = document.querySelector("#body .tradeoff");
+  if (to) {
+    const bolded = [].slice.call(to.querySelectorAll("b")).map(function (b) { return b.textContent; });
+    ok("the trade-off line names TWO different destinations",
+       bolded.length === 2 && bolded[0] !== bolded[1], bolded.join(" / "));
+    ok("...and it is above the rows it is about",
+       !!head && (to.compareDocumentPosition(head) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+       "tradeoff then heading");
+  } else {
+    skip("the trade-off line - one destination won on both counts, so there is none to check",
+         "absent by design");
+  }
+
+  // ── the + Route button ────────────────────────────────────────────────────
+  // 🔴 Sub: "it's a massive pill right next to the smaller pills... if it was right-justified in its
+  // own kind of column, or the same column as the price, that would look a lot better."
+  const row0 = rows()[0];
+  const chipRow = row0 ? row0.querySelector(".tdchips") : null;
+  const btn = chipRow ? chipRow.querySelector(".hbtn") : null;
+  ok("a run row still carries the + Route control", !!btn,
+     btn ? JSON.stringify(btn.textContent) : "(no button in .tdchips)");
+  if (btn && chipRow) {
+    const br = btn.getBoundingClientRect();
+    const cr = chipRow.getBoundingClientRect();
+    ok("🔴 it is hard right in the row, not sitting among the chips",
+       Math.abs(br.right - cr.right) <= 1.5,
+       "button right " + Math.round(br.right) + " vs chip row right " + Math.round(cr.right));
+    // The other half of Sub's sentence: the same right edge the price already uses. Both end at
+    // the row's own padding, so this holds without either reserving width.
+    const p = row0.querySelector(".l1 .pk") || row0.querySelector(".l1 .p");
+    if (p) {
+      const pr = p.getBoundingClientRect();
+      ok("...on the same right edge as the price", Math.abs(br.right - pr.right) <= 2,
+         "button " + Math.round(br.right) + " vs price " + Math.round(pr.right));
+    }
+  }
+
+  // ── clearing WHAT must clear the terminal under it ────────────────────────
+  // 🔴 A terminal slot only ever holds a place that trades the CHOSEN commodity. Left behind, it
+  // filters the next commodity by a terminal that has nothing to do with it, which returns nothing
+  // and reads exactly like a broken board.
+  const wx = slotFor("what") ? slotFor("what").querySelector(".x") : null;
+  if (wx) {
+    wx.click();
+    await sleep(1600);
+    ok("🔴 clearing the commodity also clears the terminal picked under it",
+       slotText("buy") === "anywhere", JSON.stringify(slotText("buy")));
+    ok("...and the board comes back", rows().length > 0, rows().length + " rows");
+  } else {
+    ok("the what slot offers a clear control once set", false, "(no .x)");
+  }
+
+  return out;
+})()`;
+
+const RUNSNARROW = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(400);
+
+  const mk = (commodity, fromT, toT, buy, sell, pct, scu, cap, profit, bound, xsys) => ({
+    commodity: commodity,
+    from: { terminalShort: fromT, system: xsys ? "Pyro" : "Stanton", price: buy },
+    to: { terminalShort: toT, system: "Stanton", price: sell },
+    marginPct: pct, moveScu: scu, scuBound: bound, capitalRequired: cap,
+    profit: profit, marginPerScu: Math.round(profit / scu), minutes: 24,
+    profitPerHour: profit * 2.5, crossSystem: !!xsys, ageDays: 13.6,
+  });
+  const FIX = {
+    capacityScu: 696, ship: "C2 Hercules",
+    routes: [
+      mk("Degnous Root", "Canard View", "CBD Lorville", 44156, 53000, 20, 696, 30732576, 6155424, "unknown", true),
+      mk("Bexalite", "HDMS-Hadley", "Sacrens Plot", 23940, 36000, 50, 507, 12137580, 6114420, "demand", true),
+      mk("Elespo", "Chawlas Beach", "Ashland", 6000, 15000, 150, 332, 1992000, 2988000, "demand", false),
+    ],
+  };
+  const origFetch = window.fetch;
+  window.fetch = function (u, o) {
+    if (String(u).indexOf("/api/trade/routes") >= 0) {
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(FIX) });
+    }
+    return origFetch.call(this, u, o);
+  };
+
+  // Driven the way a player drives it. Assigning the page's own view binding would only make a global
+  // the page never reads - executeJavaScript runs in the page's GLOBAL scope, not its closure.
+  // ⚠️ RE-POINTED 2026-08-23. This used to click #modeTrade first, because the tab was hidden
+  // behind a Trading mode. The modes are merged away and that button no longer exists, so the
+  // click threw on null and took the whole suite with it. One click now, and the tab is a peer of
+  // Contracts and Route rather than something you have to switch modes to reach.
+  var tradeTab = document.getElementById("tabTrade");
+  ok("the Commodities tab is reachable without switching modes", !!tradeTab && !tradeTab.hidden,
+     tradeTab ? "label=" + tradeTab.textContent : "(no #tabTrade)");
+  if (!tradeTab) return out;
+  tradeTab.click();
+  await sleep(1200);
+
+  const panel = document.getElementById("panel");
+  const rows = () => [].slice.call(panel.querySelectorAll(".tdrow"));
+
+  // 🔑 POSITIVE GUARD FIRST. Every check below is a must-not-overflow, and an empty board
+  // satisfies all of them for free - the shape of free pass this repo has been bitten by more
+  // than once. If this one fails, nothing after it means anything.
+  ok("there are Runs rows to measure", rows().length > 0, rows().length + " rows");
+
+  const overflowAt = async (w) => {
+    panel.style.width = w + "px";
+    await sleep(120);
+    const bad = [];
+    rows().forEach(function (r, i) {
+      [].slice.call(r.querySelectorAll(".l1, .l2, .l3, .tdchips")).forEach(function (elm) {
+        if (elm.scrollWidth > elm.clientWidth + 1) {
+          bad.push("row" + (i + 1) + " ." + elm.className.split(" ")[0]
+            + " need=" + Math.round(elm.scrollWidth) + " have=" + Math.round(elm.clientWidth));
+        }
+      });
+    });
+    return bad;
+  };
+
+  const at320 = await overflowAt(320);
+  ok("🔴 at 320px nothing in a run row runs off its column",
+     at320.length === 0, at320.length ? at320.join(" | ") : "0 of " + rows().length + " rows clip");
+  const at440 = await overflowAt(440);
+  ok("...and nothing does at 440 either",
+     at440.length === 0, at440.length ? at440.join(" | ") : "0 of " + rows().length + " rows clip");
+
+  // The MECHANISM that makes the line above true, asserted separately so a regression names
+  // itself instead of arriving as a pile of pixel numbers.
+  panel.style.width = "320px";
+  await sleep(120);
+  const strip = panel.querySelector(".tdrow .l3");
+  const wrapMode = strip ? getComputedStyle(strip).flexWrap : "(no strip)";
+  ok("🔑 the metrics strip is allowed to WRAP, which is what stops it clipping",
+     wrapMode === "wrap", wrapMode);
+  const stripH = strip ? Math.round(strip.getBoundingClientRect().height) : 0;
+  ok("...and at 320 it really does take a second line rather than losing a figure",
+     stripH > 20, stripH + "px tall");
+
+  // The profit shares line one with the name, so it reserves no width of its own. This is the
+  // other half of the fix - it is what freed the 84px the old right-hand column held open.
+  const r0 = rows()[0];
+  const l1 = r0 ? r0.querySelector(".l1") : null;
+  ok("the profit sits on line one beside the name, not in a column of its own",
+     !!(l1 && l1.querySelector(".t") && l1.querySelector(".p")),
+     l1 ? l1.className + " children: " + l1.children.length : "(no .l1)");
+  ok("...and there is no fixed-width right-hand column left to hold dead space open",
+     !!r0 && r0.querySelectorAll(".tdcap").length === 0,
+     r0 ? r0.querySelectorAll(".tdcap").length + " .tdcap elements" : "(no row)");
+
+  // 🔴 Sub asked for this once already: a big number with no noun beside it is one nobody can
+  // act on. It was .tdcaplbl under the figure; it must survive the move onto line one.
+  const pk = l1 ? l1.querySelector(".pk") : null;
+  ok("🔴 the big number still says what it IS",
+     !!(pk && pk.textContent.trim().length > 0), pk ? JSON.stringify(pk.textContent) : "(no .pk)");
+
+  // 🔑 A FORECAST IS NOT DRESSED AS A RECORD. The Runs board is crowd-reported prices, so its
+  // profit is cyan; only the Ledger, whose figures came out of the log, earns up/down colour.
+  const p0 = l1 ? l1.querySelector(".p") : null;
+  const forecastPlain = !!p0 && !p0.classList.contains("up") && !p0.classList.contains("down");
+  ok("🔑 a forecast profit is not coloured like a realised one",
+     forecastPlain, p0 ? JSON.stringify(p0.className) : "(no .p)");
+
+  // ── the head Sub asked for: name left, badge hard right, tabs on their own row ──
+  const head = panel.querySelector(".head");
+  const badge = panel.querySelector(".expbadge");
+  const tabs = panel.querySelector(".tabs");
+  const title = panel.querySelector(".h-title");
+  for (const w of [320, 440, 900]) {
+    panel.style.width = w + "px";
+    await sleep(120);
+    const pr = panel.getBoundingClientRect();
+    const br = badge.getBoundingClientRect();
+    const tr = tabs.getBoundingClientRect();
+    const ttr = title.getBoundingClientRect();
+    // Hard right: the only thing between the badge and the panel edge is the head padding.
+    ok("at " + w + "px the badge is pinned to the right edge",
+       Math.round(pr.right - br.right) <= 14, Math.round(pr.right - br.right) + "px inset");
+    ok("...with the tabs on a row of their own below it",
+       tr.top > br.bottom - 4, "tabs top " + Math.round(tr.top - pr.top)
+         + " vs badge bottom " + Math.round(br.bottom - pr.top));
+    // The gap flexing is the point Sub made - it must GROW with the widget, not stay put.
+    ok("...and the gap between name and badge is what absorbed the width",
+       br.left - ttr.right > 20, Math.round(br.left - ttr.right) + "px gap");
+  }
+  panel.style.width = "";
+  window.fetch = origFetch;
+  return out;
+})()`;
 const STOW = `(async () => {
   const out = [];
   const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(500);
 
@@ -4707,12 +8410,225 @@ const STOW = `(async () => {
 })()`;
 
 
+/* ── the trade journal: cargo that can never leave ──────────────────────────────────────────────
+   Two complaints from Sub, one section. He flew a loaded ship into a wall to see what would happen
+   and the loot has been listed ever since; and a lot he had sold down from reads "on the elevator"
+   under a heading that says "Still aboard", which is the opposite claim. *"I don't even know what
+   that's supposed to mean."*
+
+   🔑 THE FIXTURE IS THE RIGHT TOOL HERE AND THE WRONG ONE ONE LINE LATER. Rendering rules are what
+   this suite is for, so a hand-written journal is correct — it makes every row shape reachable on
+   a machine where nobody has traded. But the round trip (does the button really remove the lot)
+   is NOT assertable that way: a fixture would be asserting my own object. That half is covered by
+   `npm run test:trade`, which drives the real `TradeJournal` including a restart. What IS checked
+   here is the wiring in between: the button issues the right request, with the right lot id. */
+const TRADEHOLD = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  /* Clicked, not assigned — the view lives in a let inside the page's own closure, so setting it
+     from here would only make a global the page never reads. Same trap the route suite documents. */
+  const tab = document.getElementById("tabJournal");
+  ok("the journal tab exists to be driven", !!tab, tab ? "found" : "(no #tabJournal)");
+  if (!tab) return out;
+  tab.click();
+  await sleep(500);   // let the load() that click fires come back before overwriting it
+
+  /* Sub's own board, as the sidecar really reports it: two lots bought to the elevator, two loaded
+     straight in, and one already written off. The elevator lot is the one he was reading. */
+  const lot = (id, name, scu, price, auto, ago) => ({
+    id: id, resourceGuid: "g-" + id, commodity: name, scu: scu, pricePerScu: price,
+    shopName: "TDD_SCShop-001", at: new Date(Date.now() - ago).toISOString(),
+    atMs: Date.now() - ago, autoLoaded: auto,
+  });
+  const DAY = 86400000;
+  tradeJournal = {
+    runs: [], unmatched: [],
+    open: [lot("lot2", "Processed Food", 1, 1201.95, false, 3 * DAY),
+           lot("lot3", "Carbon", 8, 268.83, true, 3 * DAY)],
+    writtenOff: [Object.assign(lot("lot1", "Tungsten", 4, 8265, false, 3 * DAY),
+                               { forgottenAt: new Date().toISOString(), cost: 33060 })],
+    today: { runs: 0, scu: 0, cost: 0, revenue: 0, profit: 0, minutes: 0, profitPerHour: null,
+             unpricedRevenue: 0, unpricedSales: 0 },
+    allTime: { runs: 0, scu: 0, cost: 0, revenue: 0, profit: 0, minutes: 0, profitPerHour: null,
+               unpricedRevenue: 0, unpricedSales: 0 },
+  };
+  render();
+  await sleep(120);
+
+  const body = document.getElementById("body");
+  const text = body ? body.textContent : "(no #body)";
+
+  /* Defensive, and it matters in the DETAIL as much as in the condition: the detail argument is
+     evaluated eagerly, so reaching through a missing element there kills the whole suite and the
+     run reports a small pass. */
+  const rows = Array.prototype.slice.call(document.querySelectorAll(".trow"));
+  const rowText = (r) => (r && r.textContent) ? r.textContent : "(empty row)";
+  const secs = Array.prototype.slice.call(document.querySelectorAll(".sec"));
+  const secText = (s) => (s && s.textContent) ? s.textContent : "(empty section)";
+
+  // ── 🔑 POSITIVE FIRST. Everything below is "the page does not say X", and a page that rendered
+  // nothing satisfies all of it for free.
+  ok("the held lots render at all", rows.length >= 2, rows.length + " rows");
+  const held = rows.filter((r) => rowText(r).indexOf("Processed Food") >= 0
+                                || rowText(r).indexOf("Carbon") >= 0);
+  ok("...both of them", held.length === 2, held.length + " of 2");
+
+  // ── the heading no longer contradicts the rows underneath it
+  const heading = secs.map(secText).join(" | ");
+  ok("the section says what the journal actually knows", heading.indexOf("Bought, not sold") >= 0, heading);
+  ok('...and drops "Still aboard", which the rows below it contradicted',
+     heading.indexOf("Still aboard") < 0, heading);
+
+  // ── the location chip is a fact about the PURCHASE, so it is past tense
+  const elevatorRow = held.filter((r) => rowText(r).indexOf("Processed Food") >= 0)[0];
+  const elevatorText = rowText(elevatorRow);
+  ok("an elevator lot still says where the game put it", elevatorText.indexOf("elevator") >= 0, elevatorText);
+  ok('...in the PAST tense — "went to the elevator", not "on the elevator"',
+     elevatorText.indexOf("went to the elevator") >= 0 && elevatorText.indexOf("on the elevator") < 0,
+     elevatorText);
+  ok("...and its age is stated, because the claim is three days old",
+     elevatorText.indexOf("d ago") >= 0 || elevatorText.indexOf("h ago") >= 0, elevatorText);
+  const chips = elevatorRow ? elevatorRow.querySelectorAll(".badge") : [];
+  const chipTitle = chips.length ? (chips[chips.length - 1].title || "") : "(no chip)";
+  ok("...with the explanation on the chip rather than in the row",
+     chipTitle.indexOf("nothing in the log says where it is now") >= 0, chipTitle);
+
+  // ── 🔴 THE CONTROL SUB ASKED FOR
+  const xOf = (r) => {
+    const bs = r ? Array.prototype.slice.call(r.querySelectorAll("button")) : [];
+    return bs.filter((b) => b.textContent === "\\u2715")[0] || null;
+  };
+  ok("every held lot carries a remove control", held.length > 0 && held.every((r) => !!xOf(r)),
+     held.map((r) => (xOf(r) ? "x" : "-")).join(""));
+  ok("...that says what it does without being clicked",
+     (xOf(elevatorRow) ? xOf(elevatorRow).title : "").indexOf("Cargo gone") >= 0,
+     xOf(elevatorRow) ? xOf(elevatorRow).title : "(no button)");
+
+  /* Stub the page's fetch so the click is observable without needing a real held lot on whatever
+     machine this runs on. Restored below — a suite that leaves fetch stubbed poisons every suite
+     after it. */
+  const realFetch = window.fetch;
+  let asked = "(nothing was requested)";
+  window.fetch = function (u, o) {
+    const s = String(u);
+    if (s.indexOf("/forget") >= 0) { asked = ((o && o.method) || "GET") + " " + s; }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(tradeJournal) });
+  };
+  const btn = xOf(elevatorRow);
+  if (btn) btn.click();
+  await sleep(200);
+  window.fetch = realFetch;
+
+  ok("clicking it asks the sidecar to forget that lot", asked.indexOf("/api/trade/journal/forget") >= 0, asked);
+  ok("...as a POST, so the loopback gate applies to it", asked.indexOf("POST ") === 0, asked);
+  ok("...naming the row that was clicked, not the first one",
+     asked.indexOf("lot=lot2") >= 0, asked);
+
+  // ── the money is still on the record, and still out of the profit
+  ok("a written-off lot is reported rather than silently gone",
+     text.indexOf("written off") >= 0, text.slice(-220));
+  ok("...saying plainly that it is NOT in the profit above",
+     text.indexOf("not counted in the profit") >= 0, text.slice(-220));
+
+  return out;
+})()`;
+
+/* 🔴 A SALE THE GAME STATED NO VOLUME FOR MUST SHOW NOTHING WHERE THE TONNAGE WOULD GO.
+   54% of real commodity SELLS carry an empty Cargo Box Data: hand-mined gems sold out of personal
+   inventory, where SCU is the wrong unit rather than an unknown one. The Ledger keeps the money and
+   the terminal, and says nothing about how much. Sub's ruling: "just display nothing in the widget
+   itself."
+
+   ⚠️ THE FAILURE THIS GUARDS IS A ZERO, NOT A CRASH. The page formats with num(), which is
+   Number(n || 0), so an unguarded null renders "0 SCU" — a missing figure printed as zero is not
+   missing, it is wrong, and it looks like a real reading.
+
+   🔑 THE FIXTURE CARRIES BOTH SHAPES ON PURPOSE. A rule that stripped the tonnage from EVERY
+   unmatched row would satisfy every "does not say SCU" assertion below, so a row that legitimately
+   HAS a volume has to keep it in the same render. */
+const TRADEUNIT = `(async () => {
+  const out = [];
+  const ok = (n, c, d) => out.push({ name: n, pass: !!c, detail: d === undefined ? "" : String(d) });
+  const skip = (n, d) => out.push({ name: n, skip: true, detail: d === undefined ? "" : String(d) });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(500);
+
+  const tab = document.getElementById("tabJournal");
+  ok("the journal tab exists to be driven", !!tab, tab ? "found" : "(no #tabJournal)");
+  if (!tab) return out;
+  tab.click();
+  await sleep(500);
+
+  const zeroTotals = { runs: 0, scu: 0, cost: 0, revenue: 0, profit: 0, minutes: 0,
+                       profitPerHour: null, unpricedRevenue: 536000, unpricedSales: 2 };
+  tradeJournal = {
+    runs: [], open: [], writtenOff: [],
+    unmatched: [
+      /* Verbatim shape of a real Hadanite sale at the New Babbage TDD: no cargo boxes, so no
+         volume and no per-SCU price, and 416,000 aUEC that genuinely changed hands. */
+      { commodity: "Hadanite", resourceGuid: "g-hadanite", scu: null, sellPricePerScu: null,
+        revenue: 416000, sellShop: "SCShop_CommEx_TDD_NewBabbage",
+        soldAt: new Date(Date.now() - 3600000).toISOString() },
+      /* The other shape: a boxed sale whose volume the game DID state. */
+      { commodity: "Processed Food", resourceGuid: "g-food", scu: 8, sellPricePerScu: 15000,
+        revenue: 120000, sellShop: "SCShop_Admin_lt_base_g",
+        soldAt: new Date(Date.now() - 7200000).toISOString() },
+    ],
+    today: zeroTotals, allTime: zeroTotals,
+  };
+  render();
+  await sleep(120);
+
+  const rows = Array.prototype.slice.call(document.querySelectorAll(".trow"));
+  const rowText = (r) => (r && r.textContent) ? r.textContent : "(empty row)";
+
+  /* 🔑 POSITIVE FIRST, AND NON-EMPTY. Every assertion after this is "the row does not say X", and
+     a page that rendered no rows at all — the plausible wrong fix, dropping the sale — passes all
+     of them for free. */
+  ok("both unmatched sales render", rows.length === 2, rows.length + " rows");
+  const gem = rows.filter((r) => rowText(r).indexOf("Hadanite") >= 0)[0] || null;
+  const boxed = rows.filter((r) => rowText(r).indexOf("Processed Food") >= 0)[0] || null;
+  ok("...the unpriced gem sale among them", !!gem, gem ? rowText(gem) : "(no Hadanite row)");
+  ok("...and the boxed one", !!boxed, boxed ? rowText(boxed) : "(no Processed Food row)");
+
+  const gemText = rowText(gem);
+  /* 🔑 THE MONEY AND THE PLACE ARE STILL THERE. Recording the observation is half of the ruling. */
+  ok("the gem sale keeps its revenue", gemText.indexOf("416,000") >= 0, gemText);
+  ok("...and the terminal it was sold at", gemText.indexOf("New Babbage") >= 0
+     || gemText.indexOf("NewBabbage") >= 0 || gemText.indexOf("CommEx") >= 0, gemText);
+
+  /* 🔴 AND NOTHING WHERE THE TONNAGE WOULD GO. Not a zero, not a dash, not a placeholder. */
+  const nameCell = gem ? gem.querySelector(".tnm") : null;
+  const nameText = nameCell && nameCell.textContent ? nameCell.textContent : "(no .tnm)";
+  ok("🔴 the gem sale claims no SCU at all", nameText.indexOf("SCU") < 0, nameText);
+  ok("🔴 ...and does not print a zero in its place", nameText.indexOf("0") < 0, nameText);
+  ok("...nor a dash or any other placeholder standing in for a number",
+     nameText.indexOf("-") < 0 && nameText.indexOf("?") < 0, nameText);
+  ok("...it is just the commodity", nameText === "Hadanite", nameText);
+
+  /* 🔑 THE PAIRED NEGATIVE, in the same render: a stated volume still prints. Without this the
+     assertions above are satisfied by a page that stopped showing tonnages entirely. */
+  const boxedName = boxed ? boxed.querySelector(".tnm") : null;
+  const boxedText = boxedName && boxedName.textContent ? boxedName.textContent : "(no .tnm)";
+  ok("...while a sale that DOES state a volume still shows it",
+     boxedText.indexOf("8 SCU") >= 0, boxedText);
+
+  return out;
+})()`;
+
+
 app.whenReady().then(async () => {
   let fails = 0;
   const region0 = await readScanRegion();
   try {
     fails += await run("widget grouping", GROUPING, null);
-    fails += await run("pair merges (brute force)", PAIRS, null);
+    // Opt-in — see the `--pairs` block at the top of this file. The default gate does NOT run it,
+    // and says so in as many words at the end of the pass.
+    if (RUN_PAIRS) fails += await run(PAIRS_LABEL, PAIRS, null);
     fails += await run("title-bar chrome", CHROME, null);
     fails += await run("controls visible + reachable", REACH, null);
     fails += await run("sweeps: themes / sizes / text / stacks", SWEEPS, null);
@@ -4722,9 +8638,24 @@ app.whenReady().then(async () => {
     fails += await run("chrome anchoring + latches", ANCHOR, path.join(__dirname, "widget-dom-stub-preload.cjs"));
     fails += await run("lifecycle: closed = idle", LIFECYCLE, null);
     fails += await run("typing grab: hiding releases it", TYPINGGRAB, path.join(__dirname, "widget-dom-stub-preload.cjs"));
+    // ⚠️ Deliberately ahead of the hauling suites. A THROW inside a suite kills the whole run where
+    // it stands, and `hauling: honest loads, whole route` currently throws on main (it reads
+    // #trackWhy, which 0b3c06f replaced with a #trackInfo popover) — so anything registered after
+    // it is not merely failing, it is never executed at all.
+    fails += await run("logView: the filter box releases the canvas grab", LOGVIEWGRAB,
+      path.join(__dirname, "widget-dom-stub-preload.cjs"));
+    fails += await run("logView: raw lines, the caps, the filter, the freeze", LOGVIEW, null, null, "logview.html");
+    fails += await run("event feed: the reward ladder says when it is a fallback", EVENTFEED, null, null, "battaglia.html");
+    fails += await run("event rewards: a sighting and a rumour must not look the same", REWARDCARD, null, null, "battaglia.html");
+    fails += await run("event ladder: Orison first, the guesses shown and labelled", EVENTLADDER, null, null, "battaglia.html");
+    fails += await run("verse finder: a shop, a price, and how old that reading is", VERSEFINDER, null, null, "versefinder.html");
+    fails += await run("verse finder: ships, commodities, and which kind of blank", VERSEDEALERS, null, null, "versefinder.html");
+    fails += await run("verse finder: the eye names the terminal that placed you", VERSEEYE, null, null, "versefinder.html");
+    fails += await run("verse finder: observations are PRICES, not receipts", VERSEPOOL, null, null, "versefinder.html");
     fails += await run("client errors reach the sidecar", CLIENTERR, null);
     fails += await run("per-widget angle", ANGLE, null);
     fails += await run("split fade: panel vs text", SPLITFADE, null);
+    fails += await run("test-environment badge", ENVBADGE, null);
     fails += await run("nothing animates at rest", IDLEPAINT, null);
     fails += await run("mission info from community data", MISSIONINFO, null);
     fails += await run("unrecognized blueprint names", UNRECOGNIZED, null);
@@ -4748,6 +8679,10 @@ app.whenReady().then(async () => {
     // ?rates loads the idle-panel fixture AND leaves the live feed disconnected — a fixture a
     // real broadcast can paint over tests nothing.
     fails += await run("idle panel (nothing tracked)", IDLEPANEL, null, "rates");
+    // ?rates only because it is an existing FIXTURES flag and therefore disconnects the live
+    // feed — a broadcast landing mid-suite would call setRepScan with the real prefs and paint
+    // over every fixture below. This suite touches nothing the idle panel draws.
+    fails += await run("rep scan on the widget face", REPSTRIP, null, "rates");
     fails += await run("mission + faction drawers", MIDRAWERS, null, "missioninfo");
     fails += await run("widget settings close when idle", WCFGIDLE, null, "wcfgidle=250");
     // ?arrange: the calibration panel lives INSIDE the arrange scrim, so a suite that doesn't open
@@ -4763,6 +8698,15 @@ app.whenReady().then(async () => {
     fails += await run("chrome over the native view", VIEWMASK, null);
     fails += await run("mining call-outs by verdict", MININGSAY, null, null, "mining.html");
     fails += await run("chat links + slash menu", CHATLINKS, null, null, "chat.html");
+    // ⚠️ Registered AHEAD of the two hauling suites for the reason stated further up: a throw used
+    // to take every suite behind it with it, and `hauling: honest loads, whole route` is the one
+    // that throws. Same page, so this costs nothing to place here.
+    fails += await run("hauling: one flat tab row, and the credit follows the data", TABROW, null, null, "hauling.html");
+    fails += await run("hauling: a commodity in the route, before and after the buy", BUYROUTE, null, null, "hauling.html");
+    fails += await run("hauling: the funnel - what, buy at, sell at", FUNNEL, null, null, "hauling.html");
+    fails += await run("hauling: the Runs row survives 320px", RUNSNARROW, null, null, "hauling.html");
+    fails += await run("hauling: the trade journal's held cargo", TRADEHOLD, null, null, "hauling.html");
+    fails += await run("hauling: a sale with no stated volume shows no tonnage", TRADEUNIT, null, null, "hauling.html");
     fails += await run("hauling: honest loads, whole route", HAULING, null, null, "hauling.html");
     fails += await run("hauling: stowage order + signature", STOW, null, null, "hauling.html");
     fails += await run("completion card holds while you use it", REPORTHOLD, null);
@@ -4787,7 +8731,59 @@ app.whenReady().then(async () => {
       if (!back) { console.log(`  it is now ${JSON.stringify(now)} — re-drag it, or use Reset.`); fails++; }
     }
   }
-  console.log(fails ? `\nFAILED (${fails})` : "\nall widget DOM tests passed");
+  // 🔑 THE COST, AS A NUMBER RATHER THAN AN IMPRESSION. A flight that changed two widgets should be
+  // able to see what the other fifty suites cost it, and the tower should be able to see which
+  // suite to look at when a pass starts feeling slow.
+  if (TIMINGS.length) {
+    const total = TIMINGS.reduce((a, t) => a + t.ms, 0);
+    const asserts = TIMINGS.reduce((a, t) => a + t.asserts, 0);
+    const byPage = new Map();
+    for (const t of TIMINGS) byPage.set(t.page, (byPage.get(t.page) || 0) + t.ms);
+    console.log(`\n── cost ──  ${TIMINGS.length} suites · ${asserts} assertions · ${(total / 1000).toFixed(1)}s`);
+    console.log("   slowest suites:");
+    for (const t of [...TIMINGS].sort((a, b) => b.ms - a.ms).slice(0, 12)) {
+      console.log(`     ${(t.ms / 1000).toFixed(1).padStart(6)}s  ${String(t.asserts).padStart(4)} asserts  ${t.label}`);
+    }
+    console.log("   by page:");
+    for (const [p, ms] of [...byPage].sort((a, b) => b[1] - a[1])) {
+      console.log(`     ${(ms / 1000).toFixed(1).padStart(6)}s  ${(ms / total * 100).toFixed(0).padStart(3)}%  ${p}`);
+    }
+  }
+  /* 🔴 A GATE THAT QUIETLY COVERS LESS THAN IT USED TO IS HOW A SUITE STOPS BEING TRUSTED. The
+     pair suite is opt-in now (Sub's call — see the --pairs block at the top), and the ONE way that
+     becomes a false green is a run printing "all widget DOM tests passed" while 105 pair merges
+     went unchecked and nobody knew. So the default pass says what it did not do, and names the
+     exact command that does it — the same standard --only holds itself to just below. */
+  if (!RUN_PAIRS) {
+    console.log(`\n⚠ ${PAIRS_LABEL} was NOT run — it is a RELEASE step, not part of this gate.`);
+    console.log("   105 pairs / ~134s for 7 assertions, and a broken merge pair can only reach a");
+    console.log("   human through a released build. Before cutting one, run:");
+    console.log(`       ${PAIRS_CMD}`);
+  }
+  // 🔴 A PARTIAL PASS MUST SAY SO IN AS MANY WORDS. The one way this feature turns into a false
+  // green is somebody reading "all widget DOM tests passed" off a subset run and landing on it.
+  if (ONLY) {
+    console.log(`\n⚠ PARTIAL RUN — --only ${ONLY_KEYS_RESOLVED.join(",")}. ${SKIPPED.length} suite(s) were NOT run:`);
+    console.log("   " + SKIPPED.join(" · "));
+    console.log("   This is NOT a landing gate. The gate is `npm run test:widgets` with no --only.");
+  }
+  // A suite nobody classified still RAN (never skip what you could not classify) — but it has to
+  // be visible, or --only quietly stops covering things as suites are added.
+  if (UNTAGGED.length) {
+    fails++;
+    console.log(`\nFAIL ${UNTAGGED.length} suite(s) carry no entry in SUITE_TAGS, so --only cannot`
+      + ` reason about them (they were run anyway):\n   ` + [...new Set(UNTAGGED)].join(" · "));
+  }
+  // The verdict names what it covered. "all widget DOM tests passed" is only true of a run that
+  // actually included the pairs, so a default pass says so on the same line as the green.
+  const verdict = ONLY ? "all SELECTED widget DOM tests passed"
+    : RUN_PAIRS ? "all widget DOM tests passed, INCLUDING pair merges — release-ready"
+    : `all widget DOM tests passed (pair merges NOT run — ${PAIRS_CMD})`;
+  console.log(fails ? `\nFAILED (${fails})` : `\n${verdict}`);
   process.exitCode = fails ? 1 : 0;
-  app.quit();
+  // 🔴 app.quit() is a GRACEFUL Electron shutdown and it EXITS 0, discarding
+  // process.exitCode. Measured 2026-08-25: a run printing "FAILED (1)" returned exit 0, so
+  // the landing gate reported success on a red suite to every script that asked. app.exit()
+  // takes the code and uses it.
+  app.exit(fails ? 1 : 0);
 });

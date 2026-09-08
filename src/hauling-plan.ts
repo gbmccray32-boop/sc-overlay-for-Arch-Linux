@@ -33,32 +33,33 @@ import { packCargo, shipCapacityScu, type GridSpec, type PackItem, type PackResu
 import { planRun, type RouteContract, type RoutePlan, type RouteStop, type Vec3 } from "./hauling-route.js";
 import type { HaulingView, HaulContract, HaulStopState } from "./hauling.js";
 import type { BoxSize, HaulingDataStore, Ship } from "./hauling-data.js";
+import { canAutoLoad, rankAutoLoads } from "./hauling-autoload.js";
+import { boundsFor, commodityFor, resolveScu, weakest, type ScuSource } from "./hauling-scu.js";
+import { CANON_PLANET, matchLocationToken, posKey } from "./hauling-locations.js";
+import { buildRates } from "./hauling-rates.js";
+import type { CommodityBuy } from "./hauling-buys.js";
 
-/** Where a load figure came from. Rendered as a badge — never dropped. */
-export type ScuSource =
-  /** The game enumerated every box (`OnItemRegistered`). Exact, and the ONLY exact manifest
-   *  that exists — mission-item hauls only; Covalex SCU hauls log nothing. */
-  | "manifest"
-  /** The tracked contract's own Deliver line. Exact, from the game. */
-  | "log"
-  /** The player typed it in, because they can see it in mobiGlas and we cannot. */
-  | "pinned"
-  /** The dataset states one figure (`minScu == maxScu`). Exact, but from the datacore. */
-  | "dataset"
-  /** The dataset states a SPAN. 🔴 NOT a number — `scu` is the worst case, for fit checking. */
-  | "range"
-  /** Neither source says anything. `scu` is null and this contract cannot be planned. */
-  | "unknown";
+/**
+ * The location-id namespace commodity stops live in.
+ *
+ * 🔴 CONTRACT STOPS ARE KEYED BY MARKER COORDINATES (`posKey`, "@x,y,z") and a commodity terminal
+ * has no marker — it comes from the price table, which knows names and bodies and no coordinates
+ * at all. Two id namespaces in one route is the trap `references/travel.md` records as making every
+ * precise fix look self-contradictory, so this prefix exists to make the split VISIBLE rather than
+ * accidental: an id starting with it can never collide with a marker key, and anything that reads
+ * a position from one is asking the wrong question.
+ *
+ * The two namespaces are reconciled by NAME, through the same `canonById` merge the contract stops
+ * already use for two markers at one spaceport — see where buy names are seeded into it.
+ */
+const BUY_LOC = "buy:";
+/** The route group id for a picked buy. Prefixed for the same reason as the location id. */
+const buyGroup = (id: string): string => "buyleg:" + id;
 
-/** Stanton's four planets, by the code the contract key writes. Confirmed by Sub, 2026-08-17.
- *
- *  🔑 This exists because the DATASET cannot answer it. `Stanton4` carries two Planet records:
- *  "microTech" and "Green". Green is not a place in the game — it is microTech's internal name
- *  left in the files, and the data says so plainly once you look: microTech has 59 children
- *  (every moon and outpost), Green has ZERO. An orphan planet is a ghost record.
- *
- *  Kept to the four planets on purpose. It disambiguates; it is not a translation table, and a
- *  code absent from here degrades to no label rather than to a guess. */
+/** Re-exported so nothing that already reads a plan's provenance has to learn a new module.
+ *  The policy itself lives in hauling-scu.ts. */
+export type { ScuSource };
+
 /** Seconds to move ONE box, measured off Sub's own run: he loaded Silicon + Scrap into a C2 on
  *  2026-08-17 and it took twelve minutes. The app counted 29 boxes for that load (he counted 25),
  *  which brackets 24.8–28.8 s each.
@@ -74,13 +75,6 @@ export type ScuSource =
 const SECONDS_PER_BOX = 25;
 /** Approach, park, and get to the kiosk — the part of a stop that is not touching boxes. */
 const STOP_BASE_MINUTES = 1;
-
-const CANON_PLANET: Record<string, string> = {
-  stanton1: "hurston",
-  stanton2: "crusader",
-  stanton3: "arccorp",
-  stanton4: "microtech",
-};
 
 export interface PlanOptions {
   /** Ship class or display name chosen by the player; overrides whatever the log saw. */
@@ -121,6 +115,29 @@ export interface PlanOptions {
   /** locationId -> the name the PLAYER gave that place. Beats the "Site N" fallback and loses to a
    *  name the game itself stated, which is the only source that cannot be a typo. */
   placeNames?: Record<string, string>;
+  /** Where the player is, when the caller has better evidence than `view.atLocation` alone — it
+   *  binds the game's numeric location ids to readable tokens, which this module cannot do because
+   *  the binding has to persist. See haulingWhereAmI in overlay-server. */
+  atLocation?: { token: string; at: number } | null;
+  /** A name a player recognises for `atLocation.token`, when the caller can supply one — the
+   *  starmap lives outside this module. DISPLAY ONLY: nothing routes off it, and its absence just
+   *  means the widget shows the raw token, which is what it always did. */
+  atLocationLabel?: string | null;
+  /**
+   * Commodity runs the player picked in the Commodities tab, to be SEQUENCED into the same route
+   * as the contracts. See `hauling-buys.ts` for the two rules that govern them.
+   *
+   * 🔴 THEY ARE NOT RANKED AGAINST THE CONTRACTS, here or anywhere. Route sequences what was
+   * already chosen; the choosing happened in two separate tabs against two separate yardsticks,
+   * which is Sub's explicit design ("you'll do the contracts and then you'll pick up commodities as
+   * more of an opportunistic approach"). Nothing in this file gives a buy a payout, so nothing can
+   * accidentally start weighing one against the other.
+   *
+   * 🔴 A BUY WITH NO `scu` YET IS ROUTED AS NO LOAD. That is not a zero: `hauling-route.ts` reports
+   * `unknownScu` for any trip carrying one, and this module passes that on so the widget can say
+   * the hold figures are a floor rather than a measurement.
+   */
+  buys?: readonly CommodityBuy[];
 }
 
 export interface PlannedLeg {
@@ -153,6 +170,10 @@ export interface PlannedLeg {
   dropoffState: HaulStopState;
   delivered: number | null;
   fromLocation: string | null;
+  /** Which pickup of a multi-pickup contract this leg is, and how many there are. Absent for the
+   *  ordinary one-pickup case. See the MORE PICKUPS THAN DROP-OFFS note. */
+  pickupIndex?: number;
+  pickupCount?: number;
   toLocation: string | null;
 }
 
@@ -189,6 +210,9 @@ export interface PlannedContract {
 
 export interface PlanStop {
   id: string;
+  /** The PLACE. `id` is the node ("<place>:pickup"), so anything remembering something about where
+   *  the player is standing — a name they gave it — must key on this, not on `id`. */
+  locationId: string;
   name: string;
   kind: "pickup" | "dropoff";
   /** Minutes to get here from the previous stop, including the flat per-stop overhead. */
@@ -213,7 +237,38 @@ export interface PlanTrip {
   travelMinutes: number;
   handlingMinutes: number;
   peakScu: number;
+  /**
+   * 🔴 TRUE WHEN THIS TRIP CARRIES A COMMODITY BUY THE PLAYER HAS NOT MADE YET, which makes
+   * `peakScu` and every stop's `loadAfterScu` a FLOOR rather than a figure. A widget that prints
+   * either without saying so is telling the player their hold is emptier than it will be.
+   * Always false for a contract-only run: a contract states its tonnage or is excluded outright.
+   */
+  unknownScu: boolean;
   method: "exact" | "heuristic";
+}
+
+/** A commodity run the player picked, as the route sees it. */
+export interface PlannedBuy {
+  id: string;
+  /** The route group id, so the widget can find this buy's actions on a stop. Null when the run
+   *  could not be routed at all. */
+  group: string | null;
+  commodity: string;
+  resourceGuid: string | null;
+  from: { terminal: string; body: string | null; system: string | null; locationId: string | null };
+  to: { terminal: string; body: string | null; system: string | null; locationId: string | null };
+  /** The quote the player picked it off, aUEC/SCU. A forecast off crowd-reported prices — shown so
+   *  the row says what it was, never fed to the solver and never presented as a takings figure. */
+  buyPrice: number | null;
+  sellPrice: number | null;
+  /** 🔴 NULL until the log has seen the purchase. Not a guess, not a zero, and not something the
+   *  player is asked for. See hauling-buys.ts. */
+  scu: number | null;
+  boughtAt: string | null;
+  shopName: string | null;
+  /** In the route. False carries a `reason`. */
+  routed: boolean;
+  reason: string | null;
 }
 
 export interface PlanGrid extends GridSpec {
@@ -236,6 +291,12 @@ export interface HaulingPlan {
   } | null;
   contracts: PlannedContract[];
   /**
+   * Commodity runs the player picked in the Commodities tab, sequenced into the same route as the
+   * contracts — never ranked against them. Empty for a player who has picked none, which keeps a
+   * contract-only board byte-identical to what it was before this existed.
+   */
+  buys: PlannedBuy[];
+  /**
    * Live contracts whose tonnage the game has never stated, in mission order.
    *
    * 🔴 This is NOT "contracts to go and track". `trackedNow` splits it into the two states the
@@ -252,6 +313,11 @@ export interface HaulingPlan {
   /** Every place any leg touches, keyed by location id — the route's own names, plus the places
    *  it deliberately does not visit, so the layout legend and the unrouted list can say where. */
   locationNames: Record<string, string>;
+  /** Ids from `locationNames`, most recently NAMED first and deduped by display name — the order
+   *  the origin picker offers, so a list that grows forever can be capped without the cap silently
+   *  picking arbitrary rows. See the block that builds it for why the recency does not come from
+   *  `config.haulingSeenPlaces`. */
+  recentPlaces: string[];
   /**
    * Places still wearing a "Site N" — the rows the naming box offers.
    *
@@ -273,11 +339,36 @@ export interface HaulingPlan {
   /** Pickups the game has already completed — cargo aboard, not yet delivered. NOT routed (there
    *  is nowhere to fly), but shown greyed ahead of the live steps so a contract reads
    *  start-to-finish instead of the list opening mid-sentence. */
-  completedPickups: { group: string; missionId: string; title: string | null; locationId: string | null; scu: number | null; commodity: string | null }[];
+  completedPickups: {
+    group: string; missionId: string; title: string | null; locationId: string | null;
+    scu: number | null; commodity: string | null;
+    /** 🔴 "onPad" = the game released it to the freight lift and you are STILL THERE, so it is not
+     *  in the ship yet. "aboard" = you have since moved, so it came with you. A completed pickup
+     *  objective means the former, not the latter — see where this is decided. */
+    where?: "onPad" | "aboard";
+  }[];
   /** What the player asked for as an origin, and what it resolved to. Reported because "I set a
    *  start and the order did not change" has two very different causes — an ignored option, or an
    *  optimiser that genuinely sees no better order — and guessing between them costs a session. */
-  startResolved: { asked: string | null; resolved: string | null };
+  startResolved: {
+    asked: string | null;
+    resolved: string | null;
+    /** The place the LOG put the player, independent of any manual pick — null when the game's
+     *  token matched nothing on this board, or matched ambiguously. */
+    detected: string | null;
+    /** How the position was established. Only ever "terminal" now — the last place the game named,
+     *  which is an inventory open, an ASOP terminal or a shop kiosk. There used to be an exact
+     *  "coordinates" tier read off the debug overlay by OCR; it was removed 2026-08-25 because the
+     *  log states the place well enough that a screen read bought nothing. */
+    detectedBy?: "terminal" | null;
+    /** A friendly name for `detectedToken`, when one could be had. Shown INSTEAD of the raw token,
+     *  so the picker says "the game says Stanton Gateway" rather than "RR_JP_NyxCastra". */
+    detectedLabel?: string | null;
+    /** The game's own id, e.g. "Stanton3b_ArcCorp_Area045". Shown when it did NOT resolve, so a
+     *  failed join is diagnosable instead of just being silence. */
+    detectedToken: string | null;
+    detectedAt: number | null;
+  };
   /** Legs that have to be carried but could not be put in a route, each with the reason. Never
    *  silently dropped: a route missing legs would look complete and be wrong. */
   unrouted: { group: string; missionId: string; title: string | null; scu: number | null; destination: string | null; toLocation: string | null; reason: string }[];
@@ -285,6 +376,8 @@ export interface HaulingPlan {
   pack: PackResult | null;
   /** SCU already aboard: legs whose pickup completed but whose drop-off has not. */
   aboardScu: number;
+  /** Of `aboardScu`, how much is still sitting on the freight lift where you collected it. */
+  onPadScu: number;
   /**
    * What the run is earning, per hour, in both currencies the player cares about.
    *
@@ -303,6 +396,12 @@ export interface HaulingPlan {
     projected: { auecPerHour: number; repPerHour: number; minutes: number; auec: number; rep: number } | null;
     payoutModelled: boolean;
   };
+  /**
+   * Whether the station's arm will actually load THIS board, not just whether the hull could.
+   * `hull` is the ship's capability; `eligible` counts the live contracts whose rank qualifies.
+   * See AUTOLOAD_MIN_RANK — the rank rule is reported by a player, not read from the data.
+   */
+  autoLoad: { hull: boolean; eligible: number; live: number };
   totals: {
     /** SCU still to move across every live, plannable contract. */
     scu: number;
@@ -340,7 +439,7 @@ export function boxSetFrom(boxes: Record<string, BoxSize>): readonly BoxSpec[] {
 }
 
 /** ships.json grids -> the packer's shape. Identical fields; the name is the hardpoint. */
-function gridsOf(ship: Ship): GridSpec[] {
+export function gridsOf(ship: Ship): GridSpec[] {
   return ship.grids.map((g, i) => ({
     name: g.port ?? `grid ${i + 1}`,
     w: g.w,
@@ -348,88 +447,6 @@ function gridsOf(ship: Ship): GridSpec[] {
     h: g.h,
     maxBox: g.maxBox ?? undefined,
   }));
-}
-
-/** Position -> a stable location id. Rounded to the kilometre so a marker re-emitted on spawn-in
- *  with a few metres of drift is still the same place. */
-function posKey(p: Vec3 | null | undefined): string | null {
-  if (!p) return null;
-  return `@${Math.round(p.x / 1000)},${Math.round(p.y / 1000)},${Math.round(p.z / 1000)}`;
-}
-
-// ── resolving what a contract actually weighs ──────────────────────────────
-
-interface Bounds {
-  min: number | null;
-  max: number | null;
-  cap: number | null;
-}
-
-/**
- * Per-leg bounds from the dataset.
- *
- * 🔑 A contract's `orders` array is PER DESTINATION — `SingleToMulti2` carries two orders, one per
- * drop-off — so order[i] lines up with leg i whenever the counts match. When they do not (a
- * re-used template, or legs the log has not all emitted yet) fall back to the whole contract's
- * span and its widest cap, which over-states rather than invents.
- */
-/** What a leg is carrying, from the datacore. Same index rule as `boundsFor`: orders line up with
- *  legs only when there are equally many, otherwise the contract has to speak with one voice — and
- *  a mixed-commodity contract has no single answer, so it gives none rather than naming the first.
- *
- *  🔑 This is knowable at ACCEPT, unlike the tonnage. The commodity is fixed by the contract; only
- *  how much of it is rolled per instance. So the widget can say WHAT before it can say HOW MUCH. */
-function commodityFor(data: HaulingDataStore, contractKey: string, index: number, legCount: number): string | null {
-  const orders = data.contract(contractKey)?.orders ?? [];
-  if (!orders.length) return null;
-  if (orders.length === legCount) return orders[index]?.commodity ?? null;
-  const names = [...new Set(orders.map((o) => o.commodity).filter((c): c is string => !!c))];
-  return names.length === 1 ? names[0] : null;
-}
-
-function boundsFor(data: HaulingDataStore, contractKey: string, index: number, legCount: number): Bounds {
-  const contract = data.contract(contractKey);
-  const orders = contract?.orders ?? [];
-  if (!orders.length) return { min: null, max: null, cap: null };
-  const o = orders.length === legCount ? orders[index] : null;
-  if (o) {
-    const min = o.minScu ?? o.minAmount ?? null;
-    const max = o.maxScu ?? o.maxAmount ?? min;
-    return { min, max, cap: o.maxContainerSize ?? null };
-  }
-  const mins = orders.map((x) => x.minScu ?? x.minAmount).filter((n): n is number => n != null);
-  const maxs = orders.map((x) => x.maxScu ?? x.maxAmount ?? x.minScu).filter((n): n is number => n != null);
-  return {
-    min: mins.length ? Math.min(...mins) : null,
-    max: maxs.length ? Math.max(...maxs) : null,
-    cap: data.maxBoxScu(contractKey),
-  };
-}
-
-/** The load to plan with, and where it came from. The precedence IS the honesty policy. */
-function resolveScu(logNeed: number | null, pinned: number | null, b: Bounds): {
-  scu: number | null; min: number | null; max: number | null; source: ScuSource; exact: boolean;
-} {
-  // The game's own number for a tracked contract beats everything. (A manifest beats even this,
-  // but it is resolved before we get here — it is a box list, not a total.)
-  if (logNeed != null) return { scu: logNeed, min: logNeed, max: logNeed, source: "log", exact: true };
-  // Then what the player read off their own mobiGlas.
-  if (pinned != null) return { scu: pinned, min: pinned, max: pinned, source: "pinned", exact: true };
-  if (b.min == null && b.max == null) return { scu: null, min: null, max: null, source: "unknown", exact: false };
-  const min = b.min ?? b.max!;
-  const max = b.max ?? b.min!;
-  if (min === max) return { scu: min, min, max, source: "dataset", exact: true };
-  // 🔴 A RANGE. `scu` is the WORST CASE, so "does it fit" is answered safely — but `exact` is
-  // false and the widget must print `min–max`. Never let this number stand alone.
-  return { scu: max, min, max, source: "range", exact: false };
-}
-
-/** The weakest claim among a contract's legs decides how the contract as a whole is labelled. */
-const WEAKNESS: Record<ScuSource, number> = { manifest: 0, log: 1, pinned: 2, dataset: 3, range: 4, unknown: 5 };
-function weakest(sources: ScuSource[]): ScuSource {
-  // No seed — seeding with a source that is not in the list floors the result at that source's
-  // strength, which is how a contract with an exact manifest came back labelled "log".
-  return sources.length ? sources.reduce((a, b) => (WEAKNESS[b] > WEAKNESS[a] ? b : a)) : "unknown";
 }
 
 // ── the build ──────────────────────────────────────────────────────────────
@@ -525,7 +542,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
      */
     const oneSharedPickup = /^SingleToMulti/i.test(c.contractKey.split("_")[1] ?? "");
     const pickups = c.stops.filter((s) => s.role === "pickup");
-    const legs: PlannedLeg[] = dropoffs.map((drop, i) => {
+    const legsRaw: PlannedLeg[] = dropoffs.map((drop, i) => {
       const pickup = c.stops.find((s) => s.key === drop.key && s.role === "pickup")
         ?? (oneSharedPickup && pickups.length === 1 ? pickups[0] : null);
       const b = boundsFor(data, c.contractKey, i, dropoffs.length);
@@ -544,7 +561,20 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
         : resolveScu(drop.unit === "scu" ? drop.need : null, pinPer ? pinPer[i] : null, b);
       // No declared cap means the game may hand you any size, so plan for the largest that exists
       // — an over-large box is the case that fails to fit, which is the safe direction to guess in.
-      const cap = b.cap ?? (r.scu != null ? largestBox : null);
+      /* 🔴 A SIBLING ORDER'S CAP BEATS THE BIGGEST BOX IN THE GAME. When THIS order declares no
+         maxContainerSize the guess used to jump straight to `largestBox` (32). That is right when
+         the contract is silent, but wrong when the contract already told us a size on another
+         order. 4.10's ORS_MA_HaulingMedium is exactly that shape:
+           Iron              minScu 1   maxContainerSize undefined
+           Medical Supplies  minScu 96  maxContainerSize 8
+         The Iron leg took 32, so a 96 SCU load partitioned to 3x32 — and a Hull B cargo grid is
+         2x8x2 = EXACTLY 32 SCU, so each box filled a whole grid on its own. Sub: "every single one
+         of these cargo grids is full, but I only have 100 and something SCU on board."
+         ⚠️ `capSource` below is deliberately NOT upgraded to "dataset" for this case. The number
+         came from the dataset but NOT from this order, so it is still an assumption about this
+         leg — a better-informed one. Relabelling it would trade a display bug for a provenance
+         lie, which is the worse of the two. */
+      const cap = b.cap ?? data.maxBoxScu(c.contractKey) ?? (r.scu != null ? largestBox : null);
       const partition: Partition | null = !manifest.length && r.scu != null && cap != null
         ? partitionScu(r.scu, cap, boxSet)
         : null;
@@ -599,9 +629,80 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
         toLocation: to,
       };
     });
+    /**
+     * 🔴 MORE PICKUPS THAN DROP-OFFS: EVERY ONE IS A PLACE YOU HAVE TO GO.
+     *
+     * Legs are built one per DROP-OFF, which is right for `SingleToMulti*` (most of the board) and
+     * silently wrong for `MultiNToSingle`. Sub's Junior Small Cargo Haul is
+     * `HaulCargo_Multi2ToSingle_Waste_Mixed_ScrapWaste_Stanton3_SmallGrade`: two pickup objectives,
+     * one drop-off. One leg came out, so ONE pickup reached the route and the second was discarded
+     * — he was routed to Shubin SAL-5 and never told about the other half of his load.
+     *
+     * The game is explicit about both: `pickup_<id>_0` and `pickup_<id>_1`, distinct positions, and
+     * the shape is in the contract key. So the leg is split into one per pickup, sharing the
+     * drop-off.
+     *
+     * ⛔ AND THE SPLIT IS NOT INVENTED. Nothing states how much comes from each pickup — the log
+     * gives one total for the contract and the dataset gives only the order pool. So each pickup
+     * carries a RANGE, not a fabricated share: showing "3 SCU" at each end of a 6 SCU contract
+     * would be a guess printed as fact on a screen he makes decisions from. Pin one and the rest
+     * is arithmetic — with two pickups he types one number, ever.
+     */
+    const legs: PlannedLeg[] = (() => {
+      if (dropoffs.length !== 1 || pickups.length < 2 || legsRaw.length !== 1) return legsRaw;
+      const base = legsRaw[0];
+      const n = pickups.length;
+      const total = base.exact && base.scu != null ? base.scu : null;
+      const pinAt = (j: number) => opts.pins?.[`${c.missionId}#p${j}`] ?? null;
+      const pinnedSum = pickups.reduce((sum, _, j) => sum + (pinAt(j) ?? 0), 0);
+      const unpinned = pickups.filter((_, j) => pinAt(j) == null).length;
+      return pickups.map((pu, j) => {
+        const group = `${base.group}#p${j}`;
+        const from = posKey(pu.pos) ?? `${group}:from`;
+        const region = regionOfKey(c.contractKey);
+        if (region && from) regionByLoc.set(from, region);
+        const pinned = pinAt(j);
+        // The last unpinned pickup is DERIVED, not asked about — that is the whole point.
+        const inferred = pinned == null && unpinned === 1 && total != null ? total - pinnedSum : null;
+        const known = pinned ?? inferred;
+        const r = known != null
+          ? { scu: known, min: known, max: known,
+              source: (pinned != null ? "pinned" : "derived") satisfies ScuSource as ScuSource, exact: true }
+          /* Bounded by what must be true: at least 1 SCU here, and no more than the total less one
+             for every other pickup.
+             🔴 BUT `scu` IS THE EVEN SHARE, NOT THE PER-PICKUP WORST CASE. Everywhere else `scu`
+             carries the worst case so "does it fit" is answered safely — here that breaks a
+             stronger invariant: the legs must sum to the contract total. Two pickups of a 6 SCU
+             contract each claiming their worst case is 5 makes the contract 10 SCU, and the packer
+             would reserve a hold half again too big. The total is KNOWN and cannot be exceeded, so
+             the planning figure is the share and the honest spread stays in min/max, which is what
+             the widget prints. */
+          : total != null
+            ? (() => {
+                const share = Math.floor(total / n) + (j < total % n ? 1 : 0);
+                return { scu: share, min: 1, max: total - (n - 1),
+                         source: "range" satisfies ScuSource as ScuSource, exact: false };
+              })()
+            : { scu: null, min: null, max: null, source: "unknown" satisfies ScuSource as ScuSource, exact: false };
+        return {
+          ...base,
+          group,
+          ...r,
+          // The drop-off tonnage belongs to the contract, not to this pickup, so a split leg never
+          // claims to be carrying the whole load.
+          pickupState: pu.state ?? "pending",
+          fromLocation: from,
+          pickupIndex: j,
+          pickupCount: n,
+        };
+      });
+    })();
 
     const sources = legs.map((l) => l.source);
     const total = legs.every((l) => l.scu != null) ? legs.reduce((s, l) => s + (l.scu ?? 0), 0) : null;
+    /** The contract total when this is a multi-pickup split and the total is genuinely known —
+     *  see the note on minScu. Null for every ordinary contract. */
+    const splitTotal = legs.length > 1 && legs[0].pickupCount != null && total != null ? total : null;
     const src = legs.length ? weakest(sources) : "unknown";
     const planned: PlannedContract = {
       missionId: c.missionId,
@@ -618,8 +719,15 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       payout: c.payout,
       legs,
       scu: total,
-      minScu: legs.every((l) => l.min != null) ? legs.reduce((s, l) => s + (l.min ?? 0), 0) : null,
-      maxScu: legs.every((l) => l.max != null) ? legs.reduce((s, l) => s + (l.max ?? 0), 0) : null,
+      /* 🔴 A SPLIT CONTRACT'S BOUNDS ARE NOT THE SUM OF ITS PICKUPS' BOUNDS. On a 6 SCU contract
+         split across two pickups each honestly bounded 1-5, summing gives 2-10 — and the widget
+         would print "2–10 SCU" for a load the player has already pinned at 6. The per-pickup spread
+         is real and belongs on the pickup rows; the CONTRACT total is pinned down, so it is stated
+         exactly. Only the split case is special-cased; every other contract sums as before. */
+      minScu: splitTotal != null ? splitTotal
+        : legs.every((l) => l.min != null) ? legs.reduce((s, l) => s + (l.min ?? 0), 0) : null,
+      maxScu: splitTotal != null ? splitTotal
+        : legs.every((l) => l.max != null) ? legs.reduce((s, l) => s + (l.max ?? 0), 0) : null,
       source: src,
       exact: src === "manifest" || src === "log" || src === "pinned" || src === "dataset",
       plannable: total != null && c.endedAt == null,
@@ -670,8 +778,97 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
    * is free to put it anywhere. Its load goes NEGATIVE in the raw model, and that is deliberate —
    * see `freeCapacity` and `loadAfterScu`, where `aboardScu` is added back to make both exact.
    */
+  /**
+   * 🔴 TWO IDS, ONE PLACE — and it made the router plan two stops at the same spaceport.
+   *
+   * `posKey` rounds a marker to the kilometre, so two markers for the SAME terminal can land on
+   * opposite sides of a rounding boundary and become different location ids. Measured on Sub's own
+   * PTU board (2026-08-19): both Orison Relief contracts drop at August Dunlow Spaceport, and their
+   * markers keyed as `@5297,-873,5280` and `@5297,-872,5281`. The router therefore built a stop for
+   * each and produced pickup → drop → pickup → drop, flying back and forth across the system for
+   * what is one landing.
+   *
+   * 🔑 THE NAME IS THE EVIDENCE, and it is the player's own. If two ids carry the same name — from
+   * the game's own drop-off destination, or typed into the naming box — they are the same place and
+   * the player has said so. That is a far safer merge signal than proximity: two outposts a
+   * kilometre apart are genuinely different places, and merging them by distance would route
+   * someone to the wrong one. Absent a name, nothing is merged.
+   *
+   * The canonical id is the lowest-sorting one, so the choice cannot depend on iteration order.
+   *
+   * 🔴 AND IT IS WHAT MAKES A COMMODITY BUY "ON THE WAY" RATHER THAN A SIXTH LANDING. A picked buy's
+   * terminal is named by the price table and a contract's drop-off is named by the game's own
+   * Deliver line; where those agree, the same rule that merged two markers at one spaceport merges
+   * the buy onto the landing the player was already making. That is the whole meaning of
+   * "opportunistic" — buy where you are already going.
+   *
+   * ⚠️ A MARKER ID MUST WIN THE CANONICAL SLOT, so the sort is by namespace FIRST and id second
+   * rather than by id alone. A buy id carries no coordinates, so if it won, `posByLoc` would miss
+   * for that place and the origin snap — which matches the player's read position against marker
+   * XYZ — would silently stop resolving there. Today a marker key happens to sort before `buy:`
+   * anyway; relying on where '@' falls in ASCII is not a decision, it is a coincidence that a
+   * renamed prefix would quietly reverse. With no buys the key is constant and the order is
+   * byte-for-byte what it was.
+   */
+  const canonById = (() => {
+    const firstForName = new Map<string, string>();
+    const canon = new Map<string, string>();
+    const named = new Map<string, string>();
+    for (const [id, n] of nameByLoc) if (n?.trim()) named.set(id, n.trim());
+    for (const [id, n] of Object.entries(opts.placeNames ?? {})) if (n?.trim() && !named.has(id)) named.set(id, n.trim());
+    for (const b of opts.buys ?? []) {
+      for (const end of [b.from, b.to]) {
+        const t = end.terminal.trim();
+        if (t) named.set(BUY_LOC + t.toLowerCase(), t);
+      }
+    }
+    const rank = (id: string) => (id.startsWith(BUY_LOC) ? "1" : "0") + id;
+    for (const id of [...named.keys()].sort((a, z) => (rank(a) < rank(z) ? -1 : rank(a) > rank(z) ? 1 : 0))) {
+      const key = named.get(id)!.toLowerCase();
+      const first = firstForName.get(key);
+      if (first) canon.set(id, first);
+      else firstForName.set(key, id);
+    }
+    return canon;
+  })();
+  /** The id every stop, position and region lookup should use. */
+  const canonLoc = (id: string): string => canonById.get(id) ?? id;
+
+  /**
+   * 🔴 A CONTRACT WHOSE KEY CARRIES NO REGION LEFT THE OPTIMISER BLIND.
+   *
+   * `regionByLoc` is populated from the contract key (`..._Stanton3_...`), which works for the
+   * generated hauling families and not at all for hand-authored ones: Sub's `ORS_MA_HaulingSmall`
+   * and `ORS_MA_HaulingMedium` carry no region token. With no region, `regionOf` returns null for
+   * every stop, every leg is charged the flat cross-body rate, EVERY ORDERING TIES, and the
+   * optimiser picks an arbitrary one — which is exactly what "it isn't optimising" looks like.
+   *
+   * 🔑 So fall back to the NAME. A place we can name can usually be found in locations.json, and
+   * that row knows its parent body — "New Babbage" is on microTech whether or not the contract key
+   * ever said so. Only exact, unambiguous name matches are used: a name matching two rows tells us
+   * nothing, and guessing the body is the confidently-wrong failure this file avoids elsewhere.
+   */
+  const bodyByName = (() => {
+    const m = new Map<string, string | null>();
+    for (const l of Object.values(data.locations())) {
+      const n = (l.name ?? "").trim().toLowerCase();
+      if (!n) continue;
+      const body = (l.parentName ?? "").trim() || null;
+      // Ambiguous names resolve to nothing rather than to the first row that happened to win.
+      m.set(n, m.has(n) && m.get(n) !== body ? null : body);
+    }
+    return m;
+  })();
+  for (const [id, n] of [...nameByLoc, ...Object.entries(opts.placeNames ?? {})]) {
+    const loc = canonLoc(id);
+    if (regionByLoc.has(loc)) continue;
+    const body = bodyByName.get((n ?? "").trim().toLowerCase());
+    if (body) regionByLoc.set(loc, body.toLowerCase());
+  }
+
   const stopById = new Map<string, RouteStop>();
-  const visit = (locationId: string, kind: "pickup" | "dropoff"): RouteStop => {
+  const visit = (rawLocationId: string, kind: "pickup" | "dropoff"): RouteStop => {
+    const locationId = canonLoc(rawLocationId);
     const id = `${locationId}:${kind}`;
     let s = stopById.get(id);
     if (!s) {
@@ -686,7 +883,7 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   /** Drop-offs, held back until every pickup node exists — see where they are pushed. */
   const pendingDrops: { leg: PlannedLeg; stillToLoad: boolean }[] = [];
   /** Pickups the game has already completed: display-only, never routed. */
-  const completedPickups: { group: string; missionId: string; title: string | null; locationId: string | null; scu: number | null; commodity: string | null }[] = [];
+  const completedPickups: { group: string; missionId: string; title: string | null; locationId: string | null; scu: number | null; commodity: string | null; where?: "onPad" | "aboard" }[] = [];
   for (const { c, leg } of openLegs) {
     if (!leg.toLocation) {
       unrouted.push({ group: leg.group, missionId: c.missionId, title: c.title, scu: leg.scu, destination: leg.destination, toLocation: leg.toLocation, reason: "the log has not placed this drop-off yet" });
@@ -743,18 +940,134 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     node.actions.push({ contractId: leg.group, kind: "dropoff", scu: leg.scu ?? 0, commodity: leg.commodity ?? undefined });
   }
 
-  const routeContracts: RouteContract[] = [...routeGroups].map((id) => ({ id, payout: 0 }));
+  /* ── the commodity buys the player picked ─────────────────────────────────
+   *
+   * 🔴 THEY GO THROUGH THE SAME `visit()` AND THE SAME SOLVER as a contract leg, and that is the
+   * whole design: `hauling-route.ts` was already cargo-agnostic (`HaulLeg` has always carried an
+   * optional `commodity` and `contractId` has always been a grouping key rather than a mission
+   * reference), so this needed no second solver and there must never be one. A commodity buy is a
+   * pickup at the shop and a drop-off at the buyer, with precedence between them — structurally
+   * identical to a haul.
+   *
+   * 🔴 `scu: undefined` UNTIL THE LOG SAYS. Not zero. See hauling-buys.ts for Sub's ruling and
+   * hauling-route.ts for what an absent quantity does to the load model (nothing, and it says so).
+   *
+   * ⚠️ A pick missing either end is REPORTED, never silently dropped — same rule as an unroutable
+   * contract leg. A route quietly missing a leg looks complete and is wrong.
+   */
+  const buyPlaces = new Map<string, string>();
+  const routedBuys = new Set<string>();
+  const buyNotes: { id: string; reason: string }[] = [];
+  for (const b of opts.buys ?? []) {
+    const rawFrom = b.from.terminal.trim();
+    const rawTo = b.to.terminal.trim();
+    if (!rawFrom || !rawTo) {
+      buyNotes.push({ id: b.id, reason: "this run does not name both ends, so there is nothing to route between" });
+      continue;
+    }
+    const fromId = canonLoc(BUY_LOC + rawFrom.toLowerCase());
+    const toId = canonLoc(BUY_LOC + rawTo.toLowerCase());
+    if (fromId === toId) {
+      // Buying and selling at one terminal is not a run. It can only come from two names that the
+      // canonical merge decided were the same place, and routing it would emit a pickup and a
+      // drop-off on one node — a leg that travels nowhere and still charges handling.
+      buyNotes.push({ id: b.id, reason: "both ends of this run resolve to the same place" });
+      continue;
+    }
+    buyPlaces.set(fromId, rawFrom);
+    buyPlaces.set(toId, rawTo);
+    // 🔑 The body is what the TIERED travel model prices a leg from, and the price table knows it
+    // for a terminal even though it knows no coordinates. Without it every buy leg would be charged
+    // the flat cross-body rate and every ordering involving one would tie — which is exactly the
+    // "it isn't optimising" failure the contract side already hit through a different door.
+    // A contract's own reading wins: it came off the contract key or a dataset row, and this is a
+    // fallback for a place the contract side never saw.
+    if (b.from.body && !regionByLoc.has(fromId)) regionByLoc.set(fromId, b.from.body.trim().toLowerCase());
+    if (b.to.body && !regionByLoc.has(toId)) regionByLoc.set(toId, b.to.body.trim().toLowerCase());
+    const group = buyGroup(b.id);
+    // `scu` is only ever passed when the log has stated it. `?? undefined` rather than `?? 0`:
+    // zero is a measurement and this is the absence of one.
+    const scu = b.scu !== null && b.scu > 0 ? b.scu : undefined;
+    visit(fromId, "pickup").actions.push({ contractId: group, kind: "pickup", scu, commodity: b.commodity || undefined });
+    visit(toId, "dropoff").actions.push({ contractId: group, kind: "dropoff", scu, commodity: b.commodity || undefined });
+    routedBuys.add(b.id);
+  }
+
+  /* 🔴 EVERY GROUP GETS `payout: 0`, CONTRACTS INCLUDED — and it was already so before buys
+     existed. That is what stops the solver ranking a commodity run against a contract: with no
+     payout on either side the objective is pure time, which is the only currency the two share.
+     See PlanOptions.buys for why a shared profit-per-hour figure was considered and rejected. */
+  const routeContracts: RouteContract[] = [...routeGroups, ...[...routedBuys].map(buyGroup)]
+    .map((id) => ({ id, payout: 0 }));
   const stops = [...stopById.values()];
   // 🔑 The hold that is still FREE. Cargo already aboard cannot be unloaded to make room for a
   // pickup, so planning against the full rating would happily overfill a part-loaded ship.
   const freeCapacity = capacityScu != null ? Math.max(0, capacityScu - aboardScu) : undefined;
   // Where the player says they are. Only a place the route already touches can be an origin — an
   // id we have no coordinates for would silently become "anywhere", which is the bug, not the fix.
-  const startPos = opts.startAt ? posByLoc.get(opts.startAt) ?? null : null;
+  /* 🔴 THE ORIGIN IS DETECTED NOW, not asked for. `RequestLocationInventory` names the player and
+     the place they last opened an inventory at, which a hauler does at every stop — so the router
+     finally has the origin it was designed around. A manual pick still wins: it is a deliberate
+     statement, and the detected one is a LAST-seen that can lag by a stop. */
+  // ⚠️ Built from the maps that exist HERE — `locationNames` is not assembled until after the
+  // trips are solved, and the origin has to be known before them.
+  const knownNames = new Map<string, string>(nameByLoc);
+  for (const [id, n] of Object.entries(opts.placeNames ?? {})) if (n.trim() && !knownNames.has(id)) knownNames.set(id, n.trim());
+  // The caller's reading wins when it has one: only it can resolve the game's numeric location ids,
+  // because that binding is learned over time and has to be persisted.
+  const where = opts.atLocation ?? view.atLocation;
+  const byToken = where ? matchLocationToken(where.token, knownNames, data) : null;
+  const seen = byToken;
+  const startId = opts.startAt || seen;
+  // Only a place the route already touches can be an origin — an id we have no coordinates for
+  // would silently become "anywhere", which is the bug, not the fix.
+  const startPos = startId ? posByLoc.get(startId) ?? null : null;
   // Reported so a wrong route can be told apart from an ignored origin. "I asked for X and the
   // order did not change" has two very different causes, and guessing between them wastes a
   // session — as it did on 2026-08-17.
-  const startResolved = { asked: opts.startAt ?? null, resolved: posKey(startPos) };
+  const startResolved = {
+    asked: opts.startAt ?? null,
+    resolved: posKey(startPos),
+    /** What the LOG said, independently of what the player picked — so the widget can show it and
+     *  a mis-detection is visible rather than silently steering the route. */
+    detected: seen,
+    detectedToken: where?.token ?? null,
+    // Only when it describes the token we are actually reporting: `where` may come from the view
+    // rather than from opts, and labelling one token with another token's name is worse than
+    // showing the raw string.
+    detectedLabel: where && where.token === opts.atLocation?.token ? opts.atLocationLabel ?? null : null,
+    detectedAt: where?.at ?? null,
+    /** How the position was established, so a surprising origin is diagnosable rather than magic. */
+    detectedBy: (byToken ? "terminal" : null) as "terminal" | null,
+  };
+
+  /**
+   * 🔴 A COMPLETED PICKUP DOES NOT MEAN "ABOARD". The game finishes the objective the instant it
+   * releases the cargo to the freight lift. Measured on Sub's own run, 2026-08-17:
+   *
+   *   20:50:02  kiosk pressed
+   *   20:50:05  pickup -> COMPLETED     the widget said "aboard" HERE
+   *   20:50:16  RaisingPlatform         the boxes have not left the floor yet
+   *
+   * Eleven seconds before the platform even starts to rise, and minutes before any of it is
+   * tractored in. He put it plainly: "I have silicon and tin saying on board, but in actuality all
+   * I did was just pull it up the freight elevator."
+   *
+   * 🔑 So the honest test is WHERE YOU ARE, which the log now answers. Still standing where you
+   * collected it → it is on the pad. Somewhere else → it came with you, so it is aboard. Nothing
+   * in the log ever states the tractor-beam move itself, and inventing a moment for it would be
+   * the same mistake in a new place.
+   *
+   * ⚠️ Position unknown falls back to "aboard" — the old behaviour. Claiming "on the pad" without
+   * knowing where the player is would strand cargo on a floor they left an hour ago.
+   */
+  for (const cp of completedPickups) {
+    const here = seen != null && cp.locationId != null && cp.locationId === seen;
+    cp.where = here ? "onPad" : "aboard";
+  }
+  const onPadScu = completedPickups
+    .filter((cp) => cp.where === "onPad")
+    .reduce((n, cp) => n + (cp.scu ?? 0), 0);
   const run = stops.length
     ? planRun(stops, routeContracts, {
         objective: opts.objective ?? "auec-per-hour",
@@ -765,6 +1078,12 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
         // twice: Sub's board reported 12 minutes of "travel" for 0.2 minutes of actual flying.
         // The route's own total is pure travel; handling is added on top in toTrip.
         stopMinutes: opts.stopMinutes ?? 0,
+        // 🔴 Travel is TIERED off the body each stop sits on, not derived from marker XYZ. The
+        // distance model priced a 239 km hop at 0.02 min, so "est. run" charged ~5 minutes of
+        // travel for a five-stop run whose measured floor is near 25 — and the rank tab's
+        // projected rep/hour inherited that, understating time-to-rank whenever nothing had
+        // completed yet. Constants and their measurement live in hauling-route.ts.
+        regionOf: (locationId) => regionByLoc.get(locationId) ?? null,
         startPos,
       })
     : { trips: [], stranded: [], totalMinutes: 0, payout: 0, auecPerHour: 0 };
@@ -784,6 +1103,13 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   const nameOf = (locationId: string): string => {
     const known = nameByLoc.get(locationId);
     if (known) return known;
+    // 🔑 A COMMODITY TERMINAL ALREADY HAS A NAME, so it must never fall through to "Site N" and
+    // must never be offered in the naming box: the player picked that run BY that name, and asking
+    // them what to call a place they just chose off a list would be the widget forgetting something
+    // it was told. Below the game's own Deliver line, which still cannot be a typo, and above the
+    // player's hand-typed answer for the same reason a stated name outranks one.
+    const term = buyPlaces.get(locationId);
+    if (term) return term;
     // 🔑 The player's own answer outranks the numbered fallback and is outranked by the game's own
     // Deliver line — that one cannot be a typo, and re-asking about a place the game has since
     // named would be the widget forgetting something it was told.
@@ -814,8 +1140,56 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   }
   const locationNames: Record<string, string> = {};
   for (const [id, name] of nameByLoc) locationNames[id] = name;
+  // A commodity terminal's own name, for any buy place the contract side never named. `??=` so a
+  // place the GAME named keeps that name — the two agree on where you are going, and the game's
+  // wording is the one the player will see on their mobiGlas.
+  for (const [id, name] of buyPlaces) locationNames[id] ??= name;
   for (const [id, name] of Object.entries(byPlayer)) if (name.trim()) locationNames[id] ??= name.trim();
   for (const [id, name] of fallback) locationNames[id] ??= name;
+  /**
+   * 🔴 THE ORIGIN PICKER'S OWN ORDER, most recently named FIRST — because `locationNames` grows
+   * without bound and the picker was showing every one of it.
+   *
+   * Sub, 2026-08-25: *"It gives a list of all the places that I've been. It's kind of growing
+   * pretty large."* Measured on his live board the same day: **16 rows, and the board held ZERO
+   * contracts** — so all 16 came from `opts.placeNames` (`config.haulingPlaces`), which is keyed by
+   * coordinates and kept forever. Three of them read *"August Dunlow Spaceport"* and two read
+   * *"New Babbage"*, because one station gets several coordinate keys.
+   *
+   * 🔴 RECENCY COMES FROM `placeNames`' INSERTION ORDER, AND DELIBERATELY NOT FROM
+   * `config.haulingSeenPlaces` — which looks like exactly the right list ("names the game stated,
+   * newest last") and is NOT, because `rememberSeenPlaces(Object.values(plan.locationNames))` runs
+   * on every solve and moves every name on the board to the end. Its order is therefore mostly the
+   * board's own iteration order, so ranking the picker by it would be ranking the board by the
+   * board. `config.haulingPlaces` is only ever written when the PLAYER names a place, so its key
+   * order is a real record of when each place was first seen, independent of the current board.
+   *
+   * ⚠️ Object key order is the guarantee this rests on: string keys keep insertion order, and
+   * re-assigning an existing key does NOT move it. That is why this is "first named" rather than
+   * "last visited" — the app keeps no visit history, and inventing one would be a bigger change
+   * than Sub asked for. Say so rather than dressing the order up as something it is not.
+   *
+   * Deduped by DISPLAY NAME, keeping the most recent id: three rows all reading "August Dunlow
+   * Spaceport" are three ways to say one thing, and the player cannot tell them apart anyway.
+   * The CAP is the widget's business — this only decides the order.
+   */
+  const recentPlaces: string[] = [];
+  {
+    const takenName = new Set<string>();
+    const push = (id: string) => {
+      const name = locationNames[id];
+      if (!name) return;
+      const k = name.toLowerCase();
+      if (takenName.has(k)) return;
+      takenName.add(k);
+      recentPlaces.push(id);
+    };
+    // Newest-named first.
+    for (const id of Object.keys(opts.placeNames ?? {}).reverse()) push(id);
+    // Then anything on THIS board the player never named by hand — a live stop is worth offering
+    // even with no recency behind it, and without this a fresh install has an empty picker.
+    for (const id of Object.keys(locationNames)) push(id);
+  }
   // What the naming box offers. Role comes from how the legs actually use the place, so the row
   // can say "picking up from" rather than making the player work out which Site is which.
   const roleOf = new Map<string, "pickup" | "dropoff" | "both">();
@@ -917,6 +1291,31 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
       for (let i = 0; i < b.count; i++) items.push({ id: `${leg.group}#${n++}`, scu: spec.scu, dims: spec.dims, group: leg.group });
     }
   }
+  /* 🔴 A COMMODITY YOU HAVE ACTUALLY BOUGHT IS CARGO, AND STOW HAS TO KNOW ABOUT IT. Sub's whole
+     reason for letting the log fill the tonnage in: "we'll know how much they bought and then it'll
+     override it" — and the thing it overrides is what the Stow tab plans against. A hold diagram
+     that draws the contract cargo and silently omits 96 SCU of Titanium is worse than no diagram.
+     🔑 IT NEEDS NO PARTITIONER. `partitionScu` exists because the game states a contract's tonnage
+     and not its manifest, and its output is flagged PROVISIONAL for that reason. A purchase line
+     states BOTH — `boxSize` and `unitAmount` — so these boxes are read, not derived.
+     ⚠️ Only a bought buy, and only while it is still the current hold's problem. An unbought pick
+     has no tonnage and therefore no boxes, which is the correct amount of nothing to draw. */
+  for (const b of opts.buys ?? []) {
+    if (!routedBuys.has(b.id)) continue;
+    if (b.scu === null || !(b.scu > 0)) continue;
+    const group = buyGroup(b.id);
+    const per = b.boxScu !== null && b.boxScu > 0 ? b.boxScu : null;
+    const count = b.boxCount !== null && b.boxCount > 0 ? Math.round(b.boxCount) : null;
+    if (per === null || count === null) {
+      // The tonnage is known and the manifest is not — the one case where a purchase tells us less
+      // than usual. Counted and said, never quietly absent from the drawing.
+      undrawable += 1;
+      continue;
+    }
+    const spec = boxSet.find((s) => s.scu === per);
+    if (!spec) { undrawable += count; continue; }
+    for (let i = 0; i < count; i++) items.push({ id: `${group}#${i}`, scu: spec.scu, dims: spec.dims, group });
+  }
   if (undrawable) notes.push(`${undrawable} boxes are a size the box table has no footprint for, so they are missing from the layout.`);
   // 🔴 YOU CANNOT LOAD WHAT YOU HAVE NOT COLLECTED. This was the drop-off order alone, which reads
   // the hold correctly (first drop nearest the ramp) but told Sub to load his Waste FIRST — cargo
@@ -926,13 +1325,26 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
   // So: collection order first, and only then depth. Everything gathered at the first pickup is
   // loaded before anything gathered at the second, and WITHIN one pickup the load dropped LAST
   // goes in deepest — which is the ramp rule, now applied where it actually holds.
+  /* 🔴 ONE NUMBER PER LANDING, NOT PER ACTION. `seq++` used to sit inside the ACTION loop, so three
+     commodities collected at the SAME stop got three different pickup numbers (Silicon 0, Tin 1,
+     Scrap 2). The sort below then saw `pa !== pb`, fired the COLLECTION rule on what is physically
+     a tie, and never reached the DELIVERY rule at all — the one that actually decides this case.
+     Sorted descending, that put whichever commodity happened to be listed last at the door: Scrap,
+     which drops LAST, with the Silicon and Tin he unloads FIRST buried behind it.
+
+     Sub caught it on his own board, 2026-08-18: "it has scrap right near the door… what should be
+     nearest the door would be the silicon and tin." Exactly the failure the delivery rule exists to
+     prevent, and the comment below already described the answer it was not reaching.
+
+     A LANDING is the unit that matters: you cannot collect one commodity "before" another when both
+     come up the same lift on the same visit. */
   const pickupAt = new Map<string, number>();
   const dropAt = new Map<string, number>();
   let seq = 0;
   for (const trip of trips) {
     for (const s of trip.stops) {
+      const at = seq++;
       for (const a of s.actions) {
-        const at = seq++;
         if (a.kind === "pickup") { if (!pickupAt.has(a.group)) pickupAt.set(a.group, at); }
         else if (!dropAt.has(a.group)) dropAt.set(a.group, at);
       }
@@ -996,6 +1408,31 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
         }
       : null,
     contracts,
+    /* 🔴 REBUILT FROM AN EXPLICIT FIELD LIST, like every other row this endpoint returns — and
+       that is a known trap in this file rather than a style choice: `minutes` / `repPerHour` /
+       `moneyPerHour` were once added to a scored object, spread with `...r`, and still arrived
+       undefined because a later step mapped to a hand-written literal. Anything added to
+       `CommodityBuy` that the widget must see has to be added HERE too. */
+    buys: (opts.buys ?? []).map((b): PlannedBuy => {
+      const routed = routedBuys.has(b.id);
+      const fromId = b.from.terminal.trim() ? canonLoc(BUY_LOC + b.from.terminal.trim().toLowerCase()) : null;
+      const toId = b.to.terminal.trim() ? canonLoc(BUY_LOC + b.to.terminal.trim().toLowerCase()) : null;
+      return {
+        id: b.id,
+        group: routed ? buyGroup(b.id) : null,
+        commodity: b.commodity,
+        resourceGuid: b.resourceGuid,
+        from: { ...b.from, locationId: routed ? fromId : null },
+        to: { ...b.to, locationId: routed ? toId : null },
+        buyPrice: b.buyPrice,
+        sellPrice: b.sellPrice,
+        scu: b.scu,
+        boughtAt: b.boughtAt,
+        shopName: b.shopName,
+        routed,
+        reason: routed ? null : buyNotes.find((n) => n.id === b.id)?.reason ?? "this run could not be routed",
+      };
+    }),
     untracked: liveContracts
       .filter((c) => !c.deliverSeen)
       .map((c) => ({ missionId: c.missionId, title: c.title, minScu: c.minScu, maxScu: c.maxScu, trackedNow: c.trackedNow })),
@@ -1003,15 +1440,40 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     trips,
     stranded: run.stranded,
     locationNames,
+    recentPlaces,
     unnamedPlaces,
     completedPickups,
     startResolved,
     unrouted,
     pack,
     aboardScu,
+    onPadScu,
     rates,
+    /* 🔴 THE HULL IS ONLY HALF THE QUESTION. The stow tab claimed "Hull A loads itself" for every
+       contract on Sub's board; he caught it — automated loading is a property of the CONTRACT as
+       well as the ship. So the widget gets both numbers and can say which of the two is missing
+       instead of asserting a capability the player will not get. */
+    autoLoad: (() => {
+      const live = contracts.filter((c) => !c.ended && !c.hidden);
+      return {
+        hull: canAutoLoad(hull?.className),
+        eligible: live.filter((c) => rankAutoLoads(c.board?.rank ?? null)).length,
+        live: live.length,
+      };
+    })(),
     totals: {
-      scu: openLegs.reduce((s, { leg }) => s + (leg.scu ?? 0), 0),
+      /* 🔴 CONTRACT CARGO **AND** COMMODITY CARGO YOU HAVE ALREADY BOUGHT. This counted contracts
+         only, and once a buy could join the route that put a contradiction on the widget's own
+         summary strip: "to move 0 SCU" printed one line above a route moving 48 SCU of Processed
+         Food, with "stops 2" and "est. run 8m" in between — both of which already counted the buy.
+         🔑 This is the shape the Event Tracker's rep bar hit from the other direction: when two
+         figures on one screen derive the same quantity from different evidence and only one has
+         been taught about a new source, the screen is stating a contradiction.
+         ⚠️ ONLY A BOUGHT BUY. An unbought pick has no tonnage, and the honest total is the one that
+         leaves it out rather than one that guesses at it — the route says separately that its load
+         figures are a floor. */
+      scu: openLegs.reduce((s, { leg }) => s + (leg.scu ?? 0), 0)
+        + (opts.buys ?? []).reduce((s, b) => s + (routedBuys.has(b.id) && b.scu !== null && b.scu > 0 ? b.scu : 0), 0),
       capacityScu,
       liveContracts: liveContracts.length,
       unknownContracts: liveContracts.filter((c) => c.scu == null).length,
@@ -1024,73 +1486,6 @@ export function buildHaulingPlan(view: HaulingView, data: HaulingDataStore, opts
     },
     notes,
   };
-}
-
-/**
- * aUEC and reputation per hour — measured where it can be, projected where it cannot.
- *
- * 🔴 THE TWO NUMBERS COME FROM DIFFERENT PLACES AND MUST NOT BE AVERAGED TOGETHER.
- *   - aUEC EARNED is real: the game logs `Awarded N aUEC` and the tracker has already paired each
- *     award with the completion it belongs to.
- *   - REPUTATION is never logged in any form — searching a live session finds only the name of the
- *     gRPC service. It comes from the dataset, keyed by contract, where 839 of the 853 `HaulCargo`
- *     keys carry it and it is read from the game files rather than fitted.
- *   - aUEC AHEAD is dataset too, and that one is fitted for 38 of the 853 keys, which is why
- *     `payoutModelled` exists. Checked against Sub's own finished contract on 2026-08-17 the
- *     dataset said 62,000 and the log's award was 62,000.
- *
- * Elapsed time is the LOG's clock, not the wall clock, so an app reading a stale file cannot claim
- * a rate for time that has not happened.
- */
-function buildRates(
-  view: HaulingView,
-  liveContracts: readonly PlannedContract[],
-  plannedMinutes: number,
-  rewards?: (contractKey: string) => { payout: number | null; payoutModelled: boolean; rep: number } | null,
-): HaulingPlan["rates"] {
-  let modelled = false;
-  const lookup = (key: string) => {
-    const r = rewards?.(key) ?? null;
-    if (r?.payoutModelled) modelled = true;
-    return r;
-  };
-
-  // ── measured ───────────────────────────────────────────────────────────────
-  let actual: HaulingPlan["rates"]["actual"] = null;
-  const elapsedMin = view.runStartedAt != null ? (view.updatedAt - view.runStartedAt) / 60_000 : 0;
-  // 🔑 A minute of elapsed time is the floor. Two contracts completing in the same second is a
-  // real thing (Sub delivers a mixed hold in one lift), and dividing by ~0 would report millions
-  // of aUEC an hour — a number that is arithmetically correct and a lie about the run.
-  if (view.finished.length && elapsedMin >= 1) {
-    const auec = view.finished.reduce((s, f) => s + (f.payout ?? 0), 0);
-    const rep = view.finished.reduce((s, f) => s + (lookup(f.contractKey)?.rep ?? 0), 0);
-    actual = {
-      auec, rep, minutes: elapsedMin, contracts: view.finished.length,
-      auecPerHour: auec / (elapsedMin / 60),
-      repPerHour: rep / (elapsedMin / 60),
-    };
-  }
-
-  // ── projected ──────────────────────────────────────────────────────────────
-  // Only what is actually going to be flown: a contract the player set aside, or one whose load is
-  // unknown, is not in the route and must not be in the rate the route is judged by.
-  let projected: HaulingPlan["rates"]["projected"] = null;
-  const ahead = liveContracts.filter((c) => c.plannable && !c.hidden);
-  if (ahead.length && plannedMinutes > 0) {
-    let auec = 0, rep = 0;
-    for (const c of ahead) {
-      const r = lookup(c.contractKey);
-      auec += r?.payout ?? 0;
-      rep += r?.rep ?? 0;
-    }
-    projected = {
-      auec, rep, minutes: plannedMinutes,
-      auecPerHour: auec / (plannedMinutes / 60),
-      repPerHour: rep / (plannedMinutes / 60),
-    };
-  }
-
-  return { actual, projected, payoutModelled: modelled };
 }
 
 /** One RoutePlan -> the stop list the widget draws, with names and per-stop actions. */
@@ -1115,6 +1510,10 @@ function toTrip(
     const locationId = stop?.locationId ?? id;
     return {
       id,
+      /** The PLACE, as distinct from `id`, which is the node ("<place>:pickup"). Anything that
+       *  remembers something about where you are standing — a name you gave it, for instance —
+       *  must key on this. */
+      locationId,
       name: nameOf(locationId),
       kind,
       minutes: leg?.minutes ?? 0,
@@ -1132,7 +1531,11 @@ function toTrip(
           missionId: found?.c.missionId ?? a.contractId,
           title: found?.c.title ?? null,
           commodity: a.commodity ?? null,
-          scu: a.scu,
+          // 🔑 `undefined` -> `null` at the boundary. The solver spells "nobody has said how much"
+          // as an absent field; every view type in this file spells it `null`. One convention each
+          // side, converted in the one place they meet. Contract actions always carry a number, so
+          // this is a no-op for them.
+          scu: a.scu ?? null,
           group: a.contractId,
           // Per-action, because one stop can do both and the widget must be able to say which
           // chip is a load and which is a drop.
@@ -1151,6 +1554,9 @@ function toTrip(
     travelMinutes: trip.totalMinutes,
     handlingMinutes: handling,
     peakScu: trip.peakScu + aboardScu,
+    // Straight through from the solver. `aboardScu` is a measured figure, so adding it does not
+    // make an uncertain peak certain and cannot make a certain one uncertain.
+    unknownScu: trip.unknownScu,
     method: trip.method,
   };
 }

@@ -1,0 +1,291 @@
+{
+  "schema": "sc-events/1",
+  "revision": 3,
+  "revisionNote": "Ordering key for the phone-home feed (src/event-feed.ts). The app fetches https://subliminal.gg/sc/events.json on a timer and adopts it ONLY when its revision is strictly greater than the copy in effect, so a site copy that is older than the shipped one can never delete a discovery the build was cut for. Do not bump this by hand: `npm run sync:events` copies this file to the site repo and bumps it, which is what makes a correction reach players without an app release.",
+  "note": "Hand-maintained dynamic-event registry. CHANGELIST-INDEPENDENT on purpose: an event's tiers, per-contract point values and rewards are discovered by PLAYING, not by extracting the p4k, so this file must survive dataset regeneration the same way the site's blueprints-extra.json does — whose model it mirrors. Everything unknown is left EMPTY rather than guessed; an invented number here becomes a wrong percentage on Sub's stream.",
+  "howToFillIn": [
+    "1. `log` MUST equal the subject of the game's own notification, verbatim: \"Journal Entry Added: <log>: \". For Siege of Orison the game says \"Orison Relief\" — NOT \"Siege of Orison\", which is only the marketing name. Get this wrong and zero progress is ever recorded, silently.",
+    "2. `contractPrefixes` is what identifies an event's missions. 🔴 `generators` ALONE CANNOT: CIG uses the single generator \"TheBackpocket\" for BOTH Orison Relief (13 ORS_ contracts) and Return of XenoThreat (5 RoX_ contracts), so a generator match shows the wrong event's rewards. The key prefix is the only thing that separates them.",
+    "3. `contracts` maps a dataset mission key to the event points that contract awards. Add one line per contract as it is MEASURED in game. Do not interpolate.",
+    "4. `rewards` gets {tier, name, item} per item as discovered. `name` must equal the log's \"Received Blueprint: <name>\" EXACTLY — that string is what the owned check matches on.",
+    "5. `total` is the event points needed for 100%. Leave null until confirmed.",
+    "6. TO PUBLISH A CORRECTION MID-EVENT, WITHOUT AN APP RELEASE: edit this file, then run `npm run sync:events` and deploy the site. That copies it to subliminal-gg's public/sc/events.json and bumps `revision`; every running app picks it up within 30 minutes (src/event-feed.ts). Editing this file alone only reaches players who install a new build."
+  ],
+  "events": [
+    {
+      "id": "orison-relief",
+      "log": "Orison Relief",
+      "label": "Siege of Orison",
+      "status": "current",
+      "patch": "4.10",
+      "liveStart": "2026-08-26T06:53:00.000Z",
+      "liveStartSource": "The 4.10 LIVE build itself — changelist 12519617, built Wed 26 Aug 2026 01:53 CST. Deliberately the BUILD time rather than a go-live announcement: nothing can be earned on a build before it exists, so this is a floor that cannot exclude real live progress, and no more precision is claimed than we have. ⚠️ The CST/CDT offset makes it ±1h; that is immaterial here because the case it separates (Sub's 4.10 PTU run) is four days earlier. If the live event is ever RERUN or the server wipes, move this date — that is the whole mechanism.",
+      "note": "Every Orison Relief contract you run adds to YOUR personal progress, not the server's. Check your in-game Journal → Orison Relief for your current %.",
+      "contractPrefixes": [
+        "ORS_"
+      ],
+      "generators": [
+        "TheBackpocket"
+      ],
+      "total": 288000,
+      "totalSource": "Sub, from his in-game Journal on 4.10 PTU (2026-08-19). Personal, not server-wide — Return of XenoThreat behaved the same way.",
+      "tiers": [
+        15,
+        25,
+        43,
+        57,
+        80,
+        100
+      ],
+      "tiersSource": "Sub, read off the Journal's reward markers on 4.10 PTU (2026-08-19). These DIFFER from XenoThreat's 15/25/50/60/85/100 below — which is exactly why tiers are data and never constants.",
+      "contracts": {
+        "ORS_SA": 2000,
+        "ORS_MA_HaulingMedium": 6000,
+        "ORS_MA_HaulingSmall": 3000,
+        "ORS_MA_DeliveryPilot": 3000
+      },
+      "contractsProvenance": {
+        "ORS_SA": "MEASURED, isolated. Sub's Journal read 17,000; he completed exactly one contract (02:13:25Z Strike Nine Tails Squad, one journal entry) and it read 19,000. Delta 2,000 with nothing else in flight — the only value here obtained the clean way. ✅ CORROBORATED 2026-08-22: Sub's post-reset 12,000 baseline was SIX combat missions at ~2,000 each — 6 x 2,000 = 12,000 exactly, an independent confirmation from a different session.",
+        "ORS_MA_HaulingMedium": "CONFIRMED by substitution, once Small was measured in isolation (2026-08-22). The five completions on record satisfy 2M + S = 15,000; with S=3000 now MEASURED rather than derived, 2M = 12,000 and M = 6,000 is forced. The equation is no longer underdetermined. Still worth one isolated Medium run to close it directly.",
+        "ORS_MA_HaulingSmall": "MEASURED, isolated. Sub character-reset on 4.10 PTU, wiping his event rep, then rebuilt from scratch. Journal read 12,000; he completed exactly ONE contract (2026-08-22T00:38:39Z, Small Supply Haul) and it read 15,000. Delta 3,000, nothing else in flight. This REPLACES the earlier derivation and kills the M=5000/S=5000 alternative it could not exclude.",
+        "ORS_MA_DeliveryPilot": "MEASURED, isolated. \"Orison Relief: Medical Aid Delivery\", 2026-08-22T00:46:08Z. Journal 15,000 -> 18,000, delta 3,000. Notification queue id 23 (completion) and 24 (journal entry) — exactly one of each, nothing else in flight."
+      },
+      "contractsNote": "🔑 The log carries NO amount — event points ride the server-side ReputationService (see journalEntry in missions-parser.ts). Every number here comes from Sub reading his in-game Journal and differencing. The ONLY sound method is: read the Journal, complete exactly ONE contract, read again — the delta is that contract. Values derived by solving a system are marked as such in contractsProvenance above and should be re-measured that way when convenient. Still unmeasured: ORS_BR, ORS_CA_Small/Medium/Large, ORS_Cr_Small/Medium/Large, ORS_MA_DeliveryPilot, ORS_MA_HaulingLarge, ORS_SWA.",
+      "journalReadings": [
+        {
+          "at": "2026-08-20T~01:05Z",
+          "total": 17000,
+          "afterCompletions": [
+            "ORS_MA_HaulingMedium",
+            "ORS_MA_HaulingMedium",
+            "ORS_MA_HaulingSmall",
+            "ORS_SA"
+          ]
+        },
+        {
+          "at": "2026-08-20T02:13Z",
+          "total": 19000,
+          "afterCompletions": [
+            "ORS_MA_HaulingMedium",
+            "ORS_MA_HaulingMedium",
+            "ORS_MA_HaulingSmall",
+            "ORS_SA",
+            "ORS_SA"
+          ]
+        },
+        {
+          "at": "2026-08-22T00:38:39Z",
+          "total": 15000,
+          "afterCompletions": [
+            "ORS_MA_HaulingSmall"
+          ],
+          "note": "Post-character-reset baseline 12,000 -> 15,000. Isolated: notification queue id 21 (completion) and 22 (journal entry) — exactly one of each."
+        },
+        {
+          "at": "2026-08-22T00:46:08Z",
+          "total": 18000,
+          "afterCompletions": [
+            "ORS_MA_DeliveryPilot"
+          ],
+          "note": "Isolated. Queue ids 23/24."
+        }
+      ],
+      "journalReadingsNote": "Kept so any future correction can be re-derived from the evidence instead of from these conclusions. Each entry is a Journal total and the completions on record at that moment (from Contract Complete lines in the 12473311 logs, one journal entry each). 🔑 THE NOTIFICATION QUEUE ID IS THE DEDUPE KEY. Each notification is logged several times (Added notification, then UpdateNotificationItem for Next/StartFade/Remove) all carrying the SAME bracketed id. Counting raw lines reads one contract as three. Count only `Added notification` lines, and treat the id as the identity — this is what distinguishes a genuine simultaneous double-completion from one notification echoing.",
+      "rewards": [
+        {
+          "tier": 15,
+          "name": "S-38 \"SecondWind\" Pistol",
+          "item": null
+        }
+      ],
+      "rewardsNote": "EMPTY until observed in game. Note the three pool-bearing event contracts (ORS_Cr_Small/Medium/Large) all drop `TH-01 Propulsor` (item 1afc0022-b8fc-4174-8687-6dfc5b744b98, chance 1) per the 4.9 dataset — but that is a MISSION-pool drop, not a tier reward, so it does not belong here. ✅ TIER 15 CONFIRMED 2026-08-22 by log, not by reading the bar. Sub crossed 43,200 points at 03:24:24.711Z (42,000 -> 44,000 on ORS_SA) and \"Received Blueprint: S-38 \"SecondWind\" Pistol\" landed 383 ms later. This independently CONFIRMS BOTH hand-read constants: the first marker really is at 15% and the total really is 288,000 — if either were wrong the grant would not have coincided with the crossing. He had not noticed the reward (suspected CTD), which is why the tracker looked wrong when it was right. ⚠️ THE 500 aUEC 1.5s LATER IS *NOT* PART OF THE TIER REWARD — corrected 2026-08-22 on Sub's challenge. The same session carries a SECOND \"Awarded 500 aUEC\" at 03:21:14Z, three minutes before the crossing, and both carry an all-zeros MissionId so neither can be attributed. Sub had \"A Call to Arms\" accepted at 02:47:42Z and believes that is the source. The tier reward is the BLUEPRINT only; do not model an aUEC component without isolating one.",
+      "knownContractsNote": "All 13 ORS_ contracts are already in the shipped 4.9 dataset, verified by exact key match against real 4.10 markers. Givers: Conerstone Developments 6 (CIG's own typo for Cornerstone — match verbatim), Foxwell Enforcement 3, Covalex Independent Contractors 3, Ling Family Hauling 1. All carry rank:null and empty reputationGained, so none of them feed a normal rep track. 🔴 ORS_MA_DeliveryPilot IS A CARGO HAUL THE HAULING TRACKER CANNOT SEE. isHaulingContract() (hauling.ts:246) tests HAUL_MARKERS = [\"haul\",\"cargo\"] against \"<generator> <contractKey>\" — here \"TheBackpocket ORS_MA_DeliveryPilot\", which contains neither. Yet the mission emits everything the tracker needs: pickup_/dropoff_ objectives on one mission UUID, marker positions, ObjectiveUpserted COMPLETED, and per-box SMarkerHandler_Hauling::OnItemRegistered (1SCU MedicalSupplies + FreshFood). Admission is the ONLY thing missing.",
+      "rewardCandidates": [
+        {
+          "tier": 25,
+          "points": 72000,
+          "name": "FBL-8a (Modified) armor set",
+          "confirmed": false
+        },
+        {
+          "tier": 43,
+          "points": 123840,
+          "name": "P4-AR \"SecondWind\" rifle",
+          "confirmed": false
+        },
+        {
+          "tier": 57,
+          "points": 164160,
+          "name": "ORC-mkX (XenoThreat) armor set",
+          "confirmed": false
+        },
+        {
+          "tier": 80,
+          "points": 230400,
+          "name": "Lumin V \"SecondWind\" SMG",
+          "confirmed": false
+        },
+        {
+          "tier": 100,
+          "points": 288000,
+          "name": "ADP-mk4 \"Big Boss\" armor set + unnamed undersuit",
+          "confirmed": false
+        }
+      ],
+      "rewardCandidatesNote": "⚠️ UNCONFIRMED — kept OUT of `rewards` on purpose. Reported by a viewer in Sub's chat who asked ChatGPT, 2026-08-22. Nobody in chat has actually ground the event, so there are no logs to check against. NEVER present these as fact in the UI; they are a testable prediction, not a measurement. \n\n➡️ THEY ARE NOW SHOWN — as guesses, 2026-08-22. Sub's ruling: \"I know that we don't have concrete evidence, but I want to go with what we found on the internet. And then we allow people to tell us if we have it wrong.\" So the Event Tracker's ladder renders them dim, italic, prefixed \"?\" and tagged UNCONFIRMED, with a \"Wrong?\" button on every tier that reports a correction. This does NOT relax the sentence above: `EventProgress.tiers[]` carries them in a `candidates` array that is SEPARATE from `rewards` and is never concatenated with it, they carry no `item` and no `owned`, and pinning that separation is what `npm run test:events` and the `event ladder` widget suite exist for. Showing a guess as a guess and showing it as a reward are different things; only the first is allowed. \n\n🔑 WHY THEY ARE WORTH KEEPING ANYWAY: all six of the source's point thresholds match ours EXACTLY (43,200 / 72,000 / 123,840 / 164,160 / 230,400 / 288,000 = 15/25/43/57/80/100% of 288,000). 43% and 57% are odd, non-round positions Sub read off a progress bar; an independent source reproducing 123,840 and 164,160 is very hard to explain as coincidence or invention. So the source corroborates our total and tiers, and our MEASURED tier-15 (S-38 \"SecondWind\" Pistol) corroborates its first row. The naming also alternates weapon/armour across the ladder, which is what a real reward table looks like. \n\n➡️ One observation settles the lot: the first player to cross 72,000 either sees the FBL-8a or does not."
+    },
+    {
+      "id": "return-of-xenothreat",
+      "log": "Return of XenoThreat",
+      "label": "Return of XenoThreat",
+      "status": "past",
+      "patch": null,
+      "note": "Every XenoThreat mission you run adds to YOUR personal progress (not the server's). Check your in-game Journal → Return of XenoThreat for your current %.",
+      "contractPrefixes": [
+        "RoX_"
+      ],
+      "generators": [
+        "TheBackpocket"
+      ],
+      "total": null,
+      "tiers": [
+        15,
+        25,
+        50,
+        60,
+        85,
+        100
+      ],
+      "tiersSource": "Migrated verbatim from the XENOTHREAT_TIERS constant this file replaces; cross-checked item-for-item against subliminal.gg's blueprints-extra.json (25/25 names matched, all 25 UUIDs joined).",
+      "contracts": {},
+      "contractsNote": "Never measured — the event is over. Progress for it can no longer be accumulated, which is correct: `total` is null so no percentage is claimed.",
+      "rewards": [
+        {
+          "tier": 15,
+          "name": "Chiron Helmet Purgatory Camo",
+          "item": "9226de19-21c4-4d22-a9b9-04e8ab2d7d1a"
+        },
+        {
+          "tier": 15,
+          "name": "Chiron Core Purgatory Camo",
+          "item": "32efc648-0489-4293-ba06-57b715e18714"
+        },
+        {
+          "tier": 15,
+          "name": "Chiron Arms Purgatory Camo",
+          "item": "ac73e9b7-9bca-4537-9456-71700ee2fa70"
+        },
+        {
+          "tier": 15,
+          "name": "Chiron Legs Purgatory Camo",
+          "item": "6379240a-3e25-4ce5-ae4b-047d26097038"
+        },
+        {
+          "tier": 15,
+          "name": "Chiron Backpack Purgatory Camo",
+          "item": "649b433d-93ef-4fa2-85c2-c54eb5b44595"
+        },
+        {
+          "tier": 15,
+          "name": "BR-2 \"Purgatory Camo\" Shotgun",
+          "item": "342413af-8554-4c32-af63-1690dc948883"
+        },
+        {
+          "tier": 25,
+          "name": "Testudo Helmet Purgatory Camo",
+          "item": "bc29c9de-ceda-43da-a03d-d14f0e2cc113"
+        },
+        {
+          "tier": 25,
+          "name": "Testudo Core Purgatory Camo",
+          "item": "8ba85453-091a-4471-8be5-6bbc75487a33"
+        },
+        {
+          "tier": 25,
+          "name": "Testudo Arms Purgatory Camo",
+          "item": "8b26ce90-6d22-4d50-8828-b2b37a0491d4"
+        },
+        {
+          "tier": 25,
+          "name": "Testudo Legs Purgatory Camo",
+          "item": "93f14d45-b05f-4163-bb90-8a5f1f80043b"
+        },
+        {
+          "tier": 25,
+          "name": "Testudo Backpack Purgatory Camo",
+          "item": "91d97a2d-2b19-48a9-9246-b64567fe0e88"
+        },
+        {
+          "tier": 25,
+          "name": "S71 \"Purgatory Camo\" Rifle",
+          "item": "4f40a177-91d9-4a93-b2bb-c076938c6f0b"
+        },
+        {
+          "tier": 50,
+          "name": "Monde Helmet Purgatory Camo",
+          "item": "aa369676-fd5d-48cf-b8fc-f20dd89faec0"
+        },
+        {
+          "tier": 50,
+          "name": "Monde Core Purgatory Camo",
+          "item": "cc40d00a-15f4-437d-b0ba-1ba88289dd07"
+        },
+        {
+          "tier": 50,
+          "name": "Monde Arms Purgatory Camo",
+          "item": "f2bb659a-2f68-494a-b28f-328b76513dc5"
+        },
+        {
+          "tier": 50,
+          "name": "Monde Legs Purgatory Camo",
+          "item": "7f6f828f-1508-4e01-bbad-a60b59b7c24d"
+        },
+        {
+          "tier": 50,
+          "name": "Demeco \"Purgatory Camo\" LMG",
+          "item": "656afe86-dc53-4b83-8121-4084992d13df"
+        },
+        {
+          "tier": 50,
+          "name": "Warden Backpack Purgatory Camo",
+          "item": "5ca7d59d-99a5-4b49-8c32-60d8368e6181"
+        },
+        {
+          "tier": 60,
+          "name": "QuadraCell",
+          "item": "d89b535f-8187-4840-b5f4-3230c789dfd1"
+        },
+        {
+          "tier": 60,
+          "name": "QuadraCell MT",
+          "item": "18d542ac-ee74-411e-ad3e-e2e0b980c103"
+        },
+        {
+          "tier": 85,
+          "name": "FR-66",
+          "item": "0baaf20a-460e-4668-84f2-d09f9d31b492"
+        },
+        {
+          "tier": 85,
+          "name": "FR-76",
+          "item": "be9729fb-c973-4c49-93cb-6a6f7c877408"
+        },
+        {
+          "tier": 100,
+          "name": "NDB-26 Repeater",
+          "item": "fecbf518-e3e5-4e58-905a-729a02e86265"
+        },
+        {
+          "tier": 100,
+          "name": "NDB-28 Repeater",
+          "item": "2365f40c-fbd3-4859-ad80-f5cfbc305c83"
+        },
+        {
+          "tier": 100,
+          "name": "NDB-30 Repeater",
+          "item": "2f9fad1d-f591-4e69-ae64-af5ba0a883f7"
+        }
+      ]
+    }
+  ]
+}

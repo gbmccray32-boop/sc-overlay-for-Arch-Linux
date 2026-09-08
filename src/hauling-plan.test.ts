@@ -163,12 +163,21 @@ check("no box is placed outside its grid", (all.pack?.placements ?? []).every((p
    the door. Cargo collected at different stops is governed by the stronger physical rule (you load
    through the door, so later pickups cannot be buried) and is excluded here. */
 {
+  /* ⚠️ ONE NUMBER PER LANDING. This model used to number each ACTION, which made two loads
+     collected on the SAME visit look like different collection times — so it judged them by the
+     collection rule and never applied the delivery rule at all. That is precisely the bug Sub found
+     on 2026-08-18 (Scrap at the ramp, Silicon and Tin buried), and the test's own model shared it,
+     which is why it went green over a broken stow order. The assertion below never changed; what
+     was wrong was this definition of "collected before". */
   const pickupSeq = new Map<string, number>();
   const dropSeq = new Map<string, number>();
   let seq = 0;
-  for (const t of all.trips) for (const st of t.stops) for (const a of st.actions) {
-    if (a.kind === "pickup") { if (!pickupSeq.has(a.group)) pickupSeq.set(a.group, seq++); }
-    else if (!dropSeq.has(a.group)) dropSeq.set(a.group, seq++);
+  for (const t of all.trips) for (const st of t.stops) {
+    const at = seq++;
+    for (const a of st.actions) {
+      if (a.kind === "pickup") { if (!pickupSeq.has(a.group)) pickupSeq.set(a.group, at); }
+      else if (!dropSeq.has(a.group)) dropSeq.set(a.group, at);
+    }
   }
   const minY = new Map<string, number>();
   for (const pl of all.pack?.placements ?? []) {
@@ -235,6 +244,30 @@ const pinnedTracked = buildHaulingPlan(viewOf(byId("haul-tracked")), data, {
   pins: { [t0.missionId]: 999 },
 });
 check("🔑 a pin never overrides the game's own number", pinnedTracked.contracts[0]?.scu === 81);
+
+// ── a sibling order's cap beats the biggest box in the game ──────────────────
+// 🔴 Sub, 4.10 PTU: "every single one of these cargo grids is full, but I only have 100 and
+// something SCU on board." When an order declares no maxContainerSize the guess jumped to the
+// largest box that exists (32). ORS_MA_HaulingMedium is the mixed case — Iron (no cap) and
+// Medical Supplies (cap 8) — so the Iron leg took 32 and a 96 SCU load partitioned to 3x32.
+// A Hull B cargo grid is 2x8x2 = EXACTLY 32 SCU, so each box filled a whole grid by itself.
+{
+  const orders = data.contract("ORS_MA_HaulingMedium")?.orders ?? [];
+  // Non-empty guard first: everything below describes this contract's shape, and an empty list
+  // would make the interesting assertions unreachable rather than false.
+  check("the 4.10 event haul is in the bundled order data", orders.length > 0, String(orders.length));
+  check("...and it is the MIXED case: one order declares a cap, one does not",
+    orders.some((o) => o.maxContainerSize == null) && orders.some((o) => o.maxContainerSize != null),
+    JSON.stringify(orders.map((o) => [o.commodity, o.maxContainerSize ?? null])));
+  check("...the contract's own declared cap is 8", data.maxBoxScu("ORS_MA_HaulingMedium") === 8,
+    String(data.maxBoxScu("ORS_MA_HaulingMedium")));
+  // The number that made this visible, asserted so the reasoning cannot rot: one box of the
+  // GLOBAL largest size fills an entire Hull B grid.
+  const largest = Math.max(...boxSetFrom(data.boxes()).map((b) => b.scu));
+  check("...and the global largest box (32) is exactly one Hull B grid, 2x8x2",
+    largest === 2 * 8 * 2, String(largest));
+  check("...so the contract's cap must be preferred over it", data.maxBoxScu("ORS_MA_HaulingMedium")! < largest);
+}
 
 // ── cargo already in the hold ──────────────────────────────────────────────
 // Its pickup objective has COMPLETED, so there is nothing left to fly to for it — but the drop-off
@@ -335,7 +368,7 @@ check("clearing the override falls back to the log's ship",
   };
   const view = {
     updatedAt: 1, playerNodeId: null, ship: null, contracts: [c as never],
-    untracked: [], trackedMissionId: null, runStartedAt: null, finished: [],
+    untracked: [], trackedMissionId: null, runStartedAt: null, activeMs: 0, finished: [], atLocation: null, atLocationId: null,
   };
   const p = buildHaulingPlan(view as never, data);
   const legs = p.contracts[0].legs;
@@ -354,7 +387,7 @@ check("clearing the override falls back to the log's ship",
 // ── degenerate input ───────────────────────────────────────────────────────
 const empty = buildHaulingPlan(
   { updatedAt: 0, playerNodeId: null, ship: null, contracts: [], untracked: [], trackedMissionId: null,
-    runStartedAt: null, finished: [] },
+    runStartedAt: null, activeMs: 0, finished: [], atLocation: null, atLocationId: null, cargoMove: null },
   data,
 );
 check("an empty board is an empty plan, not a throw",
@@ -362,6 +395,253 @@ check("an empty board is an empty plan, not a throw",
 // 🔑 BOTH rates null, not zero. "0 aUEC/hour" is a claim about the run; no rate is the truth.
 check("an empty board quotes no rate at all",
   empty.rates.actual === null && empty.rates.projected === null);
+
+// ── one place, two marker keys ─────────────────────────────────────────────
+//
+// 🔴 REPRODUCED FROM SUB'S LIVE PTU BOARD, 2026-08-19. Two "Orison Relief" priority contracts that
+// both drop at August Dunlow Spaceport. Their drop markers sit ~1 km apart, and `posKey` rounds to
+// the kilometre, so they keyed as `@5297,-873,5280` and `@5297,-872,5281` — two ids for one
+// spaceport. The router built a stop for each and produced pickup → drop → pickup → drop, flying
+// back and forth across the system for what is one landing.
+//
+// Both pickups are on microTech, and neither contract key carries a region token
+// (`ORS_MA_HaulingSmall`), so `regionByLoc` was empty and every leg was charged the same flat
+// cross-body rate — every ordering tied and the optimiser had no reason to group anything.
+{
+  const stop = (key: string, role: "pickup" | "dropoff", pos: { x: number; y: number; z: number },
+                destination: string | null, need: number | null) => ({
+    key, objectiveId: key, role, index: 0, pos, markerEntityId: null,
+    destination, commodity: "Fresh Food", need, delivered: 0, unit: "scu" as const,
+    state: "pending" as const, completedAt: null,
+  });
+  const contract = (missionId: string, contractKey: string, stops: unknown[]) => ({
+    missionId, contract: contractKey, contractKey, generator: "", contractDefId: "",
+    title: contractKey, parts: null, acceptedAt: 0, endedAt: null, outcome: null, payout: null,
+    stops, items: [], hidden: false,
+  });
+  const view = {
+    updatedAt: 0, playerNodeId: null, ship: null, untracked: [], trackedMissionId: null,
+    runStartedAt: null, activeMs: 0, finished: [], atLocation: null, atLocationId: null,
+    cargoMove: null,
+    contracts: [
+      contract("m1", "ORS_MA_HaulingSmall", [
+        stop("m1-leg", "pickup", { x: 520_000, y: 435_000, z: 736_000 }, null, null),
+        stop("m1-leg", "dropoff", { x: 5_297_000, y: -873_000, z: 5_280_000 }, "August Dunlow Spaceport", 6),
+      ]),
+      contract("m2", "ORS_MA_HaulingMedium", [
+        stop("m2-leg", "pickup", { x: 844_000, y: -179_000, z: 506_000 }, null, null),
+        // 🔑 One kilometre away, and it is the SAME spaceport. Named by the player, as Sub had to.
+        stop("m2-leg", "dropoff", { x: 5_297_000, y: -872_000, z: 5_281_000 }, null, 96),
+      ]),
+    ],
+  };
+  const placeNames = {
+    "@520,435,736": "New Babbage",
+    "@844,-179,506": "microTech Logistics Depot S4LD13",
+    "@5297,-872,5281": "August Dunlow Spaceport",
+  };
+  const plan = buildHaulingPlan(view as never, data, { placeNames, ship: "MISC Hull C" });
+  const trip = plan.trips[0];
+  const stops = trip?.stops ?? [];
+  const names = stops.map((s) => plan.locationNames[s.locationId] ?? s.locationId);
+
+  check("the board plans a trip at all", !!trip, JSON.stringify(names));
+  // 🔴 THE FIX. Four stops means the two drop markers were treated as different places.
+  check("both drop-offs collapse into ONE landing", stops.length === 3,
+    `${stops.length} stops: ${names.join(" -> ")}`);
+  const dunlow = stops.filter((s) => (plan.locationNames[s.locationId] ?? "").includes("Dunlow"));
+  check("...and it is the shared spaceport that merged", dunlow.length === 1, JSON.stringify(names));
+  // 🔑 Both pickups first, then the single drop — the shape the player expected.
+  const kinds = stops.map((s) => (s.actions ?? []).map((a) => a.kind).join("+"));
+  check("the route is not empty", kinds.length === 3, JSON.stringify(kinds));
+  check("both pickups happen before the drop",
+    kinds.length === 3 && kinds.slice(0, 2).every((k) => k === "pickup"), JSON.stringify(kinds));
+  check("...and the last stop is the drop", (kinds[2] ?? "").includes("dropoff"), JSON.stringify(kinds));
+}
+
+
+// ── a region derived from the NAME, when the contract key has none ─────────
+//
+// 🔴 The merge above fixes the double landing; this fixes the COST. `regionByLoc` is populated from
+// the contract key (`..._Stanton3_...`), which hand-authored families like Orison Relief simply do
+// not carry. With no region every leg is charged the flat cross-body rate, so the router cannot
+// prefer keeping a run on one world — and the Rank tab's per-hour projection divides by that
+// inflated time.
+//
+// 🔑 The assertion is on MINUTES, not stop order: with only two contracts the order ties either
+// way, so an order-based check passes without the fix and proves nothing. Measured — two contracts
+// that each stay on one body cost 25.84 min with name-derived regions and 27.84 without, which is
+// exactly the two legs moving from the cross-body rate to the same-body one.
+{
+  const stop = (key: string, role: "pickup" | "dropoff", x: number, need: number | null) => ({
+    key, objectiveId: key, role, index: 0, pos: { x, y: 0, z: 0 }, markerEntityId: null,
+    destination: null, commodity: "Fresh Food", need, delivered: 0, unit: "scu" as const,
+    state: "pending" as const, completedAt: null,
+  });
+  const contract = (missionId: string, contractKey: string, stops: unknown[]) => ({
+    missionId, contract: contractKey, contractKey, generator: "", contractDefId: "",
+    title: contractKey, parts: null, acceptedAt: 0, endedAt: null, outcome: null, payout: null,
+    stops, items: [], hidden: false,
+  });
+  const view = {
+    updatedAt: 0, playerNodeId: null, ship: null, untracked: [], trackedMissionId: null,
+    runStartedAt: null, activeMs: 0, finished: [], atLocation: null, atLocationId: null,
+    cargoMove: null,
+    contracts: [
+      // Stays on microTech.
+      contract("r1", "ORS_MA_HaulingSmall", [stop("r1", "pickup", 1_000, null), stop("r1", "dropoff", 2_000, 6)]),
+      // Stays on Crusader.
+      contract("r2", "ORS_MA_HaulingMedium", [stop("r2", "pickup", 3_000, null), stop("r2", "dropoff", 4_000, 8)]),
+    ],
+  };
+  const plan = buildHaulingPlan(view as never, data, {
+    ship: "MISC Hull C",
+    placeNames: { "@1,0,0": "New Babbage", "@2,0,0": "Port Tressler", "@3,0,0": "Orison", "@4,0,0": "Seraphim Station" },
+  });
+  const trip = plan.trips[0];
+  check("the four-stop run plans", !!trip && trip.stops.length === 4,
+    trip ? String(trip.stops.length) : "no trip");
+  // 25.84 with the fix, 27.84 without. The midpoint separates them and tolerates handling changes.
+  check("a name-derived body makes the same-world legs cheaper",
+    !!trip && trip.totalMinutes < 26.9, trip ? String(Math.round(trip.totalMinutes * 100) / 100) : "no trip");
+}
+
+// ── 🔴 COMMODITY BUYS IN THE SAME ROUTE ────────────────────────────────────
+//
+// The merged Route sequences whatever the player picked, from either source. What makes that
+// cheap is that `hauling-route.ts` was already cargo-agnostic: a buy is a pickup at the shop and a
+// drop-off at the buyer, with precedence between them, which is a haul. No second solver.
+//
+// Three rules are pinned here, and each fails differently:
+//   • an unbought pick routes with NO tonnage and the trip says its load figures are a floor;
+//   • a bought one carries its real tonnage and the caveat goes away;
+//   • a pick at a place the board already visits is ONE landing, not a sixth stop.
+{
+  const buy = (over: Record<string, unknown> = {}) => ({
+    id: "b1", resourceGuid: "accacd33-3a1a-4ec7-8b4a-14b9f028047c", commodity: "Processed Food",
+    from: { terminal: "TDD Area 18", body: "ArcCorp", system: "Stanton" },
+    to: { terminal: "Baijini Point", body: "ArcCorp", system: "Stanton" },
+    buyPrice: 1202, sellPrice: 1506, addedAt: 1, scu: null, boughtAt: null, shopName: null,
+    boxScu: null, boxCount: null, purchaseKey: null, autoLoaded: null,
+    ...over,
+  });
+  // The whole scenario set, because a single-contract board solves to no trip at all and every
+  // "nothing changed" assertion below would then be true for the most boring reason there is.
+  const board = () => viewOf(HAUL_SCENARIOS);
+
+  // POSITIVE FIRST, and it is the control for everything below: a board with no picks is exactly
+  // what it was, so any difference the fixture makes is the fixture's.
+  const bare = buildHaulingPlan(board(), data, { ship: "CRUS_Starlifter_C2" });
+  check("a board with no commodity picks has none, and no trip is caveated",
+    bare.trips.length > 0 && bare.buys.length === 0 && bare.trips.every((t) => !t.unknownScu),
+    `${bare.trips.length} trip(s), ${bare.trips[0]?.stops.length} stop(s)`);
+
+  // ⚠️ SOLD SOMEWHERE THE BOARD DOES NOT GO. The dev-replay board already visits Baijini Point by
+  // name, so a pick selling THERE merges into that landing — which is the next block's subject and
+  // would make "two new stops" false here for the right reason. Two fixtures, two rules.
+  const AWAY = { terminal: "Port Tressler", body: "microTech", system: "Stanton" };
+  const open = buildHaulingPlan(board(), data, { ship: "CRUS_Starlifter_C2", buys: [buy({ to: AWAY })] as never });
+  check("🔴 a pick with no tonnage yet is still ROUTED",
+    open.buys.length === 1 && open.buys[0].routed === true && open.buys[0].scu === null,
+    open.buys[0]?.reason ?? "routed");
+  check("...adding two stops to the run", open.trips[0].stops.length === bare.trips[0].stops.length + 2,
+    `${bare.trips[0].stops.length} -> ${open.trips[0].stops.length}`);
+  check("...with the shop before the buyer, exactly as a pickup precedes its drop-off", (() => {
+    const seq = open.trips[0].stops.flatMap((s) => s.actions.filter((a) => a.group === open.buys[0].group).map((a) => a.kind));
+    return seq.join(",") === "pickup,dropoff";
+  })(), open.trips[0].stops.flatMap((s) => s.actions.filter((a) => a.group === open.buys[0].group).map((a) => a.kind)).join(","));
+  check("...and the terminals are named, never numbered 'Site N'",
+    open.locationNames[open.buys[0].from.locationId ?? ""] === "TDD Area 18"
+    && open.locationNames[open.buys[0].to.locationId ?? ""] === "Port Tressler",
+    `${open.locationNames[open.buys[0].from.locationId ?? ""]} -> ${open.locationNames[open.buys[0].to.locationId ?? ""]}`);
+  check("...so the naming box never asks about a place the player just chose off a list",
+    open.unnamedPlaces.every((u) => u.locationId !== open.buys[0].from.locationId),
+    open.unnamedPlaces.map((u) => u.locationId).join(" "));
+  // 🔴 THE HONESTY RULE. An unknown quantity is not a zero, and the trip has to say so or the
+  // player reads a hold figure that will be wrong the moment they buy.
+  check("🔴 the trip says its load figures are a FLOOR", open.trips[0].unknownScu === true);
+  check("...and the unknown tonnage adds nothing to the peak",
+    open.trips[0].peakScu === bare.trips[0].peakScu,
+    `${bare.trips[0].peakScu} -> ${open.trips[0].peakScu}`);
+
+  // ── once the log has said ────────────────────────────────────────────────
+  const bought = buildHaulingPlan(board(), data, {
+    ship: "CRUS_Starlifter_C2",
+    buys: [buy({ scu: 24, boxScu: 8, boxCount: 3, shopName: "TDD_SCShop-001", autoLoaded: true,
+                 boughtAt: "2026-08-19T17:43:31.000Z", purchaseKey: "k" })] as never,
+  });
+  check("🔴 a bought pick carries the tonnage the log stated", bought.buys[0].scu === 24, String(bought.buys[0].scu));
+  check("...the caveat is gone, because nothing on the trip is unknown any more",
+    bought.trips[0].unknownScu === false);
+  check("...and the peak rises by exactly that much",
+    bought.trips[0].peakScu === bare.trips[0].peakScu + 24,
+    `${bare.trips[0].peakScu} -> ${bought.trips[0].peakScu}`);
+  // 🔑 STOW READS THE LOG'S OWN MANIFEST — three boxes of 8, not a partition of 24. This is the
+  // half of Sub's ruling that is easy to forget: the real figure "will override it", and the thing
+  // it overrides includes what the hold diagram plans against.
+  const boughtBoxes = (bought.pack?.placements ?? []).filter((p) => p.group === bought.buys[0].group);
+  check("🔴 Stow gets the bought cargo, as the boxes the line stated",
+    boughtBoxes.length === 3 && boughtBoxes.every((p) => p.scu === 8),
+    `${boughtBoxes.length} box(es): ${boughtBoxes.map((p) => String(p.scu)).join(",")}`);
+  // Paired negative: an UNBOUGHT pick has no tonnage, so it has no boxes and must draw none.
+  check("...while an unbought pick contributes no boxes at all",
+    (open.pack?.placements ?? []).every((p) => p.group !== open.buys[0].group));
+
+  // ── a pick at a place the board already visits is ONE landing ────────────
+  // 🔑 This is what "opportunistic" means — buy where you are already going. It falls out of the
+  // same name-merge that fixed two markers keying to one spaceport, which is why it needed no
+  // proximity rule and no second id space.
+  {
+    // POSITIVE FIRST: the board really does visit a place called Baijini Point, by the game's own
+    // Deliver line. Without this the merge below is "two things that both do not exist agree".
+    const boardPlace = Object.entries(bare.locationNames).find(([, n]) => n === "Baijini Point");
+    check("the board really visits a place the game NAMED",
+      !!boardPlace, boardPlace ? boardPlace.join(" = ") : Object.values(bare.locationNames).join(", "));
+
+    const merged = buildHaulingPlan(board(), data, {
+      ship: "CRUS_Starlifter_C2",
+      buys: [buy({ to: { terminal: "Baijini Point", body: "ArcCorp", system: "Stanton" } })] as never,
+    });
+    check("🔴 selling where the board already goes resolves to the board's OWN stop",
+      merged.buys[0].to.locationId === boardPlace?.[0],
+      `${merged.buys[0].to.locationId} vs ${boardPlace?.[0]}`);
+    /* The consequence, and the claim is deliberately narrower than "it costs nothing": ONE end
+       merged, so the run costs ONE new landing — the shop — where selling away costs two.
+       ⚠️ The first version of this assertion said "no extra landing" and was WRONG, which the
+       measurement caught: bare 3, merged 4, away 5. The shop is a place the board does not go, and
+       no amount of name-merging changes that. A pick is opportunistic at the end where it overlaps
+       and full price at the end where it does not. Both sides are measured so "fewer landings"
+       cannot be satisfied by a route that simply lost a stop. */
+    const landings = (p: typeof merged) => p.trips[0].stops.filter((s) => !s.sameSpot).length;
+    check("...so the run costs ONE new landing, where selling away costs two",
+      landings(merged) === landings(bare) + 1 && landings(open) === landings(bare) + 2,
+      `bare ${landings(bare)} · merged ${landings(merged)} · away ${landings(open)}`);
+    // ⚠️ And the merge must not eat the marker. A buy id carries no coordinates, so if it won the
+    // canonical slot the origin snap — which matches the player's read position against marker XYZ
+    // — would silently stop resolving at that place.
+    check("...and the MARKER id wins the merge, so the place keeps its coordinates",
+      (merged.buys[0].to.locationId ?? "").startsWith("@"), merged.buys[0].to.locationId ?? "null");
+  }
+
+  // ── a pick that cannot be routed is REPORTED, never dropped ──────────────
+  const broken = buildHaulingPlan(board(), data, {
+    ship: "CRUS_Starlifter_C2",
+    buys: [buy({ id: "b2", to: { terminal: "", body: null, system: null } })] as never,
+  });
+  check("a pick missing an end is listed with a reason, not silently discarded",
+    broken.buys.length === 1 && broken.buys[0].routed === false && !!broken.buys[0].reason,
+    broken.buys[0]?.reason ?? "(no reason)");
+  check("...and its stops are nowhere in the route",
+    broken.trips[0].stops.length === bare.trips[0].stops.length,
+    `${broken.trips[0].stops.length} vs ${bare.trips[0].stops.length}`);
+
+  // 🔴 CONTRACTS AND COMMODITIES ARE NEVER CO-RANKED, and the mechanism is that no buy ever gets a
+  // payout. Sub ruled out a shared profit-per-hour currency outright; this is what stops one
+  // appearing by accident.
+  check("🔴 a buy earns the route no payout, so nothing can weigh it against a contract",
+    open.rates.projected?.auec === bare.rates.projected?.auec,
+    `${bare.rates.projected?.auec} vs ${open.rates.projected?.auec}`);
+}
 
 // The bundle really is on disk where the server will look for it.
 check("the shipped orders file is the schema this module reads",

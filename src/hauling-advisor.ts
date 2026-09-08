@@ -336,6 +336,34 @@ export function handlingEffort(c: AdvisorContract, regime: Regime): Effort {
   return { regime, boxes, seconds, cost: Math.max(1, seconds), stops };
 }
 
+/* Measured floors from Sub's own logs — see hauling-route.ts, where the same numbers price a real
+   route. Repeated as one figure here because the advisor scores CONTRACT TYPES, not routes: there
+   is no board yet, so no bodies to compare, and same-body is the common case. */
+const TRAVEL_MINUTES_PER_STOP = 6;
+/** One lift, measured off a 12-minute load of Sub's. Used for the manual regime, which has no
+ *  published timing — an hour figure has to assume something, and this is the only number here
+ *  that was measured rather than guessed. */
+const MANUAL_SECONDS_PER_BOX = 25;
+
+/**
+ * Minutes for ONE run of this contract, door to door — loading plus getting there.
+ *
+ * 🔴 WHY THE LIST NEEDED THIS. Ranked by rep per box, Sub's board opened with a contract paying
+ * 41.7 rep/box, and he had to work out for himself that it was tiny 1 SCU boxes: "we need another
+ * number to quantify that so that the user doesn't think that there's some sort of a mistake."
+ * Per-box is the right SORT key — it is what the work feels like — but it is not a rate anyone can
+ * compare to their evening. Per hour is, and it is what makes a fiddly-but-quick contract and a
+ * slow-but-fat one commensurable.
+ *
+ * ⚠️ An ESTIMATE, and labelled as one in the UI. Travel is the same-body floor per stop; a run
+ * that crosses to another body costs about a minute more per leg, and one that dawdles costs
+ * whatever it dawdles.
+ */
+export function runMinutes(effort: Effort): number {
+  const loadingSec = effort.seconds ?? effort.boxes * MANUAL_SECONDS_PER_BOX * 2;
+  return loadingSec / 60 + effort.stops * TRAVEL_MINUTES_PER_STOP;
+}
+
 // ── Ranking ───────────────────────────────────────────────────────────────────────────────
 
 export type AdvisorGoal = "rep" | "money";
@@ -351,6 +379,13 @@ export interface RankOptions {
   includeLocked?: boolean;
   /** Restrict to one mission type ("Hauling - Planetary"), as the board groups them. */
   missionType?: string | null;
+  /** The largest single container this ship can accept, in SCU — see largestBoxScu(). Contracts
+   *  shipping a bigger box are flagged `oversize`. Omit when the ship is unknown: an absent value
+   *  flags nothing, because "we do not know the hull" must never read as "it does not fit". */
+  maxBoxScu?: number | null;
+  /** Drop oversize contracts instead of flagging them. Default false, matching `includeLocked`:
+   *  seeing what a bigger hull would unlock is the same kind of useful as seeing the next rung. */
+  dropOversize?: boolean;
 }
 
 export interface ScoredContract {
@@ -364,6 +399,14 @@ export interface ScoredContract {
   score: number;
   /** True when the contract's rung is above the player's standing. */
   locked: boolean;
+  /** True when one of this contract's containers is too big for the ship to take at all. */
+  oversize: boolean;
+  /** Estimated minutes for one run of this contract — see runMinutes. */
+  minutes: number;
+  /** Reputation an hour at that estimate. The number that makes per-box comparable to an evening. */
+  repPerHour: number;
+  /** aUEC an hour, same estimate. */
+  moneyPerHour: number;
 }
 
 /**
@@ -386,14 +429,38 @@ export function rankContracts(contracts: AdvisorContract[], opts: RankOptions = 
     const effort = handlingEffort(c, regime);
     const repRate = c.rep / effort.cost;
     const moneyRate = c.payout / effort.cost;
+    const minutes = runMinutes(effort);
+    const hours = minutes / 60;
+    const repPerHour = hours > 0 ? c.rep / hours : 0;
+    const moneyPerHour = hours > 0 ? c.payout / hours : 0;
     // An unparseable title has no rung, so it cannot be gated — treat it as open.
     const idx = c.rank ? HAULING_LADDER.findIndex((r) => r.name === c.rank) : -1;
     const locked = reachIdx != null && idx >= 0 && idx > reachIdx;
     if (locked && opts.includeLocked === false) continue;
-    rows.push({ contract: c, effort, repRate, moneyRate, score: goal === "rep" ? repRate : moneyRate, locked });
+    /* 🔴 A CONTAINER IS INDIVISIBLE. Sub picked an Anvil Paladin, whose hold takes 4 SCU, and was
+       still offered contracts that ship 8 SCU boxes — he cannot take one, let alone the load. This
+       is a separate gate from `locked`: rank says you are not allowed, this says you cannot fit it
+       in the ship you are sitting in. Unknown hull flags nothing. */
+    const oversize = opts.maxBoxScu != null && c.maxContainerScu > opts.maxBoxScu;
+    if (oversize && opts.dropOversize) continue;
+    /* 🔴 THE SORT IS PER HOUR. It was per unit of HANDLING — rep per box under manual, rep per
+       second of loading under auto — on the reasoning that boxes are what the work feels like and
+       that manual has no published timing to divide by.
+       That reasoning expired the moment travel became measurable. Per-box implicitly prices flying
+       at zero, so it ranks a fiddly-but-close contract above a fat one, and Sub caught it on his
+       own board: `Member Rank - Direct Small Cargo Haul` at 3,214 rep/hr sat FOURTH, below three
+       contracts earning 1,400-2,200, purely because it moves 8 boxes instead of 4. He asked the
+       right question — "isn't our per hour algorithm factoring in the box sizes and quantity?" It
+       is, plus the stops and the travel between them, which is exactly why it is the better key.
+       Per-box is still shown, because it is still what the work feels like in the hand. */
+    rows.push({ contract: c, effort, repRate, moneyRate,
+                score: goal === "rep" ? repPerHour : moneyPerHour,
+                locked, oversize, minutes, repPerHour, moneyPerHour });
   }
 
   rows.sort((a, b) =>
+    // Cannot-fit sinks below cannot-yet: a rung is a matter of time, a hold is a matter of fact.
+    Number(a.oversize) - Number(b.oversize) ||
     Number(a.locked) - Number(b.locked) ||
     b.score - a.score ||
     a.effort.stops - b.effort.stops ||

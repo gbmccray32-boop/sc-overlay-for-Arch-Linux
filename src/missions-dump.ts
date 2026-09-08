@@ -47,6 +47,8 @@ const fmt = (e: MissionEvent): string => {
       return `REWARD   +${e.amount.toLocaleString()} aUEC`;
     case "blueprintReceived":
       return `BLUEPRINT  «${e.name}»  (mission ${short(e.missionId)})`;
+    case "journalEntry":
+      return `JOURNAL  [${short(e.missionId)}] ${e.subject}${e.jurisdiction ? "  (jurisdiction)" : ""}`;
     case "sessionStart":
       return `SESSION  (PU entered / server change)`;
     case "sessionEnd":
@@ -69,6 +71,12 @@ const fmt = (e: MissionEvent): string => {
       return `CARGO    ${e.direction === "down" ? "OFFLOAD" : "LOAD   "} ${e.platform}`;
     case "cargoKiosk":
       return `KIOSK    ${e.terminal}`;
+    case "cargoUnstowMissing":
+      return `KIOSK    (entity ${e.entityId} is not present)`;
+    case "playerLocation":
+      return `WHEREAMI ${e.location}`;
+    case "playerLocationId":
+      return `WHEREAMI #${e.locationId}`;
     case "trackedMarker":
       return `MOBIGLAS [${short(e.missionId)}] ${e.added ? "TRACK  " : "untrack"} ${e.objectiveId}`;
   }

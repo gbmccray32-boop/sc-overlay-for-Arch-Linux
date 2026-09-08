@@ -32,15 +32,21 @@
  *
  * ── What it does NOT give us ───────────────────────────────────────────────────────────────
  *
- * • Live progress is per-DESTINATION, not per-box: `ObjectiveUpserted …
- *   MISSION_OBJECTIVE_STATE_COMPLETED` fires when a whole drop-off is satisfied, and nothing
- *   fires per box in between.
+ * • Progress is per-DROP-OFF, not per-box — but it is better than "completed / not completed".
  *   ⚠️ Earlier research said "the delivery counter NEVER ticks" because all 480 of Sub's logs
- *   showed `0/N`. **That is wrong** — it was an artifact of him always tracking a contract at
- *   accept, when the progress really is zero. A shared log from another player carries
- *   `Deliver 3/5 SCU …`, emitted 5ms after its CreateMarker on a spawn-in re-emission. The
- *   numerator is real; see `HaulStop.delivered`. It is only ever observed at a (re)track, so it
- *   is a checkpoint, not a live feed.
+ *   showed `0/N`. **That is wrong**, and so was the first correction to it. Cryojenikx's 152-log
+ *   corpus settles what actually emits a `Deliver` line (90 of them):
+ *
+ *     56  at accept, within 1s of "Contract Accepted"   ← the tracking gate
+ *     17  standalone                                     ← a manual TRACK, mid-run
+ *     10  within 0.5s of a drop-off ObjectiveUpserted COMPLETED
+ *      7  within 0.5s of a drop-off ObjectiveUpserted INPROGRESS   ← a PARTIAL delivery
+ *
+ *   **Every non-zero numerator in the corpus came from that last group.** A drop-off that goes
+ *   INPROGRESS means boxes were handed over but the leg is not finished, and the game re-announces
+ *   the objective ~3ms later with the running total: `Deliver 48/81 SCU of Scrap …`.
+ *   So partial progress arrives on its own for a contract actively being delivered — no tracking
+ *   needed. Tracking only matters for learning the tonnage BEFORE the first drop.
  * • Box breakdowns for SCU hauls are not logged at all. `SMarkerHandler_Hauling::OnItemRegistered`
  *   enumerates every box, but only for mission-ITEM hauls (Hockrow delve, Battaglia, HeadHunters
  *   recover-cargo). Covalex, RedWind and GoblinG emit nothing — verified across the whole corpus.
@@ -58,8 +64,26 @@ import { parseBoardTitle, type BoardTitle } from "./hauling-advisor.js";
  *  generator name or the contract key, because CIG names them inconsistently: the org is in the
  *  generator for Covalex/RedWind ("Covalex_Hauling") but only in the contract for GoblinG
  *  ("GoblinG_Generator" / "GoblinG_HaulCargo_L_Stanton2"). Counts across the 479-log corpus:
- *  GoblinG 322, Covalex 41, RedWind 2. */
-const HAUL_MARKERS = ["haul", "cargo"];
+ *  GoblinG 322, Covalex 41, RedWind 2.
+ *
+ *  🔴 "deliverypilot" is NOT a naming inconsistency — it is a contract CIG never labelled as
+ *  cargo at all. Siege of Orison's `ORS_MA_DeliveryPilot` (generator `TheBackpocket`) is a
+ *  genuine two-box haul: it emits pickup_/dropoff_ objectives on one mission UUID, marker
+ *  positions, ObjectiveUpserted COMPLETED, and a per-box SMarkerHandler_Hauling::OnItemRegistered
+ *  for each 1 SCU crate. Everything downstream already handles it. It was invisible ONLY because
+ *  neither "haul" nor "cargo" appears in "TheBackpocket ORS_MA_DeliveryPilot", so it was rejected
+ *  at the door — Sub, 2026-08-22, watching the app ignore boxes he had just carried off a roof.
+ *
+ *  ⚠️ Matched narrowly on purpose. The obvious broader rule — admit the event prefix `ORS_` — is
+ *  WRONG: `ORS_SA` is Strike Nine Tails Squad, a combat contract with no cargo in it. */
+const HAUL_MARKERS = ["haul", "cargo", "deliverypilot"];
+
+/**
+ * A quiet stretch longer than this is a pause, not work. 20 minutes is comfortably longer than a
+ * real leg (the measured floors are 5-7 minutes) and far shorter than a meal, a stream break, or
+ * a night's sleep — the case that started this.
+ */
+const IDLE_GAP_MS = 20 * 60_000;
 
 /** How long an ended contract stays in the view, so the widget can show the run that just
  *  finished (and its payout, which lands ~40–140ms AFTER the mission ends). */
@@ -93,11 +117,11 @@ export interface HaulStop {
    * How much of `need` the game says is already delivered.
    *
    * 🔑 Earlier research concluded "the delivery counter NEVER ticks" — every `N/M` in Sub's 480
-   * logs had N=0. That was an artifact of Sub always tracking a contract at accept, when the
-   * progress genuinely IS zero. A shared log from punk_hiji (2026-08-05) carries
-   * `Deliver 3/5 SCU of Recycled Material Composite to Levski` emitted 5ms after its CreateMarker
-   * — a spawn-in re-emission of an already-part-delivered contract. So the number is real, and
-   * throwing it away loses the one signal that says how much is still in the hold.
+   * logs had N=0, because he always tracks at accept, when progress genuinely IS zero. It does
+   * tick. The clearest case, from Cryojenikx's corpus (mission `922ce48a`, 2026-06-28): the
+   * drop-off went `INPROGRESS` at 23:07:34.277 and `Deliver 48/81 SCU of Scrap` landed 3ms later,
+   * then the leg COMPLETED at 23:10:59 and paid 73,000 aUEC in full. Partial deliveries are
+   * announced, and this is the only number that says how much is still in the hold.
    *
    * ⛔ This is NOT partial-turn-in modelling, which Sub ruled out: that is about a contract handed
    * in short at the END. This is in-flight progress on an open contract.
@@ -182,6 +206,17 @@ export interface HaulingView {
   trackedMissionId: string | null;
   /** When this run's clock started — the first hauling event the app saw. Null before any. */
   runStartedAt: number | null;
+  /** Milliseconds the player was actually hauling: intervals with an open contract and no long
+   *  pause. This is what a per-hour rate must divide by — NOT `updatedAt - runStartedAt`. */
+  activeMs: number;
+  /** Where the game last saw the player open an inventory — the router's origin, no longer asked
+   *  for by hand. `token` is the game's own id, e.g. "Stanton3b_ArcCorp_Area045". */
+  atLocation: { token: string; at: number } | null;
+  /** Where the player was last seen, as the game's NUMERIC location id. Names nothing on its own;
+   *  the caller binds it to a token it saw at the same place. */
+  atLocationId: { id: string; at: number } | null;
+  /** The last freight-elevator movement — `down` = offloading, `up` = loading. Null until one. */
+  cargoMove: { direction: "down" | "up"; platform: string; at: number } | null;
   /** Contracts that have FINISHED since the app started, oldest first. Deliberately NOT the ended
    *  entries of `contracts`, which are pruned after ten minutes — see the ledger note. */
   finished: { at: number; acceptedAt: number | null; missionId: string; contractKey: string; payout: number | null }[];
@@ -266,6 +301,22 @@ export class HaulingTracker extends EventEmitter {
   /** When this run's clock starts — the first hauling event the app ever saw. Set once and never
    *  cleared, for the same reason the ledger is not. */
   private runStartedAt: number | null = null;
+  /** Time the player was actually hauling — see accrueActive. Never wall-clock. */
+  private activeMs = 0;
+  /** The last place the game saw the player open an inventory, and when. */
+  private atLocation: { token: string; at: number } | null = null;
+  /** The same, as the game's numeric location id — see the parser's `playerLocationId`. */
+  private atLocationId: { id: string; at: number } | null = null;
+  /**
+   * The last freight-elevator movement, and which way the cargo went.
+   *
+   * 🔴 THIS IS WHAT "ABOARD" WAS MISSING. The game completes a pickup objective the instant it
+   * releases cargo to the lift — measured on Sub's own run, eleven seconds BEFORE the platform even
+   * begins to rise, and minutes before any of it is tractored in. So a completed pickup means the
+   * cargo is on the pad, not in the ship, and only the platform says which way it is travelling.
+   * `down` is offloading, `up` is loading.
+   */
+  private cargoMove: { direction: "down" | "up"; platform: string; at: number } | null = null;
   /** Completions still waiting for their "Awarded N aUEC" line, newest last. */
   private awaitingPayout: { missionId: string; at: number }[] = [];
   /** Rewards that arrived before their completion (dev-replay does this), newest last. */
@@ -310,6 +361,24 @@ export class HaulingTracker extends EventEmitter {
         break;
       case "vehicleControl":
         this.onVehicle(ev);
+        break;
+      /* Where the player last opened an inventory — see the parser's `playerLocation` note. Kept
+         as a plain last-seen: nothing in the log fires when you LEAVE somewhere, and a slightly
+         stale origin is still enormously better than the none the router had. */
+      case "playerLocation":
+        this.atLocation = { token: ev.location, at: ts(ev.ts) ?? Date.now() };
+        this.touch(ev.ts);
+        break;
+      /* The numeric form of the same fact, from the ASOP terminal, an inventory move, or the
+         freight kiosk. Useless alone — see `playerLocationId` — so it is simply carried, and the
+         binding to a readable token happens where the persisted map lives. */
+      case "cargoPlatform":
+        this.cargoMove = { direction: ev.direction, platform: ev.platform, at: ts(ev.ts) ?? Date.now() };
+        this.touch(ev.ts);
+        break;
+      case "playerLocationId":
+        this.atLocationId = { id: ev.locationId, at: ts(ev.ts) ?? Date.now() };
+        this.touch(ev.ts);
         break;
       case "end":
         this.onEnd(ev);
@@ -619,11 +688,41 @@ export class HaulingTracker extends EventEmitter {
   /** Advance the clock and announce a change. `lastAt` follows the LOG's clock, not the wall
    *  clock, so a seed read of an old file doesn't claim to be current. */
   private touch(evTs: string | null): void {
+    const before = this.lastAt;
     this.lastAt = Math.max(this.lastAt, ts(evTs) ?? 0);
     // The run clock opens at the first hauling event and never restarts — see runStartedAt.
     if (this.runStartedAt == null && this.lastAt > 0) this.runStartedAt = this.lastAt;
+    this.accrueActive(before, this.lastAt);
     this.prune();
     this.emit("change");
+  }
+
+  /**
+   * 🔴 A RATE MUST NOT COUNT TIME THE PLAYER WAS NOT PLAYING.
+   *
+   * Sub signed back in after ELEVEN HOURS away and his aUEC/hour and rep/hour had collapsed. The
+   * clock was wall-to-wall: first hauling event to latest event, with everything in between
+   * counted as haulinghours — sleep included. A rate built that way falls forever and never
+   * recovers, so the number the rank tab quotes is worthless the moment anyone takes a break.
+   *
+   * Two things stop the clock, and both are needed:
+   *   - NO OPEN CONTRACT. Sub's own framing: "know when the player has paused, when they don't
+   *     have any open hauling contracts". Between boards you are not hauling, so it does not count.
+   *   - A GAP LONGER THAN `IDLE_GAP_MS`. An open contract you walked away from is still a pause,
+   *     and a log that goes quiet for hours cannot be someone working. Bounding each interval also
+   *     means a stale seed read cannot dump a whole day into the total in one step.
+   *
+   * Accrued forward per event rather than derived at read time, because the OPEN-CONTRACT state
+   * is only knowable as it happens — by the time you are reading the view, an interval's contracts
+   * may all have ended.
+   */
+  private accrueActive(from: number, to: number): void {
+    if (!(from > 0) || !(to > from)) return;
+    const gap = to - from;
+    if (gap > IDLE_GAP_MS) return;
+    // State as it was DURING the interval: a contract that ended at `to` was open for all of it.
+    const open = [...this.contracts.values()].some((c) => c.endedAt == null || c.endedAt >= to);
+    if (open) this.activeMs += gap;
   }
 
   private prune(): void {
@@ -637,6 +736,25 @@ export class HaulingTracker extends EventEmitter {
     }
   }
 
+  /**
+   * Start the earnings measurement again from now.
+   *
+   * 🔴 CLEARS THE MEASUREMENT, NOT THE BOARD. Contracts, tracking and stop progress are untouched —
+   * this only forgets how long the player has been at it and what has been banked, so aUEC/hour and
+   * rep/hour start fresh. Sub asked for it after sitting parked while we worked: even with the idle
+   * rule, a session that has been open all day carries an average nobody can shift.
+   *
+   * He also asked whether a reset could mislead. It can only ever make the figure MORE local — it
+   * is measured over a shorter window, which is the point — and the widget says so, so a rate read
+   * right after a reset is thin rather than wrong.
+   */
+  resetRun(): void {
+    this.activeMs = 0;
+    this.runStartedAt = this.lastAt || null;
+    this.ledger.length = 0;
+    this.emit("change");
+  }
+
   view(): HaulingView {
     const contracts = [...this.contracts.values()]
       .sort((a, b) => (a.acceptedAt ?? 0) - (b.acceptedAt ?? 0));
@@ -648,6 +766,10 @@ export class HaulingTracker extends EventEmitter {
       untracked: contracts.filter((c) => !c.deliverSeen && c.endedAt == null).map((c) => c.missionId),
       trackedMissionId: this.trackedMissionId,
       runStartedAt: this.runStartedAt,
+      activeMs: this.activeMs,
+      atLocation: this.atLocation,
+      atLocationId: this.atLocationId,
+      cargoMove: this.cargoMove,
       finished: [...this.ledger],
     };
   }

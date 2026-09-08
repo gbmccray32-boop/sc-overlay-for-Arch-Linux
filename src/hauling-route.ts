@@ -34,7 +34,22 @@ export interface Vec3 {
 export interface StopAction {
   contractId: string;
   kind: "pickup" | "dropoff";
-  scu: number;
+  /**
+   * How much cargo this action moves, in SCU.
+   *
+   * 🔴 OPTIONAL, AND ONLY EVER BECAUSE THE PLAYER HAS NOT BOUGHT IT YET. A hauling contract always
+   * states its tonnage, so every contract action carries a number and nothing about contract
+   * routing changes. A COMMODITY leg does not: Sub decides how much to buy when he is standing at
+   * the kiosk, and the log then says what he really bought. Sub: "they don't need to pick it. They
+   * can decide when they get there and when they buy it, we'll know how much they bought and then
+   * it'll override it."
+   *
+   * ⚠️ So `undefined` means UNKNOWN, never zero. It is not a solver variable and nothing here ever
+   * chooses a value for it — an unknown quantity simply contributes no load, and every plan
+   * carrying one says so through `RoutePlan.unknownScu` so a load figure is read as a FLOOR
+   * rather than as a measurement.
+   */
+  scu?: number;
   commodity?: string;
 }
 
@@ -55,10 +70,17 @@ export interface RouteContract {
   title?: string;
 }
 
-/** One commodity moving from A to B for a contract — the shape `buildStops` consumes. */
+/**
+ * One commodity moving from A to B — the shape `buildStops` consumes.
+ *
+ * 🔑 `contractId` is a GROUPING KEY, not a mission reference. It is what makes a pickup and its
+ * drop-off the same piece of work, which is exactly as true of a commodity bought to sell as it is
+ * of a contract's cargo. Nothing in this module reads it as a mission.
+ */
 export interface HaulLeg {
   contractId: string;
-  scu: number;
+  /** SCU. Omit when the player has not bought it yet — see `StopAction.scu`. */
+  scu?: number;
   fromLocation: string;
   toLocation: string;
   commodity?: string;
@@ -72,6 +94,27 @@ export interface RouteOptions {
   stopMinutes?: number;
   /** Minutes charged for a leg where either end has no known position. */
   unknownLegMinutes?: number;
+  /**
+   * The body a location sits on, e.g. "ArcCorp". Supply this and leg cost is TIERED off the
+   * measured floors below instead of derived from marker XYZ.
+   *
+   * 🔴 WHY THIS EXISTS. Distance was worth nothing here: at 200,000 m/s a 239 km hop priced at
+   * 0.02 minutes, so a five-stop run was billed ~5 minutes of travel against a measured floor
+   * near 25 — and a four-drop contract scored almost as well per hour as a one-drop contract of
+   * the same payout. The advisor was over-rating exactly the spread-out work that eats an evening.
+   *
+   * Measured off Sub's own logs (2026-08-17) via `requested inventory for Location[...]`, taking
+   * the FASTEST observed value for each shape rather than the median — the measure brackets
+   * travel plus whatever else he was doing, so the slow samples are noise on a real floor.
+   * The same leg read 3m29s and 34m50s on one day.
+   *
+   * 🔑 The cost is dominated by getting UP and DOWN, not by distance: another body is only about
+   * a minute worse than the same one. That is the whole reason a distance model could never have
+   * been tuned into a right answer.
+   *
+   * Returns null when the body is not known; that leg is then charged as cross-body.
+   */
+  regionOf?: (locationId: string) => string | null;
   /** Where the run starts. Omit and the first stop is free to be anywhere. */
   startPos?: Vec3 | null;
   /** Ship hold in SCU. Omit for no capacity constraint. */
@@ -100,6 +143,13 @@ export interface RoutePlan {
   auecPerHour: number;
   /** Most SCU held at any point — what the ship actually has to be able to carry. */
   peakScu: number;
+  /**
+   * 🔴 TRUE WHEN SOME LEG IN THIS TRIP HAS NO QUANTITY YET, which makes `peakScu` and every
+   * `loadAfterScu` a FLOOR rather than a figure. A caller that prints either without saying so is
+   * telling the player their hold is emptier than it will be. False for every contract-only route,
+   * because a contract always states its tonnage.
+   */
+  unknownScu: boolean;
   contractIds: string[];
   method: "exact" | "heuristic";
 }
@@ -111,6 +161,8 @@ export interface RunPlan {
   totalMinutes: number;
   payout: number;
   auecPerHour: number;
+  /** True when ANY trip carries a leg of unknown quantity — see `RoutePlan.unknownScu`. */
+  unknownScu: boolean;
 }
 
 const DEFAULTS = {
@@ -119,6 +171,12 @@ const DEFAULTS = {
   stopMinutes: 4,
   unknownLegMinutes: 6,
 };
+
+/* 🔑 THESE MOVED to `travel-model.ts`, which is now the single home for anything that turns a
+ * distance into minutes. Their derivation moved with them verbatim — this module measured them and
+ * is now just their first importer, because trade and the Verse Finder need the same numbers and
+ * were keeping their own copies. */
+import { LEG_SAME_BODY_MINUTES, LEG_CROSS_BODY_MINUTES } from "./travel-model.js";
 
 /** Above this many visits, exact enumeration stops being cheap and we fall back to a heuristic. */
 const EXACT_STOP_LIMIT = 14;
@@ -134,9 +192,25 @@ function euclidean(a: Vec3, b: Vec3): number {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
 
+/** SCU an action moves. An UNKNOWN quantity moves nothing we can count — never zero, see below. */
+const actScu = (a: StopAction): number => a.scu ?? 0;
+
+/**
+ * Net SCU this visit adds to the hold.
+ *
+ * 🔴 AN UNKNOWN QUANTITY COUNTS AS NOTHING, AND THAT IS THE ONLY HONEST CHOICE AVAILABLE. The
+ * alternatives are worse in both directions: assume a number and the solver refuses routes over a
+ * capacity nobody has spent, or refuse to route the leg at all and the player cannot plan the buy
+ * they opened the tab to plan. Counting nothing makes the load model a FLOOR — every figure derived
+ * from it is at least this much — which `unknownScu` then states outright so no caller can mistake
+ * a floor for a measurement.
+ */
 function delta(stop: RouteStop): number {
-  return stop.actions.reduce((sum, a) => sum + (a.kind === "pickup" ? a.scu : -a.scu), 0);
+  return stop.actions.reduce((sum, a) => sum + (a.kind === "pickup" ? actScu(a) : -actScu(a)), 0);
 }
+
+/** Does this visit move cargo whose quantity nobody has stated yet? */
+const hasUnknown = (stop: RouteStop): boolean => stop.actions.some((a) => a.scu == null);
 
 const locOf = (s: RouteStop): string => s.locationId ?? s.id;
 
@@ -250,6 +324,16 @@ function buildCtx(stops: readonly RouteStop[], opts: RouteOptions): Ctx {
     legMinutes: (from, to) => {
       // Already standing there: the second visit is the same landing, so it is free.
       if (from !== null && locOf(stops[from]) === locOf(stops[to])) return 0;
+      // Tiered cost, when the caller can say which body each end is on. Preferred over distance:
+      // see the `regionOf` note. Absent it, the old XYZ path stands so existing callers and the
+      // route tests are unchanged.
+      if (opts.regionOf) {
+        if (from === null) return stopMin;
+        const ra = opts.regionOf(locOf(stops[from]));
+        const rb = opts.regionOf(locOf(stops[to]));
+        const same = ra !== null && rb !== null && ra === rb;
+        return (same ? LEG_SAME_BODY_MINUTES : LEG_CROSS_BODY_MINUTES) + stopMin;
+      }
       const a = from === null ? (opts.startPos ?? null) : (stops[from].pos ?? null);
       const b = stops[to].pos ?? null;
       if (from === null && a === null) return stopMin;
@@ -414,8 +498,8 @@ function toPlan(ctx: Ctx, solved: Solved, contracts: readonly RouteContract[], o
     const d = sameSpot ? 0 : a && b ? dist(a, b) : null;
     if (d !== null) totalDistanceM += d;
     // Drop off before picking up — that is the order at an elevator, and it keeps the peak honest.
-    for (const act of stop.actions) if (act.kind === "dropoff") load -= act.scu;
-    for (const act of stop.actions) if (act.kind === "pickup") load += act.scu;
+    for (const act of stop.actions) if (act.kind === "dropoff") load -= actScu(act);
+    for (const act of stop.actions) if (act.kind === "pickup") load += actScu(act);
     for (const act of stop.actions) carried.add(act.contractId);
     peakScu = Math.max(peakScu, load);
     legs.push({
@@ -438,6 +522,9 @@ function toPlan(ctx: Ctx, solved: Solved, contracts: readonly RouteContract[], o
     payout,
     auecPerHour: solved.minutes > 0 ? payout / (solved.minutes / 60) : 0,
     peakScu,
+    // Only the visits this trip actually flies count — a leg left for a later trip is not a reason
+    // to caveat this one's numbers.
+    unknownScu: solved.order.some((i) => hasUnknown(ctx.stops[i])),
     contractIds: done.map((c) => c.id),
     method: solved.method,
   };
@@ -481,7 +568,7 @@ export function planRun(
   const placesOf = new Map<string, Set<string>>();
   for (const s of stops) {
     for (const a of s.actions) {
-      if (a.kind === "pickup") scuOf.set(a.contractId, (scuOf.get(a.contractId) ?? 0) + a.scu);
+      if (a.kind === "pickup") scuOf.set(a.contractId, (scuOf.get(a.contractId) ?? 0) + actScu(a));
       if (!placesOf.has(a.contractId)) placesOf.set(a.contractId, new Set());
       placesOf.get(a.contractId)!.add(locOf(s));
     }
@@ -540,5 +627,6 @@ function summarise(trips: RoutePlan[], stranded: string[]): RunPlan {
     totalMinutes,
     payout,
     auecPerHour: totalMinutes > 0 ? payout / (totalMinutes / 60) : 0,
+    unknownScu: trips.some((t) => t.unknownScu),
   };
 }

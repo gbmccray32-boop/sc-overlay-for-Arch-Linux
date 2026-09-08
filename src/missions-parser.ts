@@ -68,6 +68,28 @@ export type MissionEvent =
   | { kind: "reward"; ts: string | null; amount: number }
   | { kind: "blueprintReceived"; ts: string | null; name: string; missionId: string | null }
   /**
+   * A "Journal Entry Added: <subject>" notification — the player's in-game Journal gained a page.
+   *
+   * 🔑 THIS IS THE ONLY LOG-SIDE SIGNAL THAT A DYNAMIC EVENT COUNTED A COMPLETION. Measured on
+   * 4.10 PTU (`Game Build(12473311) … (15 56 29).log`): completing "Orison Relief: Medium Supply
+   * Haul" emitted `Contract Complete` at 21:51:36.027 and then
+   * `"Journal Entry Added: Orison Relief: "` at 21:51:36.161 — **134 ms later, with an all-zeros
+   * MissionId**. The event's contribution NUMBER (Sub's 6,000 of 288,000) is nowhere in the log;
+   * reputation and event points are served by `sc.external.services.reputation.v1.
+   * ReputationService`, so only the FACT of progress is observable, never the amount.
+   *
+   * ⚠️ `subject` is NOT always an event. The other observed form is
+   * `"Journal Entry Added: Jurisdiction: Hurston Dynamics : "` — entering a jurisdiction, which
+   * does not follow a completion. Callers must match the subject against a known event name
+   * rather than assuming any journal entry is event progress; `jurisdiction` flags that form so
+   * a caller can drop it without re-parsing the string.
+   *
+   * ⚠️ **n = 1 for the event form.** One completion exists across all five 4.10 logs. The shape is
+   * right and matches the mechanic Sub described, but "fires on every event completion" is an
+   * inference from a single observation — do not harden anything against it without more.
+   */
+  | { kind: "journalEntry"; ts: string | null; subject: string; jurisdiction: boolean; missionId: string | null }
+  /**
    * A hauling contract's delivery objective, off the "New Objective: Deliver 0/N …" notification.
    *
    * 🔴 **This fires on objective ASSIGNMENT, not on track — and re-tracking never replays it.**
@@ -224,6 +246,66 @@ export type MissionEvent =
   /** The player pressed a freight-elevator kiosk. Unambiguously OUR action, unlike a platform
    *  moving, which is why it is worth having separately: it brackets a real load. */
   | { kind: "cargoKiosk"; ts: string | null; terminal: string }
+  /**
+   * 🔴 THE SAME METHOD ALSO WRITES A FAILURE, AND WE WERE READING IT AS A SUCCESS.
+   *
+   *   [Notice] <…::FillUnstowRequest> [FreightElevatorKioskUIProvider]
+   *     FreightElevatorKiosk_FreightElevator_Util_HangarLarge[5260145885719] - Processed bindings…
+   *   [Error]  <…::FillUnstowRequest> [FreightElevatorKioskUIProvider]
+   *     EntityId[608068483514] is not present. [Cargo][Inventory]
+   *
+   * `kioskTerminal` matched `([A-Za-z0-9_]+)\[` on both, so the error form produced a perfectly
+   * ordinary `cargoKiosk` whose terminal was the literal word **"EntityId"**. Measured across Sub's
+   * 480 backups: **241 real kiosk presses, 41 of these**, plus 4 with a `SoftLock_Terminal_…` name
+   * that ARE real (that is a genuine kiosk class, not a failure). In the 2026-08-22 session every
+   * single one of the 37 `FillUnstowRequest` lines is the error form — so 37 of 37 `cargoKiosk`
+   * events that session were fabricated, with a place-shaped token that names no place.
+   *
+   * ⚠️ WHAT IT IS NOT. It is tempting to read this as "the game just told us destroyed cargo is
+   * gone", and to drop a held commodity on the strength of it. Measured on the same session, all
+   * five phantom ids are PERSONAL INVENTORY, not cargo: `776854825844` is
+   * `Carryable_1H_CY_banu_favour_Wikelo`, `658416443192` is an item dragged to the ground,
+   * `651720988821` is an inventory container, and two appear nowhere else in the log at all.
+   * A bought commodity has no entity identity to compare against either — see `trade-journal.ts`.
+   * So this event is diagnostic vocabulary, and nothing downstream may treat it as cargo.
+   */
+  | { kind: "cargoUnstowMissing"; ts: string | null; entityId: string }
+  /**
+   * 🔴 WHERE THE PLAYER IS — the signal the router has been missing since it was written.
+   *
+   * `Player[IMC-SubliminaL] requested inventory for Location[Stanton3b_ArcCorp_Area045]`
+   *
+   * Until this was found, `PlanOptions.startAt` was documented as un-fillable: "no player-position
+   * signal has been found in the log, only mission-marker coordinates", and the player had to pick
+   * their location from a dropdown. Without it the optimiser has NO origin, and because travel is
+   * nearly free in the model (a 239 km hop costs ~0.02 min against ~25 s per box of handling) the
+   * order is decided by tie-breaks rather than distance. Sub, standing on Wala next to ArcCorp
+   * Mining Area 045, was told to fly to Baijini Point first; setting his location by hand fixed it.
+   *
+   * 🔑 It NAMES THE PLAYER, so unlike almost everything else in the log it cannot be a neighbour's
+   * event. And it fires whenever a local inventory is opened, which a hauler does at every stop —
+   * his trace tonight reads Area045 → Samson & Son's → Area048, which is exactly where he went.
+   *
+   * ⚠️ It is a LAST-SEEN, not a live position: nothing fires when you leave. That is the right
+   * semantics for a route origin anyway — a slightly stale origin beats the null the router has
+   * been working with — and the next stop's inventory refreshes it.
+   */
+  | { kind: "playerLocation"; ts: string | null; player: string; location: string }
+  /**
+   * The same "where am I" fact, but as the game's NUMERIC location id rather than a readable token.
+   *
+   * 🔑 THREE UNRELATED SURFACES EMIT IT, and they are the ones a player touches when they are NOT
+   * moving cargo — which is exactly the gap `playerLocation` leaves:
+   *   - the ASOP terminal  (`… at location [3490636373]`)
+   *   - moving an item to or from local storage (`… Location:3490636373`)
+   *   - the freight kiosk  (`… Location: 3490636373`)
+   *
+   * ⚠️ ON ITS OWN IT NAMES NOTHING. 3490636373 is Baijini Point only because the readable token
+   * `RR_ARC_LEO` was seen at the same place; nothing in the log states the pairing. So this event
+   * is useful only once something has bound it, and an unbound id must resolve to nothing rather
+   * than to a guess — see the binding in overlay-server.
+   */
+  | { kind: "playerLocationId"; ts: string | null; locationId: string }
   /** Entered/re-entered the persistent universe (login / server change) — the
    *  previous shard's tracked-mission selection no longer applies. */
   | { kind: "sessionStart"; ts: string | null }
@@ -356,6 +438,11 @@ const RE = {
   // captured too because it is the only log line that names where the player IS.
   routeRegion: /Projected Start Location is\s+(.+?)\s+for route to destination\s+Region([A-Za-z0-9]+)/,
   reward: /^Awarded\s+([\d,]+)\s+aUEC/,
+  // "Journal Entry Added: Orison Relief: " — a dynamic event counting a completion, and the only
+  // log-side evidence that it did. Also matches "Journal Entry Added: Jurisdiction: microTech : ",
+  // which is unrelated noise; the parser flags that form rather than filtering it here, so the
+  // rule stays visible at the call site instead of being buried in a regex.
+  journalEntry: /^Journal Entry Added:\s*(.+?):\s*$/,
   // "Deliver 0/20 SCU of Processed Food to Sunset Mesa" — matched against the DECORATION-STRIPPED
   // notification text, like everything else here. Three real payload forms share one shape, so
   // the middle is captured whole and classified afterwards (see haulUnit):
@@ -396,8 +483,20 @@ const RE = {
      The tag is bare at exterior pads (just "LoadingPlatformManager"), so the name class allows a
      plain word as well as the suffixed hangar/outpost forms. */
   platformState: /Loading Platform Manager \[([A-Za-z0-9_]+)\] Platform state changed to ([A-Za-z]+)/,
-  /* "[FreightElevatorKioskUIProvider] <Terminal>[123] - Processed bindings into transfer request" */
-  kioskTerminal: /\[FreightElevatorKioskUIProvider\]\s*([A-Za-z0-9_]+)\[/,
+  /* "[FreightElevatorKioskUIProvider] <Terminal>[123] - Processed bindings into transfer request"
+     🔴 The ` - Processed bindings` tail is REQUIRED, and it is what tells a press apart from the
+     error form the same method writes (`EntityId[…] is not present`). Without it the word
+     "EntityId" parses as a terminal name — see the `cargoUnstowMissing` note. */
+  kioskTerminal: /\[FreightElevatorKioskUIProvider\]\s*([A-Za-z0-9_]+)\[\d+\]\s*-\s*Processed bindings/,
+  /* The failure form of the same method. Deliberately anchored on the whole phrase rather than on
+     `EntityId\[` alone: a bare id match would also claim any future line that happens to name one. */
+  kioskMissingEntity: /\[FreightElevatorKioskUIProvider\]\s*EntityId\[(\d+)\]\s*is not present/,
+  /* "Player[IMC-SubliminaL] requested inventory for Location[Stanton3b_ArcCorp_Area045]" */
+  locationInventory: /Player\[([^\]]+)\] requested inventory for Location\[([^\]]+)\]/,
+  /* Two spellings of the same numeric id: ASOP's "at location [3490636373]" and the inventory
+     system's "204772220757:Location:3490636373". ⚠️ The second alternative deliberately requires
+     the `Location:` prefix — a bare number would match entity ids, which are everywhere. */
+  numericLocation: /at location \[(\d+)\]|:Location:(\d+)/,
   blueprint: /^Received Blueprint:\s*(.+?):\s*$/,
   missionIdField: new RegExp(`MissionId:\\s*\\[(${UUID})\\]`),
   // CreateMarker fields (note: contractDefinitionId has NO space before its bracket)
@@ -516,6 +615,19 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
       if (rw) {
         return { kind: "reward", ts: e.timestamp, amount: parseInt(rw[1].replace(/,/g, ""), 10) };
       }
+      // Last of the notification branches: its prefix is distinct from every one above, so the
+      // position is for readability rather than precedence.
+      const je = text.match(RE.journalEntry);
+      if (je) {
+        const subject = je[1].trim();
+        return {
+          kind: "journalEntry",
+          ts: e.timestamp,
+          subject,
+          jurisdiction: /^Jurisdiction:/i.test(subject),
+          missionId: m.match(RE.missionIdField)?.[1] ?? null,
+        };
+      }
       return null;
     }
 
@@ -630,9 +742,27 @@ export function parseMissionEvent(e: LogEvent): MissionEvent | null {
       return { kind: "cargoPlatform", ts: e.timestamp, direction, platform };
     }
 
+    /* Where the player is — see the `playerLocation` note. */
+    case "RequestLocationInventory": {
+      const p = m.match(RE.locationInventory);
+      return p ? { kind: "playerLocation", ts: e.timestamp, player: p[1], location: p[2] } : null;
+    }
+
     case "CEntityComponentFreightElevatorUIProvider::FillUnstowRequest": {
+      // Two forms share this method — a press and a failure. The failure is checked FIRST because
+      // it is the cheaper test and because reading it as a press is the bug this ordering fixes.
+      const miss = m.match(RE.kioskMissingEntity);
+      if (miss) return { kind: "cargoUnstowMissing", ts: e.timestamp, entityId: miss[1] };
       const t = m.match(RE.kioskTerminal);
       return t ? { kind: "cargoKiosk", ts: e.timestamp, terminal: t[1] } : null;
+    }
+
+    /* The numeric form of "where am I" — see `playerLocationId`. The ASOP terminal writes
+       "at location [N]"; inventory moves and the freight kiosk write "Location:N". */
+    case "OnRequestFetchVehicles":
+    case "Add Inventory Management Move": {
+      const n = m.match(RE.numericLocation);
+      return n ? { kind: "playerLocationId", ts: e.timestamp, locationId: n[1] ?? n[2] } : null;
     }
 
     case "CMissionLogEntry::UpdateActiveObjective": {

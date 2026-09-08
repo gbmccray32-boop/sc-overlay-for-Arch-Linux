@@ -20,7 +20,13 @@ import { categorize, type TabKey } from "./categories.js";
 import { parseLine } from "./parser.js";
 import { BlueprintDetailStore, type BlueprintDetail } from "./blueprint-detail.js";
 import { Phrasebook, type PhrasebookInfo } from "./localization.js";
+import { normRep, repFloorForRank } from "./rep-page.js";
 import type { SyncSource } from "./sync.js";
+import {
+  tiersCrossed, receiptForCrossing, candidateForTier, isPromptDue, shouldAsk,
+  RECEIPT_WINDOW_MS, PROMPT_DWELL_MS,
+  type ReceiptNote, type RewardPrompt, type PromptAnswerSource,
+} from "./event-rewards.js";
 
 // ---- dataset shape (matches tools/build-blueprint-data.sql output) ----
 export interface PoolEntry {
@@ -231,8 +237,19 @@ export interface GrindMission {
 export interface GrindTrack {
   faction: string;
   scope: string;
-  /** Current standing (same witnessed-only estimate the mission drawer's rep bar uses). */
+  /** Current standing. A LOWER BOUND, and the better of the two the app can prove — see the
+   *  comment on the floor in `giverTrack()`. Unlike the mission drawer's bar this one is also
+   *  floored by `reachedRank`, so it can never contradict the reward ladder beside it. */
   bar: RepBar | null;
+  /** True when `bar` rests on the observed RANK rather than on summed completions: the number is
+   *  that rank's floor, and everything derived from it ("2,400 to Associate", "12 runs") is an
+   *  UPPER bound on what is left, not a reading. The UI has to say so. */
+  repFloorFromRank: boolean;
+  /** The last re-baseline of this giver from the in-game REP page, if there has ever been one.
+   *  🔑 Null means NOT SCANNED. It must never be rendered as "scanned at rank 0" — several real
+   *  ladders have a legitimate rank 0 the player can be sitting on (Recco Battaglia's
+   *  "Prospective Associate"), so 0 and "never" are genuinely different answers here. */
+  repScan: { rank: number; at: number } | null;
   ranks: { rank: number; name: string; minRep: number; missions: GrindMission[] }[];
   /** Highest rank whose mission the giver has actually OFFERED you (from inferredRank — an
    *  observed fact, unlike the rep estimate). -1 when nothing's been seen. */
@@ -241,6 +258,209 @@ export interface GrindTrack {
   intro: GrindMission[];
   /** Every guaranteed item on the track, with the rank that gates it. Ships live here. */
   rewards: { name: string; amount: number; rank: number | null; mission: string; received: boolean; unsure: boolean }[];
+}
+
+// ---- dynamic events (Siege of Orison / Return of XenoThreat) ----
+
+/**
+ * One dynamic event, as declared in the hand-maintained `data/events.json`.
+ *
+ * 🔑 **This is DATA, not code, and deliberately changelist-independent.** An event's tiers,
+ * per-contract point values and rewards are discovered by PLAYING, not by extracting the p4k, so
+ * the file has to survive dataset regeneration — the same reasoning as the site's
+ * `blueprints-extra.json`, whose model this mirrors. Sub's ruling, 2026-08-19: *"Each event
+ * tracker is going to have to be custom made depending on the event."* Orison Relief's tiers are
+ * `15/25/43/57/80/100`; Return of XenoThreat's were `15/25/50/60/85/100`. **They differ, which is
+ * the whole argument for tiers being data.**
+ */
+export interface EventDef {
+  id: string;
+  /** ⚠️ The subject of the game's OWN notification, verbatim: `Journal Entry Added: <log>: `.
+   *  For Siege of Orison the game says **"Orison Relief"**; "Siege of Orison" is only the
+   *  marketing name. Matching on the wrong one records zero progress, silently. */
+  log: string;
+  /** Display name. Intentionally allowed to differ from `log`. */
+  label: string;
+  status?: "upcoming" | "current" | "past";
+  patch?: string | null;
+  /**
+   * When this event's LIVE run began, ISO-8601. Contributions dated before it do not count.
+   *
+   * 🔴 SUB'S CALL, 2026-08-27, and it is better than what was built for him: *"I don't understand
+   * why you can't just ignore any entries from the dates prior to when this patch was live."*
+   * A single date covers every case that makes an accumulated counter wrong — a PTU run before
+   * go-live, a character wipe, a season restart, an event simply running again — because all of
+   * them have a moment before which prior progress is meaningless. `at` was already on every
+   * contribution, so it needs no schema change and no migration.
+   *
+   * 🔑 **FILTERED AT READ TIME, NEVER BY DELETING.** The records stay on disk, `eventProgress()`
+   * just stops counting them. So a cutoff that turns out to be wrong is a one-line data
+   * correction rather than data somebody has lost, and it needs no confirm step — which is
+   * precisely the objection it answers.
+   *
+   * ⚠️ **It bounds the LIVE counter only** — see `sameEnv`/`liveStart` handling in
+   * `eventProgress`. This is the start of the event's run on the live shard; a test server's
+   * progress is its own accumulation and is NOT cut off by it, or a PTU player would watch the
+   * widget show zero for the very run they are doing. That constraint is `5f512f7`'s and it
+   * still holds.
+   *
+   * 🔑 Absent/null means "count everything", which is the historical behaviour and is safe for
+   * every event that predates this field. See `eventProgress` for why that direction was chosen.
+   */
+  liveStart?: string | null;
+  /** Where `liveStart` came from, in words. Same convention as `totalSource`/`tiersSource`: the
+   *  registry records its own evidence so a later correction can be reasoned about rather than
+   *  guessed at. */
+  liveStartSource?: string;
+  /** One-line note telling the player where to read their real % (their in-game Journal). */
+  note?: string;
+  /**
+   * Dataset-key prefixes that identify this event's missions (`["ORS_"]`, `["RoX_"]`).
+   *
+   * 🔴 **THIS, NOT `generators`, IS WHAT SEPARATES TWO EVENTS.** CIG ships ONE generator —
+   * `TheBackpocket` — for both Orison Relief (13 `ORS_` contracts) and Return of XenoThreat
+   * (5 `RoX_`). The shipped code matched on the generator alone, so **10 of the 13 Orison
+   * Relief contracts would have shown a player the XenoThreat reward ladder**, complete with a
+   * note telling them to check "Journal → Return of XenoThreat". Measured against the real 4.9
+   * dataset and real 4.10 markers, 2026-08-19.
+   */
+  contractPrefixes?: string[];
+  /** Kept for recognising an event mission whose key we never saw, and as documentation of the
+   *  shared generator. ⚠️ Never sufficient alone — see `contractPrefixes`. */
+  generators?: string[];
+  /** Event points needed for 100%, or null while unknown. */
+  total?: number | null;
+  /** Reward milestones as PERCENTAGES of `total`. */
+  tiers?: number[];
+  /** Dataset mission key -> event points that contract awards. Sparse on purpose: only
+   *  measured values belong here, because an interpolated one becomes a wrong percentage. */
+  contracts?: Record<string, number>;
+  /** Tier rewards, filled in as they are seen. `name` must equal the log's
+   *  `Received Blueprint: <name>` exactly, or the collected-tier bar can never light up. */
+  rewards?: { tier: number; name: string; item?: string | null }[];
+  /**
+   * 🔴 UNCONFIRMED guesses at tier rewards — for Siege of Orison, five names relayed from a
+   * viewer's chatbot answer. **They must NEVER render as a reward anywhere.** `EventProgress`
+   * deliberately does not carry them, so no widget can reach one by accident.
+   *
+   * Their one sanctioned use is `src/event-rewards.ts`'s prompt, where the candidate is the
+   * thing being ASKED ABOUT ("it looks like you received X — is that right?"). Answering is
+   * exactly the mechanism that promotes a candidate to a measurement, which is why the guess
+   * may appear inside the question and nowhere else.
+   */
+  rewardCandidates?: { tier: number; name: string; confirmed?: boolean }[];
+}
+
+/** One witnessed "this completion counted toward the event" observation. */
+export interface EventContribution {
+  /** Dataset mission key, when a marker resolved it. Null when only the title is known —
+   *  recorded anyway, because an unattributed contribution is still evidence the event fired. */
+  key: string | null;
+  title: string | null;
+  /** ISO-8601 from the log. */
+  at: string;
+  /** Points credited from `EventDef.contracts`, or null when that contract's value is not yet
+   *  measured. 🔑 Null is NOT zero — it is "we saw progress we cannot price", and the view
+   *  reports the two separately so an unpriced run never silently reads as no progress. */
+  points: number | null;
+  /**
+   * The log environment this contribution was earned in (`"PUB"`, `"PTU"`, …), taken from the
+   * header at record time. **Absent on anything recorded before 2026-08-27**, which is why every
+   * reader must go through `sameEnv()` rather than comparing this directly.
+   *
+   * 🔴 THIS IS THE FIELD THAT STOPS PTU PROGRESS INFLATING A LIVE COUNTER. The event registry is
+   * keyed by the event's journal NAME (`"Orison Relief"`) with no other dimension, so a PTU run
+   * and a live run of the same event were previously the same bucket and simply summed. Sub read
+   * 15% on live 4.10 that was earned entirely on 4.10 PTU (44,000 of 288,000, across 18
+   * contributions all dated 21–22 Aug).
+   *
+   * ⚠️ It is deliberately NOT a gate on recording. `5f512f7` removed that gate on purpose — an
+   * event runs on the PTU first and that is the whole reason to be there — so a PTU contribution
+   * is still recorded, still persisted, and still VISIBLE while the player is on the PTU. What
+   * changed is only which environment's contributions COUNT toward the number on screen.
+   */
+  env?: string | null;
+}
+
+/** The overlay-facing view of one event's track (the Event Tracker widget's tab). */
+export interface EventProgress {
+  id: string;
+  label: string;
+  log: string;
+  status: "upcoming" | "current" | "past";
+  total: number | null;
+  /** Points from contributions we could price. A LOWER BOUND — same honesty policy as the rep
+   *  bar, and for the same reason: the game never tells the client the number. */
+  points: number;
+  /** Percent of `total`, or null when `total` is unknown. */
+  pct: number | null;
+  /** Contributions seen whose contract value is not yet in events.json. If this is non-zero the
+   *  percentage is an UNDER-count and the UI must say so. */
+  unpriced: number;
+  /**
+   * How much of the event's board has a MEASURED point value — `contractsPriced` of
+   * `contractsKnown`.
+   *
+   * 🔑 This is the answer to "how many missions is a tier?", and the answer is that the app
+   * cannot say. Sub, 2026-08-22: *"since we don't know how much rep we're going to get per
+   * mission, this rep ladder is pretty broken, right?"* He is right, and the fix is not a better
+   * estimate — every point value in `events.json` comes from a human reading their in-game
+   * Journal before and after ONE contract, so interpolating the rest would be inventing the very
+   * precision he is objecting to. What the ladder can honestly do is state its own coverage.
+   *
+   * `unpriced` is a different number and they are not interchangeable: that one counts
+   * completions we WATCHED and could not price, and is silent about contracts nobody has run.
+   */
+  contractsPriced: number;
+  contractsKnown: number;
+  /** Contributions counted toward `points` — i.e. only those earned in the environment currently
+   *  being read. See `EventContribution.env`. */
+  contributions: EventContribution[];
+  /**
+   * How many stored contributions were NOT counted because they belong to another environment.
+   *
+   * 🔑 The UI needs this to explain a number that would otherwise drop without warning. A player
+   * who tracked an event on the PTU and then patches to live sees the counter go to zero, and
+   * "your points vanished with no explanation" is the same silent failure that made this bug hard
+   * to diagnose in the first place — arriving from the opposite direction. Say it instead.
+   */
+  otherEnv: number;
+  /**
+   * How many stored contributions were not counted because they predate `liveStart` — i.e. they
+   * were earned before this run of the event began.
+   *
+   * 🔑 Reported separately from `otherEnv` because they are different facts and want different
+   * words. "You earned this on a test server" and "you earned this before this event started"
+   * lead a player to different conclusions, and a single "N ignored" leaves them guessing.
+   */
+  beforeStart: number;
+  /** The cutoff in force, so the widget can name the date rather than assert an unexplained
+   *  number. Null when the registry declares none, which means nothing was excluded by date. */
+  liveStart: string | null;
+  tiers: {
+    pct: number;
+    points: number | null;
+    reached: boolean;
+    /** MEASURED rewards — seen in a real log, or corroborated site-side. Facts. */
+    rewards: { name: string; item: string | null; owned: boolean }[];
+    /**
+     * 🔴 UNCONFIRMED guesses at this tier's reward, from `events.json`'s `rewardCandidates`.
+     *
+     * A SEPARATE FIELD FROM `rewards`, AND IT MUST STAY SEPARATE. Sub's call, 2026-08-22:
+     * *"I know that we don't have concrete evidence, but I want to go with what we found on the
+     * internet. And then we allow people to tell us if we have it wrong."* So a candidate may now
+     * be SHOWN — it may still never be shown as a reward. Merging the two arrays anywhere (here,
+     * in the view, or in a render helper) is the one change that turns a rumour into a fact, and
+     * nothing downstream would report it.
+     *
+     * They carry no `item` and no `owned`: both would be claims about a name nobody has verified,
+     * and a green ✔ beside a guess is exactly the thing this separation exists to prevent.
+     */
+    candidates: { name: string }[];
+  }[];
+  /** True when the event declares no rewards yet — the widget shows "not yet known" rather
+   *  than an empty list that reads like "no rewards". */
+  rewardsUnknown: boolean;
 }
 
 export interface DatasetMission {
@@ -376,6 +596,17 @@ export interface EarningRates {
   /** Total aUEC earned this session from KNOWN-payout missions (null if none known). A total,
    *  not a rate — the idle scoreboard shows what the session was worth. */
   aUECTotal: number | null;
+  /** 🔴 True when any money figure this session came from the contract's LISTED payout rather than
+   *  a logged award. Since current patches stopped emitting "Awarded N aUEC" entirely, this is
+   *  true whenever there is a figure at all — so the UI must always be prepared to mark it. */
+  aUECEstimated: boolean;
+  /** True when any listed payout used above is itself MODELLED off the fitted curve rather than
+   *  read from the game files. Wrong about one time in four, so it earns a stronger caveat than
+   *  `aUECEstimated` alone. */
+  aUECModelled: boolean;
+  /** How many of this session's completions contributed a money figure. Shown so a total drawn
+   *  from 3 of 20 contracts cannot read as the whole session's earnings. */
+  aUECFrom: number;
   /** Total reputation earned this session. */
   repTotal: number;
   /** Completions counted in the current grind session (0 = nothing to rate yet). */
@@ -448,6 +679,27 @@ export interface TrackedView {
   /** The player's actual build changelist from the log (may differ from the dataset
    *  if their exact build isn't bundled — the UI flags that). */
   build: string | null;
+  /**
+   * The environment tag the LOG HEADER declared, uppercased — `"PUB"`, `"PTU"`,
+   * `"TECH-PREVIEW"`, `"EPTU"` — or null when no header has been seen this session.
+   *
+   * 🔴 **THE LOG HEADER IS THE ONLY TRUTH HERE. Never derive this from `patch`.** That string is
+   * the DATASET label: it currently reads `4.10.0-PTU.12479687` because the bundled 4.10 dataset
+   * was built from a PTU extraction, and it would keep saying PTU on a genuinely LIVE 4.10 build
+   * until someone builds a live dataset. Reading the environment off it would tell live players
+   * their progress is not counting.
+   */
+  logEnv: string | null;
+  /**
+   * Whether receipts from the log being read count toward the real collection.
+   *
+   * 🔑 **null reads as LIVE, deliberately.** The app can attach mid-session and never see a
+   * header, and refusing to track in that case would break the common install to protect the
+   * rare one. So this is true for `null` and `"PUB"`, false for everything else — it mirrors
+   * `isLiveEnv` exactly rather than re-deriving the rule, because two copies of a rule is how
+   * they drift.
+   */
+  envIsLive: boolean;
   contractKey: string | null;
   title: string | null;
   generator: string | null;
@@ -614,27 +866,13 @@ export interface EventTrack {
   tiers: { pct: number; items: { name: string; owned: boolean; source: BlueprintSource }[] }[];
 }
 
-// Return of XenoThreat reward ladder — mirrors the site's blueprints-extra.json.
-// Blueprint names are exactly as they appear in the log's "Received Blueprint" lines
-// so owned-status matches via the observed set. Rewards unlock at personal
-// contribution % (individual, not server-wide). Detection: the tracked mission's
-// generator is "TheBackpocket" or its contract starts with "RoX_".
-const XENOTHREAT_TIERS: { pct: number; items: string[] }[] = [
-  { pct: 15, items: ["Chiron Helmet Purgatory Camo", "Chiron Core Purgatory Camo", "Chiron Arms Purgatory Camo", "Chiron Legs Purgatory Camo", "Chiron Backpack Purgatory Camo", 'BR-2 "Purgatory Camo" Shotgun'] },
-  { pct: 25, items: ["Testudo Helmet Purgatory Camo", "Testudo Core Purgatory Camo", "Testudo Arms Purgatory Camo", "Testudo Legs Purgatory Camo", "Testudo Backpack Purgatory Camo", 'S71 "Purgatory Camo" Rifle'] },
-  { pct: 50, items: ["Monde Helmet Purgatory Camo", "Monde Core Purgatory Camo", "Monde Arms Purgatory Camo", "Monde Legs Purgatory Camo", 'Demeco "Purgatory Camo" LMG', "Warden Backpack Purgatory Camo"] },
-  { pct: 60, items: ["QuadraCell", "QuadraCell MT"] },
-  { pct: 85, items: ["FR-66", "FR-76"] },
-  { pct: 100, items: ["NDB-26 Repeater", "NDB-28 Repeater", "NDB-30 Repeater"] },
-];
-const XENOTHREAT_NOTE =
-  "Every XenoThreat mission you run adds to YOUR personal progress (not the server's). Check your in-game Journal → Return of XenoThreat for your current %.";
-
-/** A dynamic-event mission whose rewards come from the personal contribution ladder,
- *  not a blueprint pool (Return of XenoThreat). Keyed off the shared generator. */
-function isXenoThreatMission(contractKey: string | null, generator: string | null): boolean {
-  return generator === "TheBackpocket" || !!contractKey?.startsWith("RoX_");
-}
+// 🔴 The Return of XenoThreat ladder USED TO BE HARDCODED HERE, with a detector that returned
+// true for `generator === "TheBackpocket"`. That generator is shared: CIG uses it for BOTH
+// XenoThreat (5 `RoX_` contracts) and 4.10's Orison Relief (13 `ORS_`), so **10 of the 13 Orison
+// Relief contracts would have shown the XenoThreat reward ladder** and told the player to check
+// "Journal → Return of XenoThreat". Both ladders now live in the hand-maintained
+// `data/events.json` (see EventDef), matched on the CONTRACT-KEY PREFIX, which is the only thing
+// that actually separates two events sharing a generator.
 
 interface Persisted {
   observed: string[];
@@ -665,6 +903,9 @@ interface Persisted {
    *  repeats through and every leak was permanent (see accrueForCompletion). Absent in older
    *  state files, which is harmless: the next "Verify from logs" rebuilds both together. */
   repAccruedMissionIds?: string[];
+  /** giver -> the last REP-page scan. Purely additive: an older state file simply has none, and
+   *  the app behaves exactly as it did before scanning existed. See applyRepScan. */
+  repScanned?: Record<string, { scope: string; rank: number; at: number }>;
   /** normalized mission TITLE -> how many times it's been completed. The log never reports a
    *  mission's guaranteed physical rewards (ships, armour sets), but it DOES report the
    *  completion — so a completed count is the only honest "you actually received this" signal.
@@ -676,6 +917,13 @@ interface Persisted {
    *  The contract key is unambiguous; it's only known when a marker fired, so titles remain the
    *  fallback. */
   completedKeys?: Record<string, number>;
+  /** Dynamic-event `log` name -> the completions witnessed as counting toward it. Persisted for
+   *  the same reason repWitnessed is: each contribution is a one-time observation of something
+   *  the game never restates, so losing it loses the estimate permanently. Absent in older state
+   *  files, which reads correctly as "no event progress seen yet". */
+  eventContributions?: Record<string, EventContribution[]>;
+  rewardPrompts?: RewardPrompt[];
+  askedTiers?: Record<string, number[]>;
 }
 
 /** Stored completed-mission record (newest first, capped). Deduped by missionId+at. */
@@ -684,6 +932,52 @@ interface MissionHistoryEntry {
   title: string | null;
   aUEC: number | null;
   at: string;
+}
+
+/**
+ * Collapse the several log signals one completion emits into one history entry.
+ *
+ * Shared by the on-disk repair and expressed by the same rule the insert-side dedupe uses: two
+ * entries are the same completion when they are close in time AND agree on mission id — or, where
+ * one signal carries no id, on title. Never on the window alone: two DIFFERENT contracts can
+ * genuinely finish in the same millisecond, and merging those would lose a completion.
+ *
+ * 🔑 The SURVIVOR is the richer entry, not the earlier one. The `end` signals carry no title and
+ * the `contractComplete` does, so keeping whichever arrived first would strip half the history of
+ * its names.
+ */
+function dedupeHistory(rows: MissionHistoryEntry[]): MissionHistoryEntry[] {
+  const out: MissionHistoryEntry[] = [];
+  for (const r of [...rows].sort((a, b) => Date.parse(a.at) - Date.parse(b.at))) {
+    const t = Date.parse(r.at);
+    if (!Number.isFinite(t)) continue;
+    const hit = out.find((o) => {
+      const dt = Math.abs(Date.parse(o.at) - t);
+      if (!Number.isFinite(dt) || dt > COMPLETION_SIGNAL_MS) return false;
+      if (r.missionId && o.missionId) return o.missionId === r.missionId;
+      return !!r.title && o.title === r.title;
+    });
+    if (!hit) { out.push({ ...r }); continue; }
+    if (r.title && !hit.title) hit.title = r.title;
+    if (r.missionId && !hit.missionId) hit.missionId = r.missionId;
+    if (r.aUEC != null && hit.aUEC == null) hit.aUEC = r.aUEC;
+  }
+  return out.sort((a, b) => Date.parse(b.at) - Date.parse(a.at)); // newest first, as stored
+}
+
+/** One number for what a contract pays, from the dataset's `{min, max, currency}`.
+ *
+ *  ⚠️ `min` is often 0, which the dataset documents as "up to max" rather than a real floor — so a
+ *  midpoint of (0 + max) / 2 would halve every such payout. A positive min is a genuine range and
+ *  gets the midpoint; anything else falls back to `max`.
+ *
+ *  ⚠️ Currency is UEC or **MER (prison merits)**. MER is not money and must never be summed into
+ *  an aUEC total, so anything that is not UEC returns null. */
+function payoutMid(p?: { min: number | null; max: number; currency: string | null } | null): number | null {
+  if (!p || typeof p.max !== "number" || !(p.max > 0)) return null;
+  if (p.currency && p.currency.toUpperCase() !== "UEC") return null;
+  const min = typeof p.min === "number" && p.min > 0 ? p.min : null;
+  return min !== null && min < p.max ? Math.round((min + p.max) / 2) : p.max;
 }
 
 /** "Geist Armor Arms" matches an observed "Geist Armor Arms Whiteout" (variant suffix). */
@@ -920,6 +1214,13 @@ const COMPLETION_FRESH_MS = 90_000;
 /** A gap between completions longer than this starts a fresh "grind session" for the idle
  *  per-hour rates, so a break doesn't drag the extrapolated pace down. */
 const SESSION_GAP_MS = 20 * 60_000;
+/** How far apart two log signals may be and still describe the SAME completion.
+ *
+ *  The measured spread is 7ms (MissionEnded/EndMission at .795, the contractComplete notification
+ *  at .802), so this is enormously generous — deliberately, because the cost of being too tight is
+ *  a silently doubled scoreboard and the cost of being too loose is bounded by the id check that
+ *  guards it. Nothing merges unless the mission ids agree, or one signal carries no id. */
+const COMPLETION_SIGNAL_MS = 30_000;
 /** How many completed missions to retain for the idle recent-activity list. */
 const MISSION_HISTORY_MAX = 200; // keep enough for a full-hour rate even on a fast grind (recentMissions still shows only the top few)
 
@@ -1042,6 +1343,25 @@ export class MissionTracker extends EventEmitter {
     return this.logEnv === null || this.logEnv === "PUB";
   }
 
+  /**
+   * Does a stored contribution belong to the environment currently being read?
+   *
+   * 🔑 Both sides normalise `null`/absent to `"PUB"`, which follows the app-wide rule that an
+   * UNKNOWN environment reads as LIVE (see `logEnv`). Two consequences worth stating out loud,
+   * because they are the whole retroactive story:
+   *  - A contribution recorded before the `env` field existed counts as LIVE. That is
+   *    deliberate — the alternative silently deletes real live progress from every existing
+   *    player to repair the minority who used the PTU, and we cannot tell those apart after the
+   *    fact without guessing. The purge control is the honest repair for that data.
+   *  - Compare the STRING, not `isLiveEnv`. `PTU` and `EPTU` are different servers with separate
+   *    progress; collapsing them to "not live" would let one inflate the other, which is the bug
+   *    being fixed wearing a different hat.
+   */
+  private sameEnv(env: string | null | undefined): boolean {
+    const norm = (e: string | null | undefined): string => (e ?? "PUB").toUpperCase();
+    return norm(env) === norm(this.logEnv);
+  }
+
   /** Guaranteed ITEM rewards ticked by hand (manual-only — the log never reports item
    *  awards). Deliberately NOT part of `observed`/`overrides`, so these never count
    *  toward the blueprint total nor sync to the site. */
@@ -1056,11 +1376,65 @@ export class MissionTracker extends EventEmitter {
   /** Reputation scope ladders (thresholds + rank names), loaded once from the bundled
    *  data/rep-scopes.json. Patch-independent (ladders change rarely); powers the rep bar. */
   private repScopes: Record<string, RepScope> = {};
+  /** Dynamic-event definitions from the bundled data/events.json. See EventDef. */
+  private events: EventDef[] = [];
+  /** event `log` name -> the completions witnessed as counting toward it. Persisted: the
+   *  estimate is an accumulation of things we saw once and can never re-observe, exactly like
+   *  repWitnessed. */
+  private eventContributions = new Map<string, EventContribution[]>();
+  /** Persisted fields `loadState()` could not parse, held VERBATIM so `saveState()` writes them
+   *  back unchanged instead of replacing them with an empty default. See `loadState` — this is
+   *  what keeps a read failure from becoming permanent data loss. Normally empty. */
+  private unreadableState: Record<string, unknown> = {};
+  /** Tier-crossing questions awaiting an answer. See src/event-rewards.ts. */
+  private rewardPrompts: RewardPrompt[] = [];
+  /** Highest tier already asked about, per event id. Persisted, and it is what stops the app
+   *  re-asking about every tier a returning player cleared weeks ago — `tiersCrossed()` cannot
+   *  know that on its own, because a fresh session has no previous percentage to compare. */
+  private askedTiers = new Map<string, number[]>();
+  /** Per-process counter behind `reportEventReward()`'s ids. Two corrections to the same tier are
+   *  two separate claims, so they must not share an id — the second would be dropped as an
+   *  already-answered prompt and the player would never know their report went nowhere. */
+  private rewardReportSeq = 0;
+  /**
+   * Recent `Received Blueprint:` lines, for correlating a receipt with a tier crossing.
+   *
+   * 🔴 FILLED ABOVE THE `isLiveEnv` GATE, unlike `observed`. That gate exists because `observed`
+   * is what SiteSync pushes with `replace: true`, so a PTU receipt reaching it would overwrite a
+   * player's real collection. This buffer has no such path — it is in-memory, never persisted and
+   * never synced — and an event runs on the PTU FIRST, which is exactly when these blanks need
+   * filling. Gating it would have made the whole feature silently do nothing for Sub.
+   */
+  private recentReceipts: ReceiptNote[] = [];
+  /**
+   * Completions waiting to be claimed by the journal entry that follows them, OLDEST FIRST.
+   *
+   * 🔑 The journal line carries an ALL-ZEROS MissionId (measured: 4.10 PTU, 134 ms after the
+   * completion), so time proximity is the only join available — the same correlation the aUEC
+   * award already uses.
+   *
+   * 🔴 **A QUEUE, NOT A SINGLE SLOT — and real data is what proved it.** A single slot looked
+   * correct until this ran against Sub's live 4.10 log, which contains two contracts completing
+   * in the SAME MILLISECOND followed by two journal entries 115 ms apart:
+   *   23:05:01.981  Contract Complete: Orison Relief: Small Supply Haul   [1c862f01…]
+   *   23:05:01.981  Contract Complete: Orison Relief: Medium Supply Haul  [8ce13767…]
+   *   23:05:02.116  Journal Entry Added: Orison Relief
+   *   23:05:02.231  Journal Entry Added: Orison Relief
+   * The slot held only the second completion, so BOTH entries were credited to the Medium haul —
+   * 12,000 points from one 6,000 contract, with the Small haul's unknown value never recorded as
+   * unpriced. FIFO matching also settles the open question in the parser's doc comment: the
+   * journal fires **once per completion**, not once per batch (n is now 3, not 1).
+   */
+  private pendingEventCompletions: { key: string | null; title: string | null; missionId: string; atMs: number }[] = [];
   /** giver -> witnessed reputation on their primary org scope. `sum` accumulates the rep
    *  amount of each post-4.8 completion (a LOWER BOUND — pre-tracker history is gone).
    *  Live real-time completions add to it; verifyFromLogs rebuilds it authoritatively
    *  from every logbackup. See accrueRep / computeRepBar. */
   private repWitnessed = new Map<string, { scope: string; sum: number }>();
+  /** giver -> the last in-game REP page scan for them. See applyRepScan. Kept beside the total
+   *  rather than folded into it because a scanned RANK is a different kind of evidence from a
+   *  summed total, and both the bar and `giverTrack` need to know which one they are looking at. */
+  private repScanned = new Map<string, { scope: string; rank: number; at: number }>();
   /** missionIds already credited to repWitnessed — see accrueForCompletion. Persisted, because
    *  the over-count it prevents is itself persisted. */
   private repAccruedMissionIds = new Set<string>();
@@ -1077,6 +1451,20 @@ export class MissionTracker extends EventEmitter {
    *  with no blueprint reward still feed the rep bar. Same-org titles that differ only in
    *  amount (difficulty tiers) collapse to the MIN — a deliberate under-count. */
   private repTitleIndex = new Map<string, { giver: string; scope: string; amount: number } | null>();
+  /** Title -> what that contract pays, or `null` when its variants disagree.
+   *
+   *  🔴 THE GAME STOPPED LOGGING PAYOUTS, so this is the only way the session scoreboard can show
+   *  money at all. Measured on a real 15.5 MB session log (2026-08-21): `Awarded ` 0, `aUEC` 0,
+   *  `UEC` 0, against 59 `Contract Complete` and 67 `Contract Accepted` in the same file — the
+   *  control proves the search, and the award line is simply gone. What follows a completion now
+   *  is "You've Earned: 12 Rewards / Access Them at Your Primary Residence's Inventory", which is
+   *  ITEM loot and carries no currency.
+   *
+   *  Built exactly like `repTitleIndex` and for the same reason: a title can name several variants
+   *  (540 of 1,273 do), so where they disagree this stores `null` and the caller shows nothing
+   *  rather than picking one. Where they agree it keeps the SMALLEST figure — an earnings total
+   *  that overstates is worse than one that undersells. */
+  private payTitleIndex = new Map<string, { amount: number; modelled: boolean } | null>();
   private observed = new Set<string>();
   /** blueprint name -> earliest in-game unlock time (ISO-8601 UTC from the log). */
   private observedAt = new Map<string, string>();
@@ -1146,6 +1534,26 @@ export class MissionTracker extends EventEmitter {
 
   constructor(opts: MissionTrackerOptions) {
     super();
+    /**
+     * 🔴 A POSITIONAL ARGUMENT IS REFUSED, AND THIS GUARD IS NOT PARANOIA — it is here because
+     * `new MissionTracker(dir)` with a plain string cost a real player their reputation on
+     * 2026-08-26. A string has no `.stateDir`, so the fallback below resolves to
+     * `%APPDATA%/sc-blueprint-tracker` — the LIVE profile — and the caller, which believed it was
+     * working in a temp directory, loaded and rewrote it. It typechecks only from JavaScript, so
+     * `tsc` cannot catch it; every test in this repo runs through `tsx`, which is exactly where it
+     * is not caught.
+     *
+     * 🔑 The failure was silent in the worst way: it did not crash, it did not warn, and it
+     * produced a perfectly valid state file. Nothing distinguishes "wrote my scratch state" from
+     * "rewrote the player's" except the path, so the path is what gets checked.
+     */
+    if (typeof opts !== "object" || opts === null) {
+      throw new TypeError(
+        "MissionTracker takes an options object, not a path. " +
+        "A bare string silently resolves stateDir to the LIVE %APPDATA% profile — " +
+        "pass { dataDir, stateDir } explicitly.",
+      );
+    }
     this.dataDir = opts.dataDir;
     this.detail = new BlueprintDetailStore(opts.dataDir);
     this.phrasebook = new Phrasebook(opts.dataDir);
@@ -1156,6 +1564,7 @@ export class MissionTracker extends EventEmitter {
     this.statePath = join(this.stateDir, "collected.json");
     this.loadState();
     this.loadRepScopes();
+    this.loadEvents();
   }
 
   /** Load the reputation rank ladders once from the bundled dataset. Optional — the rep
@@ -1167,6 +1576,33 @@ export class MissionTracker extends EventEmitter {
     } catch {
       this.repScopes = {};
     }
+  }
+
+  /** Load the hand-maintained dynamic-event registry. Same treatment as rep-scopes: loaded by
+   *  FIXED name (changelist-independent — see EventDef) and entirely optional, so a bundle
+   *  without it simply has no events rather than failing to start.
+   *
+   *  🔑 Read from `dataDir`, which is the WRITABLE user data dir seeded from the bundle. That is
+   *  what lets a value be corrected during a live event without shipping a release — the whole
+   *  point of the file (Sub: *"we'll update it like live in real time"*). `reloadEvents()` is
+   *  exposed so a correction can be picked up without restarting the app. */
+  private loadEvents(): void {
+    try {
+      const p = join(this.dataDir, "events.json");
+      const d = JSON.parse(readFileSync(p, "utf8")) as { events?: EventDef[] };
+      // Drop anything without the two fields every lookup depends on, rather than carrying a
+      // half-declared event that silently matches nothing.
+      this.events = (d.events ?? []).filter((e) => e && typeof e.log === "string" && e.log.trim() && typeof e.id === "string");
+    } catch {
+      this.events = [];
+    }
+  }
+
+  /** Re-read `events.json` from disk. For the live-event workflow: a point value or reward is
+   *  measured mid-session, the file is edited, and the track re-prices without a restart. */
+  reloadEvents(): void {
+    this.loadEvents();
+    this.emit("change");
   }
 
   // ---- dataset / patch ----
@@ -1591,6 +2027,10 @@ export class MissionTracker extends EventEmitter {
       }
       case "blueprintReceived": {
         // A test-server receipt is not part of your live collection and must never sync.
+        // Correlation buffer FIRST, above the environment gate — see `recentReceipts`. A tier
+        // reward that arrives on the PTU is still evidence of what that tier gives, and the
+        // reason `observed` is gated does not apply to a buffer nothing syncs.
+        this.noteReceiptForEvent(ev.name, ev.ts);
         // Dropped here rather than filtered later: `observed` is the authoritative set
         // SiteSync pushes with replace:true, so anything that reaches it is already live.
         if (!this.isLiveEnv) break;
@@ -1625,6 +2065,63 @@ export class MissionTracker extends EventEmitter {
         }
         break;
       }
+      case "journalEntry": {
+        // A dynamic event counted a completion. See MissionEvent["journalEntry"] for the
+        // measurement this rests on and its n=1 caveat.
+        if (ev.jurisdiction) break;               // entering a jurisdiction — not event progress
+        /* 🔴 DELIBERATELY *NOT* GATED ON ENVIRONMENT — and it used to be, "same rule as
+           blueprints". That reasoning does not survive contact with what the two things are.
+
+           A blueprint receipt MUST be dropped on a test server because `observed` is the set
+           SiteSync pushes with `replace: true`: anything reaching it overwrites the player's
+           real collection on subliminal.gg. Event progress has no such path. `sync.ts` sends
+           `got`, `mission` and `patch` and nothing else; no outbound request anywhere in the
+           app carries a contribution. It is a local counter feeding a local widget.
+
+           So the gate bought no safety and cost the entire feature exactly when it is most
+           wanted: an event runs on the PTU FIRST, which is the whole reason to be there.
+           Sub, 2026-08-22, 24,000 points into Siege of Orison on 4.10 PTU with the widget
+           showing him nothing: "I need to be able to track these missions in the app."
+
+           ⚠️ The player is still told where they are — `envIsLive` rides in the view and the
+           PTU badge renders off it. Shown-and-labelled, not silently dropped. */
+        const def = this.eventDefFor(ev.subject);
+        if (!def) break;                          // an event we do not model; nothing to record
+        const atMs = ev.ts ? Date.parse(ev.ts) : NaN;
+        // 🔑 Correlate by TIME and CLAIM THE OLDEST pending completion. The journal line has an
+        // all-zeros MissionId, so proximity is the only join — and because two contracts can
+        // complete in the same millisecond and emit one journal entry each (measured on Sub's
+        // 4.10 log), each entry must consume a DIFFERENT completion. FIFO is the right order:
+        // the entries arrive in the order the completions did.
+        // Window is the same REWARD_WINDOW_MS the aUEC award uses; the measured gap is 134 ms.
+        const idx = Number.isFinite(atMs)
+          ? this.pendingEventCompletions.findIndex((c) => Math.abs(atMs - c.atMs) <= REWARD_WINDOW_MS)
+          : -1;
+        // A contribution with no completion behind it is still recorded — it IS evidence the
+        // event fired — but with a null key, so it counts as unpriced rather than being credited
+        // to whatever finished minutes ago. Crediting it would invent points.
+        const claimed = idx >= 0 ? this.pendingEventCompletions.splice(idx, 1)[0] : null;
+        const key = claimed?.key ?? null;
+        const points = key && def.contracts ? (def.contracts[key] ?? null) : null;
+        const at = ev.ts ?? new Date().toISOString();
+        const list = this.eventContributions.get(def.log) ?? [];
+        // Dedupe on the log's own timestamp, which is stable across a re-seeded replay. Two
+        // genuine entries 115 ms apart have different stamps, so this cannot collapse them.
+        if (!list.some((c) => c.at === at)) {
+          // Read the percentage BEFORE the contribution lands, so the crossing is a real
+          // transition rather than a comparison against a number that already includes it.
+          const before = this.eventProgress(def.id)?.pct ?? null;
+          // Stamp the environment we are reading. NOT a gate — the contribution is recorded on
+          // any server; `sameEnv()` decides later whether it counts toward the number shown.
+          list.push({ key, title: claimed?.title ?? null, at, points, env: this.logEnv });
+          this.eventContributions.set(def.log, list);
+          this.noteTierCrossings(def, before, Number.isFinite(atMs) ? atMs : Date.now(), at);
+          this.saveState();
+          this.emit("change");
+        }
+        break;
+      }
+
       case "activeObjective":
         // Reserved for finer tracked-mission detection; markers already cover it.
         break;
@@ -1670,7 +2167,27 @@ export class MissionTracker extends EventEmitter {
     // card, and a completion whose card was suppressed still produced a receipt that has to
     // be fenced off. Keyed by missionId so the two completion signals (contractComplete and
     // MissionEnded) can't record the same mission twice with slightly different times.
-    if (!this.completedAtByMission.has(missionId)) this.completedAtByMission.set(missionId, completedAtMs);
+    // 🔑 Queue what just finished so a "Journal Entry Added: <event>" arriving in the next second
+    // can claim it. Recorded for EVERY completion (carded or not, real-time or replayed) because
+    // event progress is not gated on the card's freshness rule — a seeded log replay must credit
+    // the same contributions a live session would.
+    // ⚠️ Guarded on the SAME condition as completedAtByMission above: beginCompletion runs twice
+    // per mission (contractComplete AND MissionEnded both call it), so an unguarded push would
+    // queue every completion twice and let one journal entry claim a phantom.
+    if (!this.completedAtByMission.has(missionId)) {
+      this.completedAtByMission.set(missionId, completedAtMs);
+      const info = this.missions.get(missionId);
+      this.pendingEventCompletions.push({
+        key: info?.contractKey ?? null,
+        title: title ?? info?.title ?? null,
+        missionId,
+        atMs: completedAtMs,
+      });
+      // Bounded: only entries inside the correlation window can ever be claimed, so anything
+      // older is dead weight. Trimmed here rather than on read so a long session cannot grow it.
+      const floor = completedAtMs - REWARD_WINDOW_MS;
+      this.pendingEventCompletions = this.pendingEventCompletions.filter((c) => c.atMs >= floor);
+    }
     const info = this.missions.get(missionId);
     const aUEC =
       this.lastReward && Math.abs(this.lastReward.atMs - completedAtMs) <= REWARD_WINDOW_MS
@@ -1846,7 +2363,33 @@ export class MissionTracker extends EventEmitter {
     const parsed = Date.parse(ts);
     if (!Number.isFinite(parsed)) return;
     const at = new Date(parsed).toISOString();
-    const dupe = this.missionHistory.find((m) => m.at === at && (m.missionId ?? null) === (missionId ?? null));
+    // 🔴 ONE COMPLETION, SEVERAL LOG SIGNALS, MILLISECONDS APART — and an exact-timestamp dedupe
+    // cannot see that, so every contract was recorded TWICE.
+    //
+    // Measured on a real session log (2026-08-21). Completing Combat Gauntlet Scenario #5 emitted:
+    //   20:29:55.795  <MissionEnded> mission_state MISSION_STATE_COMPLETED   missionId 8ddc8dfb…
+    //   20:29:55.795  <EndMission>   CompletionType[Complete]                missionId 8ddc8dfb…
+    //   20:29:55.802  <SHUDEvent_OnNotification> "Contract Complete: …"      missionId 8ddc8dfb…
+    // Same mission, same second, SEVEN MILLISECONDS apart — so `m.at === at` matched nothing and
+    // the history grew two entries. `recentMissions` showed the pairs plainly once looked at
+    // (…55.802 beside …55.795), and it inflated the session scoreboard's contract count and
+    // reputation by ~2x for as long as both signals have been parsed.
+    //
+    // 🔑 The rep-crediting path already deduped by missionId and was therefore correct; only this
+    // history did not. The file's own comment further down even records that "the log holds THREE
+    // completion signals per mission" — the knowledge was here, this dedupe just didn't use it.
+    //
+    // ⚠️ Match on the ID, never on the window alone: two DIFFERENT contracts can genuinely
+    // complete in the same millisecond (the event-track work measured exactly that and had to
+    // stop a single-slot correlation from crediting both to one). So a shared window only merges
+    // when the ids agree — or when one signal carries no id at all, where the title is all there
+    // is to go on.
+    const dupe = this.missionHistory.find((m) => {
+      const dt = Math.abs(Date.parse(m.at) - parsed);
+      if (!Number.isFinite(dt) || dt > COMPLETION_SIGNAL_MS) return false;
+      if (missionId && m.missionId) return m.missionId === missionId;
+      return !!title && m.title === title;
+    });
     if (dupe) {
       // A second source (contractComplete vs reward correlation) may enrich a partial.
       if (title && !dupe.title) dupe.title = title;
@@ -2366,6 +2909,12 @@ export class MissionTracker extends EventEmitter {
     // reintroduce the same fault.
     this.repWitnessed.clear();
     this.repAccruedMissionIds.clear();
+    // 🔑 The SCANS go too, and for the same reason the two above do. "Verify from logs" rebuilds
+    // standing authoritatively from every backup on disk; a surviving scan would keep claiming
+    // authority over that rebuild (giverTrack prefers it to `inferredRank`) while describing a
+    // reading the rebuild has just superseded. A rebuild that cannot clear every source it
+    // outranks is not authoritative. Re-open the rep page and it is back in one tick.
+    this.repScanned.clear();
     for (const c of completions) {
       if (c.inWindow) {
         this.accrueForCompletion(c.missionId, c.title, c.missionId ? missionKeys.get(c.missionId) : null);
@@ -2635,8 +3184,32 @@ export class MissionTracker extends EventEmitter {
    *  same-org difficulty tiers collapse to the MIN amount (conservative under-count). */
   private buildRepTitleIndex(): void {
     this.repTitleIndex.clear();
+    this.payTitleIndex.clear();
     if (!this.dataset) return;
     for (const m of Object.values(this.dataset.missions)) {
+      const k0 = m.title ? normScreenTitle(m.title) : "";
+      // Payout index. Built beside rep because it is the same walk and the same ambiguity rule;
+      // note it does NOT require a giver, since event contracts pay money and no reputation.
+      if (k0) {
+        const amt = payoutMid(m.payout);
+        if (amt !== null) {
+          const entry = { amount: amt, modelled: m.payoutCalculated === true };
+          if (!this.payTitleIndex.has(k0)) this.payTitleIndex.set(k0, entry);
+          else {
+            const cur = this.payTitleIndex.get(k0);
+            if (cur != null) {
+              // 🔑 Keep the smaller figure, and let "modelled" be sticky: if ANY variant behind
+              // this title is a modelled guess, the answer is a guess. Understating and
+              // over-marking are both the safe direction for a number the player reads as income.
+              if (entry.amount < cur.amount) cur.amount = entry.amount;
+              if (entry.modelled) cur.modelled = true;
+            }
+          }
+        } else if (this.payTitleIndex.has(k0)) {
+          // One variant pays and another does not: that is a disagreement, not a zero.
+          this.payTitleIndex.set(k0, null);
+        }
+      }
       if (!m.title || !m.giver) continue;
       const pr = this.primaryRep(m);
       if (!pr) continue;
@@ -2698,6 +3271,165 @@ export class MissionTracker extends EventEmitter {
     return true;
   }
 
+  /** Which rep scopes each giver's missions actually award, straight off the loaded dataset.
+   *
+   *  🔑 This is the third and strongest of the REP page's three joins, and the only one that can
+   *  separate the ladders that are character-identical: `Courier` and `Courier_TransportGuild`,
+   *  `Security` and `Security_MercenaryGuild`, and the four `Mercenary` scopes all have the same
+   *  rank names in the same order, so a page showing one of them is decidable only by which
+   *  faction it belongs to. Scopes with no ladder in `rep-scopes.json` (`Affinity`,
+   *  `NPC_Reliability`) are dropped — they can never be a section header, so carrying them would
+   *  only widen the candidate set. */
+  /** The loaded rank ladders, for the REP-page reader. Exposed rather than re-read from disk so
+   *  a scan can never be judged against a different dataset from the one the bars beside it are
+   *  drawn from. */
+  repScopesForScan(): Record<string, RepScope> { return this.repScopes; }
+
+  /** 🔴 KEYED BY `normRep` GROUP, NOT BY THE RAW DATASET SPELLING — and that is a bug fix, not
+   *  tidiness. The reader takes the faction heading and keeps a giver only when EXACTLY ONE key
+   *  normalises to it; the 4.10 dataset carries `Citizens for Prosperity` AND
+   *  `Citizens For Prosperity`, so that heading matched two keys, resolved to none, and the
+   *  faction refused `no-giver` on every scan forever. Measured on 12519617: 65 raw spellings,
+   *  64 groups, exactly one collision — and `normRep` produces the SAME 64 groups as the `norm()`
+   *  that `giverTrack` already matches on, so merging here can never fuse two tracks the rest of
+   *  the app keeps apart.
+   *
+   *  🔑 The emitted key is the FIRST dataset spelling in the group, which is the same rule
+   *  `giverTrack` uses for its `canonical` — so the giver a scan WRITES under is the giver the
+   *  track READS back, which is the whole point of resolving a giver at all. */
+  giverScopes(): Record<string, string[]> {
+    const out = new Map<string, { giver: string; scopes: Set<string> }>();
+    for (const m of Object.values(this.dataset?.missions ?? {})) {
+      if (!m.giver) continue;
+      const key = normRep(m.giver);
+      let e = out.get(key);
+      if (!e) out.set(key, (e = { giver: m.giver, scopes: new Set<string>() }));
+      for (const r of m.reputationGained ?? []) if (r.scope && this.repScopes[r.scope]) e.scopes.add(r.scope);
+    }
+    return Object.fromEntries([...out.values()].map((e) => [e.giver, [...e.scopes]]));
+  }
+
+  /** The standing NAME a scanned rank index means on `scope`'s ladder — "Prestige 1", not "3".
+   *
+   *  🔑 The name comes out of `repLadderPosition`, the same function the mission drawer and the
+   *  standing bar render from, rather than indexing the ladder here. A scan that named the rank
+   *  its own way would be a second implementation of "which rank is this number", and the first
+   *  time the two rounded differently it would be reported as a bug — the widget saying one rank
+   *  while the bar two inches above it says another. `test:repscan` pins that they agree for
+   *  every rank of every scope. */
+  repStandingAtRank(scope: string, rank: number): string | null {
+    const s = this.repScopes[scope];
+    const floor = s ? repFloorForRank(s, rank) : null;
+    if (!s || floor === null) return null;
+    return repLadderPosition(s, floor)?.standing ?? null;
+  }
+
+  /** True when the app is watching a LIVE (PUB) game log. The REP scan is gated on this — see
+   *  the route — and it reads the same getter the blueprint receipt and the event journal entry
+   *  do, so the three can never disagree about what environment the player is in. */
+  get envIsLiveForScan(): boolean { return this.isLiveEnv; }
+
+  /**
+   * Re-baseline one giver's standing from a scan of the in-game REP page.
+   *
+   * 🔴 THE SCAN WINS. Sub's decision, made explicitly and not to be relitigated: a scan
+   * overwrites and becomes the new floor. It does not ratchet and it does not ask. The point is
+   * that it SELF-HEALS — the app's witnessed total is built from completions it happened to see,
+   * so it drifts low whenever the app was closed and can drift high if anything ever
+   * double-counts. The page is ground truth for the rank, so the page decides.
+   *
+   * 🔑 What the page states is a RANK, which is a BAND, not a number — rank 2 of the guild
+   * ladder means "somewhere in [1, 3000)". The card's progress bar narrows that: `progress` is
+   * how full it is, so the value taken is `floor + progress * (ceiling - floor)`.
+   *
+   * 🔴 THAT INTERPOLATION RESTS ON THE BAR BEING LINEAR ACROSS THE BAND, WHICH IS UNVERIFIED —
+   * and it is used anyway, because the alternative is worse in a way that is easy to miss. The
+   * estimate is inside the band BY CONSTRUCTION (progress is 0..1), so it can never land on a
+   * different rank however wrong the linearity assumption turns out to be: the error is bounded
+   * by one rank's width. Taking the floor instead is not the cautious choice — it is
+   * *guaranteed* to be wrong by up to a full band, every time, always in the same direction. A
+   * bounded estimate beats a certain understatement.
+   *   · Pixel resolution is not the limit: the bar measures ~170px on a 3440-wide frame, so one
+   *     pixel is 0.6% — about 14 rep across Battaglia's widest early band. Negligible beside the
+   *     linearity question.
+   *   · The top rank has no ceiling, so there is nothing to interpolate into and it takes the
+   *     floor. Same when the bar could not be measured.
+   * ⚠️ It is an ESTIMATE and the UI has to say so — see `estimated` in the result and
+   * `repFloorFromRank` on the track. 🔲 It is verifiable and nobody has done it yet: run one
+   * mission whose `reputationGained` we already know, scan before and after, and check the bar
+   * moved by the predicted fraction. That is the measurement that would turn this from an
+   * assumption into a fact, or replace it.
+   *
+   * The result is always taken — the scan wins outright, in both directions. That is the whole
+   * feature: a stored total that says rank 4 when the page says rank 2 is wrong, and a total of
+   * zero when the page says rank 2 is wrong the other way.
+   *
+   * ⚠️ `repAccruedMissionIds` is deliberately NOT cleared. It is the exactly-once guard for
+   * completions, not a record of the total; clearing it would let every completion still in the
+   * log re-credit itself on the next seed and walk the freshly-corrected number straight back up.
+   *
+   * Returns what it did, so the caller can tell the player rather than silently adjusting a
+   * number they were looking at.
+   */
+  applyRepScan(giver: string, scope: string, rank: number, progress?: number | null): {
+    applied: boolean;
+    giver: string;
+    scope: string;
+    rank: number;
+    /** The rank's NAME — "Prestige 1". Sub asked for this outright: a scan that reports only
+     *  "X rep to Y rep" makes the player do the ladder lookup the app has already done. Null only
+     *  when the scope has no ladder, which cannot happen on a scan that got this far. */
+    standing: string | null;
+    /** The rank's band, for the UI to explain the result with. */
+    floor: number;
+    ceiling: number | null;
+    before: number;
+    after: number;
+    /** True when `after` came from interpolating the progress bar across the band rather than
+     *  being the band's floor. The UI must present an estimated figure as one. */
+    estimated: boolean;
+    outcome: "raised" | "lowered" | "unchanged";
+  } | null {
+    const ladder = [...(this.repScopes[scope]?.ranks ?? [])].sort((a, b) => a.minRep - b.minRep);
+    if (!ladder.length || rank < 0 || rank >= ladder.length) return null;
+    // A negative floor is the game's way of writing "locked" (Not Eligible ships at -1000, and
+    // -320000 on Emergency). It is not a debt, and letting one through would push a witnessed
+    // total below zero and off the bottom of every bar.
+    const floor = Math.max(0, ladder[rank].minRep);
+    const ceiling = rank + 1 < ladder.length ? Math.max(0, ladder[rank + 1].minRep) : null;
+    const before = this.repWitnessed.get(giver)?.sum ?? 0;
+    const usable = typeof progress === "number" && Number.isFinite(progress) && ceiling !== null
+      && ceiling > floor;
+    // Clamped rather than trusted: a bar measured at 1.02 through anti-aliasing must not push the
+    // value into the next rank, which is the one thing this is not allowed to do.
+    const p = usable ? Math.min(1, Math.max(0, progress as number)) : 0;
+    // 🔴 CAPPED ONE BELOW THE CEILING, and this is not a rounding nicety — it is the whole safety
+    // property. A bar measured at 100% (which happens on every rank the player has completed, and
+    // on a band as narrow as Applicant -> Probationary, which spans 0 -> 1) interpolates to
+    // EXACTLY the next rank's floor, and a value sitting on a floor reads back as that next rank.
+    // So the "an estimate can never change the rank" claim was false at precisely the reading it
+    // is most likely to meet. Its own test caught it.
+    const after = usable
+      ? Math.min(Math.round(floor + p * ((ceiling as number) - floor)), (ceiling as number) - 1)
+      : floor;
+    this.repWitnessed.set(giver, { scope, sum: after });
+    // Remembered so the bar can say where its floor came from, and so giverTrack can prefer this
+    // over `inferredRank` — which is an INFERENCE from what work a giver offers, while this is
+    // the giver's own page read directly. When those two disagree the page is right.
+    this.repScanned.set(giver, { scope, rank, at: Date.now() });
+    this.saveState();
+    return {
+      applied: true, giver, scope, rank, floor, ceiling, before, after,
+      // 🔑 Named from the value that was just STORED, not from the rank index — so the standing a
+      // scan reports is by construction the standing every other consumer of that number will
+      // render. That is also a live check on the ceiling-1 cap above: without it a 100% bar
+      // stores exactly the next rank's floor and this name would disagree with `rank`.
+      standing: repLadderPosition(this.repScopes[scope], after)?.standing ?? null,
+      estimated: usable,
+      outcome: after > before ? "raised" : after < before ? "lowered" : "unchanged",
+    };
+  }
+
   /** Exactly-once rep accrual for one completed mission.
    *
    *  🔑 One MISSION can raise three completion signals (see beginCompletion), so "has this
@@ -2749,8 +3481,51 @@ export class MissionTracker extends EventEmitter {
       const byKey = ck ? this.primaryRep(this.dataset?.missions[ck])?.amount : undefined;
       return byKey ?? (m.title ? this.repTitleIndex.get(normScreenTitle(m.title))?.amount : 0) ?? 0;
     };
+    /**
+     * 🔴 WHAT A COMPLETED CONTRACT WAS WORTH, now that the game no longer says.
+     *
+     * `m.aUEC` is the live "Awarded N aUEC" line, and current patches do not emit it — measured on
+     * a real 15.5 MB session log: zero occurrences of `Awarded `/`aUEC`/`UEC` against 59
+     * `Contract Complete` in the same file. So this figure was null for every completion and the
+     * scoreboard showed "—" forever, which is what Sub reported.
+     *
+     * The fallback is the contract's own dataset payout, resolved the same way `repOf` resolves
+     * reputation: by contract key when the completion has one, else by title through an index that
+     * refuses to answer for titles whose variants disagree.
+     *
+     * 🔑 It returns the SOURCE alongside the number, because the two are not interchangeable. A
+     * logged award is what the game paid you; a dataset payout is what the contract is listed as
+     * paying, and roughly two thirds of the ones a player meets are MODELLED off a fitted curve
+     * that is wrong about one time in four. The caller marks the total accordingly — an estimate
+     * presented as a measurement is exactly the false precision this widget exists to avoid.
+     */
+    const payOf = (m: MissionHistoryEntry): { amount: number; modelled: boolean } | null => {
+      if (m.aUEC != null) return { amount: m.aUEC, modelled: false }; // the game said so
+      const ck = m.missionId ? this.missions.get(m.missionId)?.contractKey : undefined;
+      const byKey = ck ? this.dataset?.missions[contractKeyOf(ck)] : undefined;
+      if (byKey) {
+        const amt = payoutMid(byKey.payout);
+        if (amt !== null) return { amount: amt, modelled: byKey.payoutCalculated === true };
+        return null; // we know exactly which contract this was, and it lists no payout
+      }
+      const e = m.title ? this.payTitleIndex.get(normScreenTitle(m.title)) : undefined;
+      return e ?? null; // undefined = unknown title, null = its variants disagree; both mean "no"
+    };
     const rows = this.missionHistory
-      .map((m) => ({ atMs: Date.parse(m.at), aUEC: m.aUEC, rep: repOf(m) }))
+      .map((m) => {
+        const pay = payOf(m);
+        return {
+          atMs: Date.parse(m.at),
+          aUEC: pay ? pay.amount : null,
+          /** True when this row's figure is the contract's listed payout rather than a logged
+           *  award. Today that is every row that has a figure at all. */
+          estimated: pay ? m.aUEC == null : false,
+          /** True when the listed payout is itself a modelled guess rather than read from the
+           *  game files — a strictly weaker claim again, and the one worth warning about. */
+          modelled: pay ? pay.modelled : false,
+          rep: repOf(m),
+        };
+      })
       .filter((r) => Number.isFinite(r.atMs))
       .sort((a, b) => b.atMs - a.atMs); // newest first
     // Actual last rolling 60 minutes.
@@ -2759,7 +3534,7 @@ export class MissionTracker extends EventEmitter {
     const aUECknown = within.filter((r) => r.aUEC != null);
     const aUECLastHr = aUECknown.length ? aUECknown.reduce((s, r) => s + (r.aUEC ?? 0), 0) : null;
     // Current grind session = the most-recent contiguous run (break on a > SESSION_GAP_MS gap).
-    const session: { atMs: number; aUEC: number | null; rep: number }[] = [];
+    const session: { atMs: number; aUEC: number | null; estimated: boolean; modelled: boolean; rep: number }[] = [];
     for (const r of rows) {
       if (session.length && session[session.length - 1].atMs - r.atMs > SESSION_GAP_MS) break;
       session.push(r);
@@ -2785,12 +3560,27 @@ export class MissionTracker extends EventEmitter {
       ? Math.round(sessionKnown.reduce((s, r) => s + (r.aUEC ?? 0), 0))
       : null;
     const repTotal = Math.round(session.reduce((s, r) => s + r.rep, 0));
+    // 🔴 PROVENANCE TRAVELS WITH THE MONEY. `aUECEstimated` is true when any figure in the session
+    // came from the contract's listed payout rather than a logged award, and `aUECModelled` when
+    // any of those listed payouts is itself a fitted guess. The UI needs both: the first decides
+    // whether to write "~", the second decides how strongly to caveat it.
+    // 🔑 Counted over the SESSION rows, the same set `aUECTotal` is summed from — deriving it from
+    // a different window would let the caveat disagree with the number it is captioning.
+    const moneyRows = session.filter((r) => r.aUEC != null);
+    const aUECEstimated = moneyRows.some((r) => r.estimated);
+    const aUECModelled = moneyRows.some((r) => r.modelled);
     return {
       repLastHr: Math.round(repLastHr),
       repPace,
       aUECLastHr: aUECLastHr != null ? Math.round(aUECLastHr) : null,
       aUECPace,
       aUECTotal,
+      aUECEstimated,
+      aUECModelled,
+      /** How many completions in this session contributed a money figure at all. The rest either
+       *  list no payout or belong to a title whose variants disagree, and a total that silently
+       *  covers 3 of 20 contracts would read as covering all 20. */
+      aUECFrom: moneyRows.length,
       repTotal,
       missions: rows.filter((r) => now - r.atMs <= SHOW_MS).length,
     };
@@ -2867,6 +3657,362 @@ export class MissionTracker extends EventEmitter {
     }));
   }
 
+  /**
+   * The dynamic event a mission belongs to, or null.
+   *
+   * 🔴 **PREFIX FIRST, AND A GENERATOR MATCH NEVER DECIDES BETWEEN TWO EVENTS.** `TheBackpocket`
+   * is shared by Orison Relief and Return of XenoThreat, so it can only ever answer "this is
+   * some event mission" — never which. When the key is known the prefix decides outright; when
+   * it is not, a generator match is accepted ONLY if exactly one declared event claims it, and
+   * otherwise we decline rather than guess. Declining costs a ladder; guessing shows the wrong
+   * event's rewards, which is what the old code did.
+   */
+  eventForMission(contractKey: string | null, generator: string | null): EventDef | null {
+    if (contractKey) {
+      const byPrefix = this.events.find((e) => (e.contractPrefixes ?? []).some((p) => contractKey.startsWith(p)));
+      if (byPrefix) return byPrefix;
+    }
+    if (generator) {
+      const claiming = this.events.filter((e) => (e.generators ?? []).includes(generator));
+      if (claiming.length === 1) return claiming[0];
+    }
+    return null;
+  }
+
+  /** The event a journal-entry subject belongs to, or null. Exact match on the game's own
+   *  string, case- and whitespace-insensitive only — deliberately NOT fuzzy, because a loose
+   *  match here credits one event's progress to another. */
+  private eventDefFor(subject: string): EventDef | null {
+    const want = subject.trim().toLowerCase();
+    return this.events.find((e) => e.log.trim().toLowerCase() === want) ?? null;
+  }
+
+  /** Every declared event, newest-relevant first (current → upcoming → past). */
+  allEventProgress(): EventProgress[] {
+    const rank = { current: 0, upcoming: 1, past: 2 } as const;
+    return this.events
+      .map((e) => this.eventProgress(e.id))
+      .filter((t): t is EventProgress => !!t)
+      .sort((a, b) => rank[a.status] - rank[b.status] || a.label.localeCompare(b.label));
+  }
+
+  /**
+   * One event's track for the widget.
+   *
+   * 🔑 **The percentage is a LOWER BOUND, and the view says so in two separate ways.** The game
+   * never tells the client the number (event points ride the same server-side
+   * `ReputationService` as reputation), so this accumulates only what it witnessed — exactly the
+   * policy the rep bar already uses. `unpriced` counts contributions whose contract value is not
+   * yet in `events.json`; while it is non-zero the percentage is definitely an under-count and
+   * the widget must not present it as a reading.
+   */
+  /**
+   * How many of this event's contracts have a measured point value, out of how many the loaded
+   * dataset knows about.
+   *
+   * 🔑 THE DENOMINATOR COMES FROM THE DATASET, NOT FROM `events.json`. Counting the keys in
+   * `def.contracts` both ways would give 4 of 4 — a perfect score that means "we have measured
+   * everything we have measured". The dataset carries all 13 `ORS_` contracts (verified by exact
+   * key match against real 4.10 markers), so it is the only honest denominator available.
+   *
+   * ⚠️ It is still a floor on the real board: a contract CIG ships that our dataset has not seen
+   * counts in neither column. That is the correct direction to be wrong — it can only make our
+   * coverage look worse than it is, never better.
+   */
+  private eventContractCoverage(def: EventDef): { contractsPriced: number; contractsKnown: number } {
+    const prefixes = def.contractPrefixes ?? [];
+    if (!prefixes.length || !this.dataset) return { contractsPriced: 0, contractsKnown: 0 };
+    const keys = Object.keys(this.dataset.missions).filter((k) => prefixes.some((p) => k.startsWith(p)));
+    const priced = def.contracts ?? {};
+    return {
+      contractsKnown: keys.length,
+      // Count against the dataset's keys rather than the priced map's, so a value measured for a
+      // contract this dataset does not carry cannot inflate the fraction past 100%.
+      contractsPriced: keys.filter((k) => typeof priced[k] === "number").length,
+    };
+  }
+
+  eventProgress(id: string): EventProgress | null {
+    const def = this.events.find((e) => e.id === id);
+    if (!def) return null;
+    const stored = this.eventContributions.get(def.log) ?? [];
+    // 🔴 TWO FILTERS, EACH DOING A JOB THE OTHER CANNOT — and both filter at READ time, so
+    // nothing is ever deleted and a wrong rule is a one-line correction rather than lost data.
+    //
+    //  1. `liveStart` (Sub's call) — a contribution earned before this event's live run began is
+    //     not part of it. One date covers a PTU run before go-live, a wipe, a season restart and
+    //     a rerun, because each has a moment before which prior progress is meaningless.
+    //  2. `sameEnv` — a contribution earned on ANOTHER server right now is not part of this one.
+    //
+    // 🔑 THE DATE ALONE IS NOT ENOUGH, and the case is concrete rather than theoretical: PTU and
+    // LIVE run CONCURRENTLY. Once 4.11 PTU opens while the 4.10 live event is still running, a
+    // PTU contribution is dated AFTER `liveStart` and a date-only rule would count it toward the
+    // live total — Sub's original complaint, shifted a few weeks later. Neither is redundant.
+    //
+    // 🔑 AND THE CUTOFF APPLIES TO THE LIVE COUNTER ONLY. `liveStart` is the start of the LIVE
+    // run; a test server's progress is its own accumulation. Applying it everywhere would hide a
+    // PTU player's progress for the very run they are doing — the widget would read zero while
+    // they played — and keeping that visible is `5f512f7`'s standing constraint.
+    const startMs = def.liveStart ? Date.parse(def.liveStart) : NaN;
+    const cutoff = Number.isFinite(startMs) ? startMs : null;
+    const afterStart = (c: EventContribution): boolean => {
+      // No cutoff declared => count everything. Chosen deliberately over counting nothing: an
+      // event with no start date is every event that predates this field (and `return-of-
+      // xenothreat`), and silently rendering real progress as zero is a worse failure than
+      // carrying some stale progress — the app cannot tell the two apart, but the player can,
+      // and only one of those states gives them anything to go on.
+      if (cutoff == null || !this.isLiveEnv) return true;
+      const at = Date.parse(c.at);
+      // An unparseable stamp is NOT evidence the contribution is stale. Keep it, same direction
+      // as every other "we cannot tell" branch here.
+      return !Number.isFinite(at) || at >= cutoff;
+    };
+    const contributions = stored.filter((c) => this.sameEnv(c.env) && afterStart(c));
+    // Reported separately because they are different facts about the player's data, and a single
+    // "N ignored" would leave them guessing which. Counted over the SAME predicate each excludes
+    // on, so the two can overlap without either being overstated.
+    const otherEnv = stored.filter((c) => !this.sameEnv(c.env)).length;
+    const beforeStart = stored.filter((c) => this.sameEnv(c.env) && !afterStart(c)).length;
+    let points = 0;
+    let unpriced = 0;
+    for (const c of contributions) {
+      // Re-price on every build rather than trusting the stored number: a value measured later
+      // and added to events.json must retroactively fix contributions recorded before it was
+      // known. That is the whole live-update workflow.
+      const live = c.key && def.contracts ? def.contracts[c.key] : undefined;
+      const p = live ?? c.points;
+      if (typeof p === "number") points += p;
+      else unpriced++;
+    }
+    const total = typeof def.total === "number" && def.total > 0 ? def.total : null;
+    const pct = total ? Math.min(100, (points / total) * 100) : null;
+    const rewards = def.rewards ?? [];
+    const candidates = def.rewardCandidates ?? [];
+    const tiers = (def.tiers ?? []).slice().sort((a, b) => a - b).map((t) => {
+      const rw = rewards.filter((r) => r.tier === t).map((r) => ({
+        name: r.name,
+        item: r.item ?? null,
+        owned: this.isOwned(r.name).owned,
+      }));
+      // Built from a DIFFERENT source array and never appended to `rw`. A candidate whose name a
+      // real receipt has since confirmed is dropped here rather than shown twice — `confirmed`
+      // means it has already been promoted into `rewards` above.
+      const cd = candidates
+        .filter((c) => c.tier === t && !c.confirmed)
+        .map((c) => ({ name: c.name }));
+      return {
+        pct: t,
+        points: total ? Math.round((t / 100) * total) : null,
+        // Only ever claim a tier is reached off a priced estimate. With `unpriced` outstanding
+        // the estimate is low, so this under-claims — which is the correct direction to be wrong.
+        reached: pct != null && pct >= t,
+        rewards: rw,
+        candidates: cd,
+      };
+    });
+    return {
+      id: def.id,
+      label: def.label,
+      log: def.log,
+      status: def.status ?? "current",
+      total,
+      points,
+      pct,
+      unpriced,
+      contributions: contributions.slice().sort((a, b) => b.at.localeCompare(a.at)),
+      otherEnv,
+      beforeStart,
+      liveStart: def.liveStart ?? null,
+      tiers,
+      ...this.eventContractCoverage(def),
+      rewardsUnknown: rewards.length === 0,
+    };
+  }
+
+  /**
+   * Forget everything witnessed for one event, so its counter starts again from zero.
+   *
+   * 🔴 THIS EXISTS BECAUSE THE APP CAN NEVER OBSERVE A SERVER-SIDE RESET, and no amount of
+   * environment-stamping fixes that. Event points ride CIG's server-side `ReputationService` and
+   * are never reported to the client — which is the entire reason this counter is accumulated
+   * from witnessed completions instead of read. So a character wipe, a season restart, or an
+   * event simply running again zeroes the player's REAL progress while the app has no signal at
+   * all that it happened, and goes on showing a number that was true last month.
+   *
+   * `env` handles the case we can detect; this handles the case we cannot. Both are needed.
+   *
+   * ⚠️ Destructive and unrecoverable by design — each contribution is a one-time observation of
+   * something the game never restates, exactly like `repWitnessed`. Nothing can rebuild it: the
+   * startup replay only reaches 12 hours back, and `verifyFromLogs` cannot see a journal entry at
+   * all (its prefilter does not match the line and it never calls `apply`). The caller is
+   * responsible for confirming with the player first.
+   *
+   * 🔑 Clears the tier bookkeeping too. Leaving `askedTiers` behind would mean the player
+   * re-earns 15%, crosses the tier for real, and is never asked about the reward because the app
+   * still believes it asked — the reset would silently disable the thing it was meant to restore.
+   *
+   * @returns the number of contributions discarded, so the caller can report it honestly.
+   */
+  resetEventProgress(id: string): number {
+    const def = this.events.find((e) => e.id === id);
+    if (!def) return 0;
+    const had = (this.eventContributions.get(def.log) ?? []).length;
+    this.eventContributions.delete(def.log);
+    this.askedTiers.delete(def.id);
+    this.rewardPrompts = this.rewardPrompts.filter((p) => p.eventId !== def.id);
+    this.saveState();
+    this.emit("change");
+    console.log(`[events] progress reset for "${def.label}" (${had} contribution(s) discarded)`);
+    return had;
+  }
+
+  // ── Self-filling event rewards (src/event-rewards.ts) ─────────────────────────────────────
+
+  /** Remember a blueprint receipt just long enough to correlate it with a tier crossing.
+   *  In memory only, capped, and never synced — see `recentReceipts`. */
+  private noteReceiptForEvent(rawName: string, ts?: string | null): void {
+    const atMs = ts ? Date.parse(ts) : Date.now();
+    if (!Number.isFinite(atMs)) return;
+    // Translate at the edge, exactly like `observed` does, so a German player's report names the
+    // same blueprint everyone else's does. An unrecognised name is still recorded verbatim: the
+    // whole point is to learn names we do not have.
+    const { name } = this.toEnglish(rawName);
+    this.recentReceipts.push({ name, atMs });
+    // A crossing can only claim a receipt inside RECEIPT_WINDOW_MS, so anything older than a
+    // generous multiple of that is dead weight.
+    const floor = atMs - RECEIPT_WINDOW_MS * 10;
+    this.recentReceipts = this.recentReceipts.filter((r) => r.atMs >= floor).slice(-40);
+  }
+
+  /**
+   * Raise a question for each tier this contribution crossed.
+   *
+   * 🔑 THE RECEIPT IS NOT AVAILABLE YET, and that is not a bug. The journal entry is logged ~383
+   * ms BEFORE the blueprint line, so at this moment `recentReceipts` cannot hold it. The prompt is
+   * created now with `observed: null` and filled in by `resolvePrompts()` once the window closes —
+   * which is also why `isPromptDue()` refuses to show a prompt until then. Raising the card
+   * immediately would ask "we did not see what you got" and then change its mind a third of a
+   * second later, which is worse than a card that arrives three seconds late.
+   */
+  private noteTierCrossings(def: EventDef, beforePct: number | null, crossedAtMs: number, crossedAt: string): void {
+    const after = this.eventProgress(def.id)?.pct ?? null;
+    const asked = this.askedTiers.get(def.id) ?? [];
+    const measured = (def.rewards ?? []).map((r) => r.tier);
+    for (const tier of tiersCrossed(beforePct, after, def.tiers ?? [])) {
+      if (asked.includes(tier)) continue;
+      // Record it as asked whatever happens next, so a tier whose reward is already known is
+      // never revisited if that reward is later withdrawn from events.json.
+      asked.push(tier);
+      if (!shouldAsk(tier, measured)) continue;
+      this.rewardPrompts.push({
+        id: def.id + ":" + tier,
+        eventId: def.id,
+        eventLabel: def.label,
+        tier,
+        crossedAt,
+        crossedAtMs,
+        observed: null,
+        candidate: candidateForTier(def.rewardCandidates, tier),
+        answer: null,
+        reported: false,
+      });
+    }
+    this.askedTiers.set(def.id, asked);
+    // Cap: a prompt is a question, and a backlog of them is a nag rather than a feature.
+    if (this.rewardPrompts.length > 12) this.rewardPrompts = this.rewardPrompts.slice(-12);
+  }
+
+  /** Attach the observed blueprint to any prompt whose correlation window has now closed. */
+  private resolvePrompts(nowMs: number): void {
+    for (const p of this.rewardPrompts) {
+      if (p.observed !== null || p.answer) continue;
+      if (nowMs < p.crossedAtMs + RECEIPT_WINDOW_MS) continue;   // still collecting
+      const hit = receiptForCrossing(p.crossedAtMs, this.recentReceipts);
+      if (hit) p.observed = hit.name;
+    }
+  }
+
+  /** The questions the UI should be showing right now. Never more than one — two cards stacked
+   *  over a game is a modal by accident, and the second is still there when the first is answered. */
+  eventRewardPrompts(nowMs = Date.now()): RewardPrompt[] {
+    this.resolvePrompts(nowMs);
+    const due = this.rewardPrompts.filter((p) => isPromptDue(p, nowMs));
+    return due.slice(0, 1);
+  }
+
+  /**
+   * Record the player's answer.
+   *
+   * 🔑 An empty name with source "typed" is NOT the same as "none": one is someone who started
+   * typing and gave up, the other is someone asserting the tier gave them nothing. The caller
+   * decides which it sent; this only stores it. `reportBody()` is what turns it into a claim.
+   */
+  answerRewardPrompt(id: string, name: string | null, source: PromptAnswerSource): RewardPrompt | null {
+    const p = this.rewardPrompts.find((x) => x.id === id);
+    if (!p || p.answer) return null;
+    const clean = typeof name === "string" ? name.trim().slice(0, 120) : null;
+    p.answer = { name: clean || null, source, at: new Date().toISOString() };
+    this.saveState();
+    this.emit("change");
+    return p;
+  }
+
+  /**
+   * A tier reward reported from the LADDER, with no tier crossing behind it.
+   *
+   * Sub, 2026-08-22: *"we allow people to tell us if we have it wrong. I think that's what we set
+   * up already."* Half of it was — the crossing card. But a card only ever appears at the instant
+   * a player passes a threshold, so a player who already knows the 43% reward (they crossed it
+   * last week, or they simply read the wrong name on our ladder) had nowhere to say so. This is
+   * the other half, and it deliberately reuses the SAME record and the SAME upload pipe
+   * (`unreportedRewardAnswers()` → `/api/sc/event-reward`) rather than adding a second channel:
+   * one report shape means the site cannot end up weighing two kinds of claim differently by
+   * accident.
+   *
+   * 🔑 `observed` is null and stays null. Nothing was witnessed — that is the whole difference
+   * between this and a crossing report, and `reportBody()` sends the distinction untouched.
+   */
+  reportEventReward(eventId: string, tier: number, name: string | null, source: PromptAnswerSource): RewardPrompt | null {
+    const def = this.events.find((e) => e.id === eventId);
+    // Refuse a tier the event does not declare. Without this a typo (or a stale widget still
+    // showing last patch's ladder) uploads a claim about a threshold that does not exist.
+    if (!def || !(def.tiers ?? []).includes(tier)) return null;
+    const at = new Date();
+    const clean = typeof name === "string" ? name.trim().slice(0, 120) : null;
+    const p: RewardPrompt = {
+      // Distinct from a crossing prompt's `<event>:<tier>`, so a report can never collide with —
+      // or silently answer — a real question the player has not looked at yet.
+      id: `${eventId}:${tier}:report:${++this.rewardReportSeq}`,
+      eventId,
+      eventLabel: def.label,
+      tier,
+      crossedAt: at.toISOString(),
+      crossedAtMs: at.getTime(),
+      observed: null,
+      candidate: candidateForTier(def.rewardCandidates, tier),
+      answer: { name: clean || null, source, at: at.toISOString() },
+      reported: false,
+    };
+    this.rewardPrompts.push(p);
+    if (this.rewardPrompts.length > 12) this.rewardPrompts = this.rewardPrompts.slice(-12);
+    this.saveState();
+    this.emit("change");
+    return p;
+  }
+
+  /** Prompts whose answers have not yet reached the site. Drained by the sidecar. */
+  unreportedRewardAnswers(): RewardPrompt[] {
+    return this.rewardPrompts.filter((p) => p.answer && !p.reported);
+  }
+
+  /** Mark an answer as delivered, so it is never sent twice. */
+  markRewardAnswerReported(id: string): void {
+    const p = this.rewardPrompts.find((x) => x.id === id);
+    if (!p || p.reported) return;
+    p.reported = true;
+    this.saveState();
+  }
+
   giverTrack(giver: string): GrindTrack | null {
     if (!this.dataset) return null;
     const want = norm(giver);
@@ -2912,11 +4058,64 @@ export class MissionTracker extends EventEmitter {
       .flatMap((m) => m.items.map((it) => ({ ...it, rank: m.rank, mission: m.title, received: m.completed > 0, unsure: m.completed > 0 && m.byTitleOnly })))
       .sort((a, b) => (a.rank ?? -1) - (b.rank ?? -1) || a.name.localeCompare(b.name));
 
-    const pos = repLadderPosition(this.repScopes[scope], this.repWitnessed.get(giver)?.sum ?? 0);
     const canonical = entries[0][1].giver || giver; // dataset spelling wins; fall back to the query
+    const reachedRank = this.inferredRank.get(canonical) ?? this.inferredRank.get(giver) ?? -1;
+
+    /**
+     * 🔴 THE WIDGET USED TO SHOW TWO DIFFERENT STANDINGS AT ONCE, and the ladder beside the bar
+     * was the one telling the truth.
+     *
+     * There are two independent FLOORS under a player's real reputation, because the game never
+     * reports the number to the client at all:
+     *   · `repWitnessed.sum` — rep summed from completions this tracker happened to see;
+     *   · `reachedRank` — the highest rank the giver has actually been observed OFFERING work at,
+     *     which the game only does once you are there. That is an observed fact, not an estimate.
+     * The bar took only the first. Measured on Sub's own log 2026-08-22: `reachedRank` 2 (Trusted
+     * Associate, floor 6,000) beside a bar reading "Prospective Associate · 0 rep · 2,400 to
+     * Associate" — a rank the log proves he is two tiers past, and a countdown to a rank he
+     * already holds. The reward ladder in the same widget had reconciled the two for months
+     * (`currentRank()`); the bar never did.
+     *
+     * Taking the HIGHER floor is not a guess: both are lower bounds, so the larger is the better
+     * lower bound. It stays a bound — see `repFloorFromRank`, which is what lets the UI say so
+     * rather than presenting a floor as a reading.
+     */
+    const witnessedSum = this.repWitnessed.get(giver)?.sum ?? 0;
+    const rankFloor = reachedRank >= 0 ? (ladder[reachedRank]?.minRep ?? 0) : 0;
+
+    /**
+     * 🔴 A SCAN OUTRANKS BOTH FLOORS, AND IT IS THE ONLY THING THAT CAN EVER LOWER THIS BAR.
+     *
+     * The two floors above are both lower bounds, which is why the LARGER of them is the better
+     * answer. A scan is a different kind of evidence: the player's own rep page, read directly,
+     * stating the rank outright. So it does not join the max() — it replaces the inferred floor.
+     *
+     * That matters in exactly one direction, and it is the whole feature. `reachedRank` is an
+     * inference from the giver having been seen offering rank-N work, and `witnessedSum` is
+     * accumulated from completions; both only ever rise, so neither can correct an over-count. If
+     * the page says rank 2 while something in here says rank 4, keeping the max would go on
+     * insisting on 4 forever and the re-baseline would silently do nothing.
+     *
+     * `applyRepScan` has already moved the stored total into the scanned rank's band, so the sum
+     * needs no clamping here — taking it straight is what keeps the precision the scan did not
+     * dispute.
+     */
+    const scan = this.repScanned.get(giver) ?? this.repScanned.get(canonical);
+    const scanned = scan && scan.scope === scope ? scan : null;
+    const scanFloor = scanned ? Math.max(0, ladder[scanned.rank]?.minRep ?? 0) : 0;
+    const basis = scanned ? Math.max(witnessedSum, scanFloor) : Math.max(witnessedSum, rankFloor);
+    const pos = repLadderPosition(this.repScopes[scope], basis);
     return {
       faction: canonical,
       scope,
+      /** True when the standing above rests on the observed RANK rather than on summed
+       *  completions — i.e. the number is the rank's floor and the player's real total is
+       *  somewhere above it, with no upper bound the app can name. */
+      repFloorFromRank: (scanned ? scanFloor : rankFloor) > witnessedSum,
+      /** When this giver's standing was last re-baselined from the in-game REP page, and which
+       *  rank it read. Null when it never has been — which is every giver until the player opens
+       *  the page, so the UI must read a null as "not scanned", never as "scanned at rank 0". */
+      repScan: scanned ? { rank: scanned.rank, at: scanned.at } : null,
       // Same shape the panel gets, including what the next rank unlocks — an empty nextRewards
       // here while the panel's is populated would just be a trap for the next reader.
       bar: pos
@@ -2924,7 +4123,7 @@ export class MissionTracker extends EventEmitter {
             nextRewards: rewards.filter((r) => r.rank === pos.nextRank).map((r) => r.name) }
         : null,
       ranks,
-      reachedRank: this.inferredRank.get(canonical) ?? this.inferredRank.get(giver) ?? -1,
+      reachedRank,
       intro: missions.filter((m) => m.rank == null).sort((a, b) => a.title.localeCompare(b.title)),
       rewards,
     };
@@ -3060,7 +4259,7 @@ export class MissionTracker extends EventEmitter {
     const m = this.datasetMission(missionId);
     if (m && (m.payout || (m.items?.length ?? 0) > 0)) return true;
     const info = this.missions.get(missionId);
-    return isXenoThreatMission(info?.contractKey ?? null, info?.generator ?? null);
+    return !!this.eventForMission(info?.contractKey ?? null, info?.generator ?? null);
   }
 
   /** The mission whose pool to show: the manual pick if set; otherwise the newest
@@ -3700,23 +4899,33 @@ export class MissionTracker extends EventEmitter {
     // observed set (the log's "Received Blueprint" lines). Keyed off pool CONTENT —
     // since schema/2 an event mission can have a (pool-less) dataset entry.
     let eventTrack: EventTrack | null = null;
-    if (pools.length === 0 && isXenoThreatMission(key, tracked?.generator ?? null)) {
+    const evDef = pools.length === 0 ? this.eventForMission(key, tracked?.generator ?? null) : null;
+    if (evDef) {
+      // Group the flat reward list back into tiers. An event with no rewards recorded yet
+      // (Orison Relief, until they are seen in game) yields NO tiers — so the panel says the
+      // ladder is not known rather than drawing an empty one that reads as "no rewards".
+      const byTier = new Map<number, { name: string; owned: boolean; source: BlueprintSource }[]>();
+      for (const r of evDef.rewards ?? []) {
+        const o = this.isOwned(r.name);
+        const row = { name: r.name, owned: o.owned, source: o.source };
+        const cur = byTier.get(r.tier);
+        if (cur) cur.push(row);
+        else byTier.set(r.tier, [row]);
+      }
       eventTrack = {
-        name: "Return of XenoThreat",
-        note: XENOTHREAT_NOTE,
-        tiers: XENOTHREAT_TIERS.map((t) => ({
-          pct: t.pct,
-          items: t.items.map((name) => {
-            const o = this.isOwned(name);
-            return { name, owned: o.owned, source: o.source };
-          }),
-        })),
+        name: evDef.label,
+        note: evDef.note ?? `Every ${evDef.label} mission you run adds to YOUR personal progress (not the server's). Check your in-game Journal for your current %.`,
+        tiers: [...byTier.entries()].sort((a, b) => a[0] - b[0]).map(([pct, items]) => ({ pct, items })),
       };
     }
 
     return {
       patch: this.patch,
       build: this.detectedChangelist,
+      // Read straight off the same two fields the gating uses, so the badge can never disagree
+      // with whether blueprints are actually being recorded.
+      logEnv: this.logEnv,
+      envIsLive: this.isLiveEnv,
       contractKey: key,
       title: mission?.title ?? tracked?.title ?? null,
       generator: tracked?.generator ?? mission?.generatorClass ?? null,
@@ -3801,22 +5010,82 @@ export class MissionTracker extends EventEmitter {
 
   // ---- persistence ----
 
+  /**
+   * 🔴 ONE MALFORMED FIELD USED TO DESTROY EVERY FIELD BELOW IT, SILENTLY AND PERMANENTLY.
+   *
+   * This whole method was one `try` whose catch was an empty block commented "first run", so
+   * ANY throw part-way through abandoned the rest of the assignments — leaving them at their
+   * constructor defaults — and the next `saveState()` then wrote those defaults to disk. The
+   * data was not corrupted; it was *discarded on read* and then overwritten by a healthy-looking
+   * save. Nothing logged, nothing failed.
+   *
+   * Measured (flight `orisonfix`, 2026-08-27): `missionHistory` is assigned 12th of 15 via
+   * `dedupeHistory()`, which throws on a non-array or an array holding `null` (it does
+   * `[...rows].sort()` and then reads `r.at`). One bad history therefore took `missionHistory`,
+   * `eventContributions`, `rewardPrompts` AND `askedTiers` with it — four fields for one fault:
+   *
+   *     control: untouched good file                observed=2 hist=1 contrib=1 asked=1
+   *     missionHistory is a bare object (not array) observed=2 hist=0 contrib=0 asked=0
+   *     missionHistory holds a null entry           observed=2 hist=0 contrib=0 asked=0
+   *
+   * 🔑 TWO SEPARATE REPAIRS, and the second is the one that matters. Per-field isolation stops
+   * the blast radius; **preserving what we could not read** stops the data loss. A field we
+   * failed to parse is written back BYTE-FOR-BYTE by `saveState()` rather than replaced with an
+   * empty default, so a later build that can read it still finds it there. Overwriting a field
+   * you did not understand is how a read bug becomes a write bug.
+   *
+   * ⚠️ The distinction the old single `catch` could not make: an unreadable FILE really is a
+   * first run (return, defaults are correct); an unreadable FIELD inside a readable file is
+   * damage, and the safe response is to keep it, not to normalise it away.
+   */
   private loadState(): void {
+    let data: Persisted;
     try {
-      const data = JSON.parse(readFileSync(this.statePath, "utf8")) as Persisted;
-      this.observed = new Set(data.observed ?? []);
-      this.observedAt = new Map(Object.entries(data.observedAt ?? {}));
-      this.overrides = new Map(Object.entries(data.overrides ?? {}));
-      this.guaranteedOwned = new Set(data.guaranteedOwned ?? []);
-      this.fabOwned = new Set(data.fabOwned ?? []);
-      this.inferredRank = new Map(Object.entries(data.inferredRank ?? {}));
-      this.repWitnessed = new Map(Object.entries(data.repWitnessed ?? {}));
-      this.repAccruedMissionIds = new Set(data.repAccruedMissionIds ?? []);
-      this.completedTitles = new Map(Object.entries(data.completedTitles ?? {}));
-      this.completedKeys = new Map(Object.entries(data.completedKeys ?? {}));
-      this.missionHistory = (data.missionHistory ?? []).slice(0, MISSION_HISTORY_MAX);
+      data = JSON.parse(readFileSync(this.statePath, "utf8")) as Persisted;
     } catch {
-      /* first run */
+      return; // genuinely first run: no file, or one that is not JSON at all
+    }
+    const lost: string[] = [];
+    const load = (name: keyof Persisted, fn: () => void): void => {
+      try {
+        fn();
+      } catch {
+        // Hold the ORIGINAL value so saveState writes it straight back. Never a default.
+        lost.push(name);
+        this.unreadableState[name] = (data as unknown as Record<string, unknown>)[name];
+      }
+    };
+    load("observed", () => { this.observed = new Set(data.observed ?? []); });
+    load("observedAt", () => { this.observedAt = new Map(Object.entries(data.observedAt ?? {})); });
+    load("overrides", () => { this.overrides = new Map(Object.entries(data.overrides ?? {})); });
+    load("guaranteedOwned", () => { this.guaranteedOwned = new Set(data.guaranteedOwned ?? []); });
+    load("fabOwned", () => { this.fabOwned = new Set(data.fabOwned ?? []); });
+    load("inferredRank", () => { this.inferredRank = new Map(Object.entries(data.inferredRank ?? {})); });
+    load("repWitnessed", () => { this.repWitnessed = new Map(Object.entries(data.repWitnessed ?? {})); });
+    load("repAccruedMissionIds", () => { this.repAccruedMissionIds = new Set(data.repAccruedMissionIds ?? []); });
+    load("repScanned", () => { this.repScanned = new Map(Object.entries(data.repScanned ?? {})); });
+    load("completedTitles", () => { this.completedTitles = new Map(Object.entries(data.completedTitles ?? {})); });
+    load("completedKeys", () => { this.completedKeys = new Map(Object.entries(data.completedKeys ?? {})); });
+    // 🔴 REPAIR THE DOUBLE-COUNTED HISTORY ALREADY ON DISK. The insert-side dedupe below only
+    // stops NEW duplicates; every completion recorded before it existed was written twice (one
+    // entry per log signal, milliseconds apart) and is restored here verbatim. Without this the
+    // scoreboard stays wrong for every existing user forever, and the fix would look like it had
+    // not worked — which is exactly how it presented while being diagnosed.
+    load("missionHistory", () => {
+      this.missionHistory = dedupeHistory(data.missionHistory ?? []).slice(0, MISSION_HISTORY_MAX);
+    });
+    load("eventContributions", () => {
+      this.eventContributions = new Map(Object.entries(data.eventContributions ?? {}));
+    });
+    load("rewardPrompts", () => { this.rewardPrompts = data.rewardPrompts ?? []; });
+    load("askedTiers", () => { this.askedTiers = new Map(Object.entries(data.askedTiers ?? {})); });
+    if (lost.length) {
+      // Sidecar console => sidecar.log. A field quietly vanishing is exactly the failure this
+      // method used to have, so it has to be SAID — see the project rule on loud paths.
+      console.log(
+        `[state] ${lost.length} field(s) could not be read and are PRESERVED UNCHANGED on the next ` +
+        `save (not overwritten): ${lost.join(", ")}`,
+      );
     }
   }
 
@@ -3829,15 +5098,25 @@ export class MissionTracker extends EventEmitter {
       inferredRank: Object.fromEntries(this.inferredRank),
       repWitnessed: Object.fromEntries(this.repWitnessed),
       repAccruedMissionIds: [...this.repAccruedMissionIds],
+      repScanned: Object.fromEntries(this.repScanned),
       completedTitles: Object.fromEntries(this.completedTitles),
       completedKeys: Object.fromEntries(this.completedKeys),
       observedAt: Object.fromEntries(this.observedAt),
       missionHistory: this.missionHistory,
+      eventContributions: Object.fromEntries(this.eventContributions),
+      rewardPrompts: this.rewardPrompts,
+      askedTiers: Object.fromEntries(this.askedTiers),
     };
+    // 🔴 ANYTHING loadState COULD NOT READ GOES BACK EXACTLY AS IT CAME. Spread LAST so it wins:
+    // every key above is a re-serialisation of in-memory state, which for an unreadable field is
+    // an empty default — writing that is precisely the data loss this exists to prevent. A build
+    // that can parse the field later will still find it. Normally this object is empty and the
+    // spread is a no-op.
+    const out: Persisted = { ...data, ...this.unreadableState };
     try {
       if (!existsSync(this.stateDir)) mkdirSync(this.stateDir, { recursive: true });
       const tmp = this.statePath + ".tmp";
-      writeFileSync(tmp, JSON.stringify(data, null, 2));
+      writeFileSync(tmp, JSON.stringify(out, null, 2));
       renameSync(tmp, this.statePath);
     } catch {
       /* non-fatal */

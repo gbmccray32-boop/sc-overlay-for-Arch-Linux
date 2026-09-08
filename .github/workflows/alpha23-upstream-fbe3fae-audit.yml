@@ -96,6 +96,42 @@ jobs:
           test -s build/server/overlay/hauling.html
           test -s build/server/overlay/rep-status.js
 
+      - name: Install merged ArchVerse source dependencies
+        working-directory: archverse
+        run: npm ci
+
+      - name: Validate Phase 1 backend and data merge
+        working-directory: archverse
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version")" = "$UPSTREAM_VERSION"
+          npm run typecheck
+          npm run test:localization
+          npm run test:handover
+          npm run test:contracts
+          npm run test:hauling
+          npm run test:solver
+          npm run test:haulplan
+          npm run test:advisor
+          npm run test:mining
+          npm run test:screenocr
+          npm run test:clienterror
+          npm run test:location
+          npm run test:events
+          npm run test:repaccrual
+          npm run test:reppage
+          npm run build:server
+          node --check build/server/server.mjs
+
+          grep -q 'SC_TRACKER_CONFIG_DIR' build/server/server.mjs
+          grep -q 'ARCHVERSE_LINUX_NO_WINDOWS_MEDIA_OCR' build/server/server.mjs
+          grep -q 'ARCHVERSE_LINUX_OCR_REGION_CONFIG' build/server/server.mjs
+          grep -q 'linuxOcrRegions' build/server/server.mjs
+          grep -q 'Shift+F6' build/server/server.mjs
+          grep -q 'ARCHVERSE_LINUX_SETTINGS_CONTRACT' build/server/overlay/config.html
+          grep -q 'ARCHVERSE_LINUX_DYNAMIC_WIDGET_REGIONS' build/server/overlay/missions.html
+          grep -q 'ARCHVERSE_RESOURCE_SCANNER_V1' build/server/overlay/mining.html
+
       - name: Verify pinned Candidate 8k provenance
         working-directory: archverse
         env:

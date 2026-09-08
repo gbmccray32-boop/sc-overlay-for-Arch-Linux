@@ -101,4 +101,78 @@ assert.equal(regionOfShard("pub_usw2a_12326004_007"), "usw2a");
 assert.equal(regionOfShard("local_shard"), null);
 assert.equal(regionOfShard(null), null);
 
+// ---- Journal Entry Added: the dynamic-event progress signal (4.10 / Siege of Orison) ----
+// All four lines below are VERBATIM from Sub's own 4.10 PTU logs
+// (`Game Build(12473311) 19 Aug 26 (15 56 29).log`, changelist 12473311). They are kept exactly
+// as the engine wrote them — double spaces, trailing ": ", all-zeros MissionId and all — because
+// every previous fixture in this file that was "tidied" hid a real bug.
+const realOrisonComplete = 'Added notification "Contract Complete: Orison Relief: Medium Supply Haul: " [42] to queue. New queue size: 1, MissionId: [c48baebd-b6da-4537-86f1-1355c5e2d488], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]';
+const realOrisonJournal = 'Added notification "Journal Entry Added: Orison Relief: " [43] to queue. New queue size: 2, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]';
+const realJurisdictionJournal = 'Added notification "Journal Entry Added: Jurisdiction: Hurston Dynamics : " [9] to queue. New queue size: 1, MissionId: [00000000-0000-0000-0000-000000000000], ObjectiveId: [] [Team_CoreGameplayFeatures][Missions][Comms]';
+
+// 🔑 The event's contract title CONTAINS A COLON. The complete-title regex is lazy, so this is
+// exactly the shape that could truncate to "Orison Relief" and silently key every event contract
+// to one bogus title.
+const orisonComplete = parseMissionEvent(event(realOrisonComplete));
+assert(orisonComplete?.kind === "contractComplete", "the real Orison completion must parse");
+assert.equal(orisonComplete?.title, "Orison Relief: Medium Supply Haul",
+  "an event contract title keeps its internal colon — truncating it would merge all 13 ORS_ contracts");
+assert.equal(orisonComplete?.missionId, "c48baebd-b6da-4537-86f1-1355c5e2d488");
+
+const orisonJournal = parseMissionEvent(event(realOrisonJournal));
+assert(orisonJournal?.kind === "journalEntry", "the event journal entry must parse");
+assert.equal(orisonJournal?.subject, "Orison Relief", "the subject is the EVENT name, trimmed");
+assert.equal(orisonJournal?.jurisdiction, false, "an event entry is not a jurisdiction entry");
+// The all-zeros id is preserved rather than nulled: callers correlate by TIME, and recording what
+// the log actually said is what lets a future reader tell "absent" from "zeroed".
+assert.equal(orisonJournal?.missionId, "00000000-0000-0000-0000-000000000000");
+
+// The noise form. It must still PARSE (so it can never be mistaken for an unknown line) while
+// being flagged, because it does not follow a completion and is not event progress.
+const jurisdictionJournal = parseMissionEvent(event(realJurisdictionJournal));
+assert(jurisdictionJournal?.kind === "journalEntry", "a jurisdiction journal entry still parses");
+assert.equal(jurisdictionJournal?.jurisdiction, true,
+  "entering a jurisdiction must be flagged, or it reads as event progress and inflates the estimate");
+assert.equal(jurisdictionJournal?.subject, "Jurisdiction: Hurston Dynamics",
+  "the subject keeps its prefix — the flag classifies it, the string is not rewritten");
+
+// 🔑 NON-EMPTY GUARD. The two assertions above are both about a parsed object; if the branch
+// silently stopped matching, `subject` comparisons would fail — but a future refactor that made
+// journalEntry unreachable would fail with a confusing "kind" error instead. State the positive.
+assert(orisonJournal.subject.length > 0 && jurisdictionJournal.subject.length > 0,
+  "both journal subjects must be non-empty — an empty subject matches every event name");
+
+// ---------------------------------------------------------------------------------------------
+// 🔴 `FillUnstowRequest` WRITES TWO DIFFERENT THINGS, AND WE READ BOTH AS A KIOSK PRESS.
+//
+// All four lines below are VERBATIM from Sub's own logs. The `SoftLock_Terminal_…` one is included
+// because it LOOKS like the failure form and is not — it is a real kiosk class, so a fix that
+// merely rejected odd-looking names would break 4 genuine presses to fix 41 fake ones.
+//
+// Counts behind this, measured over the 480-file corpus: 241 real presses, 41 `EntityId … is not
+// present` errors, 4 `SoftLock_Terminal_…` presses. In the 2026-08-22 session 37 of 37 were the
+// error form, so every `cargoKiosk` that session was fabricated.
+const realKioskPress = '<2025-08-01T22:21:09.632Z> [Notice] <CEntityComponentFreightElevatorUIProvider::FillUnstowRequest> [FreightElevatorKioskUIProvider] FreightElevatorKiosk_FreightElevator_Util_HangarLarge[5260145885719] - Processed bindings into transfer request - Entities: 6, Location: 1752411604 - RequestId: 2, ItemBank: 0 [Team_CGP7][Cargo][Inventory]';
+const realSoftLockPress = '<2026-08-17T18:51:41.305Z> [Notice] <CEntityComponentFreightElevatorUIProvider::FillUnstowRequest> [FreightElevatorKioskUIProvider] SoftLock_Terminal_Standard_LowTech_FreightElevatorKiosk_1_a[758375613929] - Processed bindings into transfer request - Entities: 0, Location: 1180994372 - RequestId: 5, ItemBank: 0 [Team_CoreGameplayFeatures][Cargo][Inventory]';
+const realUnstowMissing = '<2026-08-22T22:01:42.574Z> [Error] <CEntityComponentFreightElevatorUIProvider::FillUnstowRequest> [FreightElevatorKioskUIProvider] EntityId[608068483514] is not present. [Team_CoreGameplayFeatures][Cargo][Inventory]';
+
+const kioskPress = parseMissionEvent(parseLine(realKioskPress));
+assert(kioskPress?.kind === "cargoKiosk", "a real kiosk press must still parse as cargoKiosk");
+assert.equal(kioskPress.terminal, "FreightElevatorKiosk_FreightElevator_Util_HangarLarge",
+  "the terminal is the kiosk's own name");
+
+const softLockPress = parseMissionEvent(parseLine(realSoftLockPress));
+assert(softLockPress?.kind === "cargoKiosk", "SoftLock_Terminal_… is a REAL kiosk class, not a failure");
+assert.equal(softLockPress.terminal, "SoftLock_Terminal_Standard_LowTech_FreightElevatorKiosk_1_a");
+
+const unstowMissing = parseMissionEvent(parseLine(realUnstowMissing));
+// 🔑 Two assertions, and the FIRST is the one that catches the shipped bug: the old regex made
+// this a cargoKiosk with terminal "EntityId". Asserting only "it is cargoUnstowMissing" would also
+// pass on a build that returned null for it, which is a different and less useful outcome.
+assert(unstowMissing?.kind !== "cargoKiosk",
+  'the error form must NOT be a kiosk press — it used to parse as terminal "EntityId"');
+assert(unstowMissing?.kind === "cargoUnstowMissing",
+  "the error form has its own kind, so it is diagnosable rather than merely discarded");
+assert.equal(unstowMissing.entityId, "608068483514", "the phantom entity id is carried verbatim");
+
 console.log("missions-parser tests passed");

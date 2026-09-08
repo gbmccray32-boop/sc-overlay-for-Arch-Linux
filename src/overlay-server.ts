@@ -7,17 +7,35 @@ import { extname, join, dirname, basename, resolve, sep } from "node:path";
 import { LogWatcher } from "./watcher.js";
 import { parseLine } from "./parser.js";
 import { parseMissionEvent } from "./missions-parser.js";
-import { PlaceWatcher, SystemWatcher, debrisStepWording, type Place } from "./location.js";
+import { debrisStepWording, type Place } from "./location.js";
+import { PlayerLocation } from "./player-location.js";
 import { PartyTracker, ownHandleFromLog } from "./party.js";
 import { MissionTracker } from "./missions.js";
 import { collectLogPaths } from "./log-paths.js";
 import { MiningTracker } from "./mining.js";
-import { HaulingTracker } from "./hauling.js";
+import { HaulingTracker, type HaulingView } from "./hauling.js";
 import { ChatClient } from "./chat.js";
 import { MiningEconomyStore } from "./mining-economy.js";
 import { HaulingDataStore } from "./hauling-data.js";
 import { canAutoLoad } from "./hauling-autoload.js";
-import { buildHaulingPlan } from "./hauling-plan.js";
+import { buildHaulingPlan, gridsOf } from "./hauling-plan.js";
+import { HaulingBuys } from "./hauling-buys.js";
+import type { CommodityPurchase } from "./trade-log.js";
+import { tradeRoutes, tradeTable } from "./trade-routes.js";
+// The Route tab's place picker is fed from the price table on a commodity leg — see
+// `commodityPlaceSuggestions`. Same function the Commodities tab's slots use, so the two surfaces
+// cannot drift into offering different answers to the same question.
+import { lookupCommodity } from "./trade-finder.js";
+// 🔑 The log feed goes through `priceFeedLine` rather than `tradeLogLine` at all three read sites.
+// It still does everything `tradeLogLine` did — the trade journal is untouched — and additionally
+// records observed ITEM prices, the half of the shop data the app had never read. One wrapper so
+// the three sites cannot drift; see `price-feed.ts`.
+import { initPriceFeed, observedPrices, priceFeedLine } from "./price-feed.js";
+// The COMMUNITY half of the same idea: everybody else's receipts, fetched from the site. The
+// app only ever READS this — nothing uploads from a player's machine in this slice.
+import { PricePoolStore } from "./price-pool.js";
+import { verseRoutes, locationTokenLabel } from "./verse-routes.js";
+import { largestBoxScu } from "./cargo-boxes.js";
 import {
   buildContracts, climbToNextRung, rankContracts, regimeFor, rungAt, HAULING_LADDER,
   type AdvisorContract,
@@ -28,13 +46,18 @@ import { SCENARIOS, replayLines, replayMissionId, HAUL_SCENARIOS, haulReplayLine
 import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
 import { loadCatalog, ocrImage, ocrSelfTest, hasScanHud, classifyScreen, bestSignatureLine, glyphSearchBox, contractRegionOrDefault, DEFAULT_CONTRACT_REGION, type CatalogEntry, type OcrHealth, type OcrResult, type ScanRegion } from "./screen-read.js";
+import { readRepPage, repReadPayload, repRankFromBars, type RepBarRead } from "./rep-page.js";
 import { parseContractList } from "./contract-list.js";
 import { ContractMatcher } from "./contract-match.js";
 import { PayoutScanner, type PayoutObservation } from "./payout-scan.js";
-import { maybeShareLog } from "./log-share.js";
+import { maybeShareLog, clearSkippedBackups } from "./log-share.js";
+import { EventFeed, EVENT_REFRESH_MS } from "./event-feed.js";
+import { reportBody as rewardReportBody } from "./event-rewards.js";
 
-const overlayDir = assetDir(import.meta.url, "overlay");
-const bundledDataDir = assetDir(import.meta.url, "data");
+import {
+  overlayDir, bundledDataDir, userDir, configPath, seedConfigPath, dataDir, sharedLogStatePath,
+  DEFAULTS, freshInstall, loadConfig, payoutScanWasArmedOnDisk, type Config,
+} from "./server-config.js";
 
 // Best-effort app version for the shared-log upload metadata (?v=). Reads package.json
 // when present (dev + asar); empty in the bun-compiled sidecar, which is fine.
@@ -48,8 +71,11 @@ if (!APP_VERSION) {
     /* version is optional metadata */
   }
 }
-// Periodically share the current session's scrubbed log (dedup by content hash). The
-// last tick before the app closes captures the fullest session; opt-in + no-op when off.
+// Periodically trickle scrubbed ROTATED sessions to the site; opt-in and a no-op when off.
+// ⚠️ The CURRENT session is no longer uploaded — see the header of src/log-share.ts. A session
+// reaches us when the player next launches SC and it rotates into logbackups/.
+// ⚠️ setInterval only, so the first pass is 20 minutes after launch, never at startup. The
+// immediate one is the Share-logs off->on gesture, which calls maybeShareLog directly.
 const LOG_SHARE_INTERVAL_MS = 20 * 60 * 1000;
 setInterval(() => void maybeShareLog(config, APP_VERSION, sharedLogStatePath), LOG_SHARE_INTERVAL_MS);
 
@@ -90,463 +116,45 @@ function loadChangelog(): Record<string, ChangelogEntry> {
 }
 const PORT = Number(process.env.PORT) || 8778;
 
-// Persist runtime state in a per-user writable dir — NEVER next to the binary.
-// The installed app lives under Program Files (read-only); writing config.json
-// there threw EPERM and crashed the whole server. This matches where the mission
-// tracker already keeps collected.json.
-const userDir = join(process.env.APPDATA ?? process.env.HOME ?? ".", "sc-blueprint-tracker");
-const configPath = join(userDir, "config.json");
-// Read-only default that ships with the app; only used to seed a first run.
-const seedConfigPath = join(overlayDir, "config.json");
-// Writable copy of the datasets: bundled pools are seeded in, and any pools the
-// tracker fetches for a not-yet-bundled patch cache here (Program Files is read-only).
-const dataDir = join(userDir, "data");
-// Which rotated sessions (logbackups/) have already been shared. Remembered by FILENAME, and
-// permanently — a backup is immutable, so "sent", "wrong patch" and "no mission signal" are all
-// final answers. Without this every app launch would re-offer the whole folder.
-const sharedLogStatePath = join(userDir, "shared-logs.json");
-
-interface Config {
-  logPath: string;
-  /** subliminal.gg device token (minted on /blueprints) for collection sync. */
-  syncToken: string;
-  /** Whether to push collected blueprints + tracked mission to subliminal.gg. */
-  syncEnabled: boolean;
-  /** Opt-in: capture item renders from the in-game Fabrication Kiosk and contribute
-   *  them to subliminal.gg's blueprint catalog. Read by electron/capture.cjs each poll. */
-  fabCapture: boolean;
-  /** Opt-in: OCR the in-game screen to read which mission you have PINNED (ground truth the
-   *  game.log can't give — it sees every accepted mission equally). Independent of fabCapture;
-   *  either one arms the capture loop. Read by electron/capture.cjs each poll. */
-  missionOcr: boolean;
-  /** Opt-in: when the fabricator shows a blueprint the tracker has no record of, offer to
-   *  tick it. Recovers ownership the log can never report (receipts predating the install,
-   *  or rotated-away logbackups) using the one screen that only lists what you own.
-   *  Independent of fabCapture — this needs no upload and no sync token. */
-  fabClaim: boolean;
-  /** Mining Assistant: arms the capture loop to read the Refinement Center (job timers)
-   *  and the mining scanner signature. Opt-in; read by electron/capture.cjs each poll. */
-  miningAssistant: boolean;
-  /** DEV BUILDS ONLY — writes the bitmaps the mining OCR is handed to <userDir>/debug-frames,
-   *  served at GET /api/mining/debug-frame. Those bitmaps are screenshots of the user's desktop,
-   *  and this app's position on screen reading is that it never happens unless you ask for it — so
-   *  this is gated on SC_DEV here AND on app.isPackaged in main.cjs, rather than trusted to a
-   *  config flag a release could ship or a stale config.json could arm. Off by default either way. */
-  miningDebug: boolean;
-  /** Where the signature number is hunted, as fractions of the frame. Null = the default band.
-   *  Set by dragging the "scan read area" box (Mining Scanner cog) — the only way to cope with a
-   *  HUD that doesn't sit where we assume. */
-  scanRegion: ScanRegion | null;
-  /** OPT-IN, OFF BY DEFAULT, and 🔑 DELIBERATELY NOT PERSISTED — it is reset to false on
-   *  every launch. Sub's call (2026-08-11): "I want it to be more like they can
-   *  temporarily turn this thing on."
-   *
-   *  That is the right shape for this specifically. Every other opt-in here (fabCapture,
-   *  missionOcr, miningAssistant) is a standing preference you tick once, and those read
-   *  the screen for YOUR benefit, live. This one reads the screen to gather data for a
-   *  shared dataset, which is a different bargain — nobody should discover months later
-   *  that a box they ticked once has been quietly screen-reading ever since. You turn it
-   *  on for a sweep and it is off again next launch.
-   *
-   *  ⚠️ It stays in the config OBJECT (rather than a bare module variable) so every
-   *  existing reader — capture.cjs polls the config each tick — keeps working unchanged;
-   *  it is simply stripped on save. The QUEUE is persisted separately, so ending a session
-   *  never loses gathered observations. */
-  payoutScan: boolean;
-  /** Where the offers PANEL sits, as fractions of the frame. Null = not calibrated, and
-   *  the scan will not run without it: the parser needs the panel to tell the title column
-   *  from the amount column, and guessing produced garbage (the bottom nav pushed the
-   *  column boundary past the amounts and every row read as priceless). */
-  contractRegion: ScanRegion | null;
-  /** Auto-show the Mining Assistant window when the scanner/refinery screen is detected. */
-  miningAutoShow: boolean;
-  /** Remembers whether the Mining Assistant window was left open, so it's restored on launch. */
-  miningOpen: boolean;
-  /** Remembers whether the Notepad widget was left open, so it's restored on launch. */
-  notepadOpen: boolean;
-  /** Notepad text-size multiplier (0.8–2.0) so notes stay readable on 1080p → 4K panels. */
-  notepadFontScale: number;
-  /** Twitch channel whose live chat the Twitch Chat widget shows (login name, no @ or URL).
-   *  Defaults to subliminalstv; empty = the widget shows its channel-picker instead. */
-  twitchChannel: string;
-  /** Remembers whether the Twitch Chat widget was left open, so it's restored on launch. */
-  twitchChatOpen: boolean;
-  /** Twitch Chat text-size multiplier (0.8-2.0) so chat stays readable on 1080p -> 4K panels. */
-  twitchChatFontScale: number;
-  /** Twitch application client id, used for the device-code login that enables SENDING chat.
-   *  A Twitch client id is public by design (it ships in every web client) — it is NOT a secret;
-   *  the user token it mints is, and that lives in twitchUserToken. Reading chat needs neither. */
-  twitchClientId: string;
-  /** OAuth user token (scope chat:edit) from the device-code flow. Empty = read-only chat. */
-  twitchUserToken: string;
-  /** The signed-in Twitch login that token belongs to — shown in the widget so you can see who
-   *  you're about to talk as. Not a secret, so unlike the token it IS returned by GET /api/config. */
-  twitchUserLogin: string;
-  /** Refresh token from the device flow. A Twitch user token expires in ~4h, so without this,
-   *  sending would silently stop working mid-session and read as a bug. */
-  twitchRefreshToken: string;
-  /** Remembers whether the SC Feed widget was left armed, so it's restored on launch. */
-  scFeedOpen: boolean;
-  /** Blueprint-unlock notifier armed. Defaults TRUE — it replaced a toast that used to live
-   *  inside the Blueprint panel, so off-by-default would quietly remove an existing notification. */
-  unlockAlertOpen: boolean;
-  /** Where a SC Feed card's click goes: "site" opens sc-feed.subliminal.gg (default - the feed
-   *  is the product), "source" opens the story's own URL (Spectrum, YouTube, Reddit...). */
-  scFeedLinkTarget: "site" | "source";
-  /** Speak new headlines in HAL's voice ("New news from Pipeline"). Off by default. */
-  scFeedVoice: boolean;
-  /** Play the alert tone when a headline arrives. */
-  scFeedSound: boolean;
-  /** SC Feed alert volume, 0-1. */
-  scFeedVolume: number;
-  /** Path to a user-chosen WAV for the SC Feed alert (empty = the built-in tone). */
-  scFeedTone: string;
-  /** Remembers whether the Party widget was left open, so it's restored on launch. */
-  partyOpen: boolean;
-  /** Remembers whether the Battaglia grind widget was left open, so it's restored on launch. */
-  battagliaOpen: boolean;
-  /** Remembers whether the Hauling widget was left open, so it's restored on launch. */
-  haulingOpen: boolean;
-  /** Ship class the player picked in the Hauling widget, overriding what the log saw. Empty =
-   *  trust the log. Persisted because the log's ship signal is not guaranteed — a relog, or
-   *  taking off in a ship the vehicle-control lines never named, leaves it blank. */
-  haulingShip: string;
-  /**
-   * Places the player has named by hand, keyed by the hauling planner's own location id.
-   *
-   * 🔑 THAT ID IS THE COORDINATES, rounded to the kilometre (see posKey in hauling-plan.ts) — not a
-   * zoneHostId, which the game reissues every session and which would make every saved name go
-   * stale overnight. A marker's position is byte-identical across days, so naming a place once
-   * names it for good.
-   *
-   * Why it has to exist at all: only a TRACKED drop-off carries a name (the Deliver line's "… to
-   * <D>"), so a pickup site, or any leg the player never tracked, shows as "Site 1". Sub has asked
-   * for this four times.
-   */
-  haulingPlaces: Record<string, string>;
-  /**
-   * Every place name the GAME has ever stated on a Deliver line, newest last.
-   *
-   * 🔴 This is the good half of the suggestion list, and it is not optional garnish. locations.json
-   * carries 1,968 rows and **does not contain "Riker Memorial Spaceport"** — nor any other city
-   * spaceport; it has `Area18` but not the spaceport inside it. A picker built only from the
-   * dataset would fail on Sub's single most common drop-off. Names the game has actually used on a
-   * hauling contract are by definition real hauling stops, so they rank above the dataset.
-   */
-  haulingSeenPlaces: string[];
-  /* ⛔ NO haulingRank / haulingRep. A picker was built here and it was wrong twice over, both
-     caught by Sub within minutes:
-       1. The app ALREADY KNOWS. MissionTracker.repDiagnostics() carries every giver's witnessed
-          standing, accrued from every log backup — his Covalex read 5,400 (Member) while the
-          widget was asking him to type it. Asking for a number you hold is not a fallback, it is
-          a bug with a text box on it.
-       2. "The player cannot know their rep value" — correct. mobiGlas draws a bar, not an
-          integer. The only place he could read the number is this app, so a box asking him for it
-          is circular.
-     Standing is read live, per giver. See the advisor endpoint. */
-  /** Remembers whether the Web Page widget was left open, so it's restored on launch. */
-  webViewOpen: boolean;
-  /** URL shown by the Web Page widget (http/https only). Empty = it shows its address picker. */
-  webViewUrl: string;
-  /** Remembers whether the Binding Chart WIDGET was left open (distinct from the full-screen
-   *  binding overlay, which stays on its own hotkey). */
-  bindingChartOpen: boolean;
-  /** Path to a user-chosen WAV to use as the alert tone (empty = built-in synth tone). */
-  miningTone: string;
-  /** GPU hardware acceleration for the Electron overlay. OFF by default — it composites
-   *  a transparent window over a Vulkan game and crashes AMD drivers; software rendering
-   *  is safe. Read by electron/main.cjs at startup (needs an app restart to change). */
-  hwAccel: boolean;
-  /** AMD compatibility mode (opt-in, restart-required). Forces the transparent HUD fully off
-   *  the Windows GPU-compositing path (DirectComposition/MPO) that crashes AMD Vulkan with a
-   *  device-lost, and loads the lite (no-blur/animation) HUD skin. Read by main.cjs at startup. */
-  amdCompat: boolean;
-  /** Absolute path to a PNG (with transparency) to show as a toggleable full-screen
-   *  reference overlay — e.g. your joystick binding chart. Empty = feature off. */
-  bindingPng: string;
-  /** Global hotkey that shows/hides the binding-chart overlay (Electron accelerator
-   *  syntax). Read by main.cjs at startup. */
-  bindingHotkey: string;
-  /** Global hotkey that shows/hides the whole overlay HUD (Electron accelerator
-   *  syntax). Read by main.cjs at startup. */
-  overlayHotkey: string;
-  /** Global hotkey that shows/hides the Mining Assistant window (Electron accelerator
-   *  syntax). Read by main.cjs at startup. */
-  /** Manual nudge for the overlay canvas, in PHYSICAL pixels, applied to the window's position.
-   *  Mixed-DPI desktops (a 225% 4K primary beside 100% 1080p monitors) leave the canvas offset
-   *  from the real monitors. Rather than guess the DPI maths, the user drags it into place like a
-   *  console game's safe-area screen.
-   *  🔑 Defaults to 0,0, so a correct setup is bit-for-bit unaffected. */
-  canvasOffsetX: number;
-  canvasOffsetY: number;
-  /** The other half of that calibration: a uniform scale for the canvas coordinate space. Changing
-   *  the PRIMARY monitor's Windows scaling leaves the canvas both mis-placed AND mis-sized (Sub,
-   *  2026-08-03), and an offset can only fix the placement. Applied as CSS `zoom` on the canvas
-   *  document, so the dotted primary outline, every widget's position and every widget's contents
-   *  scale as one — the user grows it until the outline sits on their real monitor edges.
-   *  🔑 Defaults to 1. */
-  canvasScale: number;
-  /** Seconds an SC Feed story stays on screen before fading (Argante's ask). Clamped 3–60:
-   *  under 3 nothing is readable, and a notifier that never leaves is a panel, not a pop-up. */
-  scFeedShowSeconds: number;
-  /** Seconds an Unlock Alert card stays up. Same clamp, same reasoning. */
-  unlockAlertShowSeconds: number;
-  miningHotkey: string;
-  /** Per-widget show/hide hotkeys, keyed by REGISTRY key (mining, party, chat, …).
-   *
-   *  🔑 One map instead of a scalar per widget. Four widgets had a hand-written config field, a
-   *  hand-written shell registration and a hand-written settings row each, and the other seven had
-   *  no hotkey at all — so "every widget gets one" meant writing that boilerplate seven more times
-   *  and again for every widget ever added. A map keyed on the registry key means a new widget
-   *  gets a hotkey for free.
-   *  🔑 NO DEFAULTS (Sub, 2026-08-14: "we don't even necessarily need to put in a default"). An
-   *  absent entry means no hotkey, which is also the only safe answer — eleven default chords
-   *  would collide with each other, with the game, and with whatever the player already uses.
-   *  ⚠️ `""` is a REAL saved value meaning "removed", distinct from absent. The legacy migration
-   *  below depends on that distinction. */
-  widgetHotkeys: Record<string, string>;
-  webViewHotkey: string;
-  /** Global hotkey that shows/hides the Journal widget (Electron accelerator syntax).
-   *  Read by electron/main.cjs at startup. */
-  notepadHotkey: string;
-  /** Hold-to-interact hotkey (Electron accelerator, default "F"): when hold-to-interact mode is
-   *  on, the overlay is passive (click-through) unless this key is HELD. */
-  interactHotkey: string;
-  /** Opt-in: require holding the interact key to click the overlay. Off by default (the overlay
-   *  is clickable whenever the cursor is over a widget). */
-  holdToInteract: boolean;
-  /** Global hotkey that toggles arrange/move mode (Electron accelerator syntax). */
-  moveHotkey: string;
-  /** How opaque the overlay is while you are NOT focused on it — i.e. while you are playing.
-   *  1 = off (the default, so nobody's overlay changes appearance on update); clamped 0.2–1 in
-   *  the UI, the server AND the shell, because an overlay faded to nothing is one you can't
-   *  find to turn back up. Read by electron/main.cjs, which applies it as WINDOW opacity. */
-  unfocusedOpacity: number;
-  /** Global hotkey that forces full opacity regardless of focus (and back). Lets you read the
-   *  overlay mid-fight without alt-tabbing to it. Empty = no hotkey. */
-  opacityHotkey: string;
-  /** Hotkey that CONFIRMS a fabricator claim prompt. A hotkey rather than only a click
-   *  because the overlay is click-through over the game — confirming with the mouse means
-   *  entering hold-to-interact mid-kiosk, which is exactly when you can least afford it. */
-  fabClaimHotkey: string;
-  /** Recent-activity timestamps: relative ("2h ago") when true, absolute date+clock
-   *  when false. Read by the overlay via the mission view's `prefs`. */
-  timeRelative: boolean;
-  /** Opt-in: after each session, upload this player's Game.log — scrubbed of handle,
-   *  account id, geid, IP, and session (chat dropped) — to subliminal.gg so mission and
-   *  blueprint parsing can be improved against real logs. Needs a sync token. */
-  shareLogs: boolean;
-  /** App version whose "what's new" card the user has dismissed. The card shows once per
-   *  new version (when this !== the running version) and this is set on dismiss. */
-  seenChangelog: string;
-  /** Overlay HUD declutter toggle (set from the overlay's settings cog): hide the
-   *  fabricator category filter bar. Sent to the overlay via the mission view prefs.
-   *  (Odds mode + Verify now live inside the cog itself, so the footer has no buttons.) */
-  hideCatbar: boolean;
-  /** Overlay manufacturer theme: "mobiglas" (default), "drake", or "auto" (match the ship
-   *  you're flying, detected from the log). Sent to the overlay via the mission view prefs. */
-  theme: "mobiglas" | "drake" | "anvil" | "greys" | "esperia" | "misc" | "banu" | "gatac" | "mirai" | "origin" | "aegis" | "crusader" | "rsi" | "kruger" | "argo" | "cnou" | "auto";
-  /** Local subscriber-entitlement override for manufacturer skins. Default false = locked
-   *  (preview-only). Superseded by the server-resolved Twitch-sub check when that lands. */
-  premiumOverride?: boolean;
-  /** Y-axis (left↔right yaw) rotation of the overlay panel, in degrees, to line it up with a
-   *  perspective-angled in-game HUD. 0 = flat, 4 = the default subtle tilt. Sent via prefs. */
-  overlayTwist: number;
-  /** Global overlay UI scale, in percent (100 = design size). Lets 4K users size it up and
-   *  small screens size it down. Applied as CSS zoom; the window resizes to match. */
-  overlayScale: number;
-  /** When you get out of your ship (leave its comms channel), revert the theme to Mobiglas
-   *  instead of keeping the ship's manufacturer skin. Affects theme="auto" AND the /api/ship
-   *  signal. Default false = stay on the last ship's manufacturer until you board another. */
-  revertThemeOnFoot: boolean;
-  /** Remembers whether the Chat widget was left open — and is also the CONNECTION gate:
-   *  chat holds no socket unless the widget is open (Sub's lightweight rule). */
-  chatOpen: boolean;
-  /** WebSocket URL of the chat server (chat-server/server.mjs protocol). Defaults to the
-   *  subliminal.gg deployment; point it at ws://127.0.0.1:8788/ws for local dev. */
-  chatServerUrl: string;
-  /** Dev-mode chat identity for the A/B. Production identity comes from the sync token —
-   *  the site resolves it to the RSI-VERIFIED handle, and unverified accounts get no chat
-   *  (Sub's rule: chat identities must be bannable). */
-  chatHandle: string;
-  /** Custom chat rooms the user has joined, by DISPLAY NAME. Rejoined on every connect, so a
-   *  restart lands you back in the same channels. The client owns this list; the sidecar only
-   *  persists what it reports. */
-  chatChannels: string[];
-  /** Share what you're doing (the contract you're running, or that you're scanning rocks) with
-   *  the people in your chat channels.
-   *  🔴 OFF by default, and it stays that way for the same reason publishing your shard on a
-   *  party listing is opt-in per listing: nothing may leak from merely having the widget open.
-   *  This is the one thing an external chat can show that the game's own social panel cannot —
-   *  it comes off game.log — which is exactly why it has to be asked for rather than assumed. */
-  chatShareActivity: boolean;
-  /** Be invisible in the channels that identify WHERE you are — your server (region) and Nearby
-   *  (DGS). Global, your org and custom rooms are unaffected: this hides a location, not a
-   *  person.
-   *  🔑 Enforced by not SENDING the location at all (see ChatClient.setHideLocation), so the
-   *  shard never reaches a machine the player does not own. A server-side "hide me" flag would
-   *  still have published it and merely declined to show it. */
-  chatHideLocation: boolean;
-  /** First-run setup wizard: every step is resolved (done or explicitly skipped). Set when the
-   *  wizard is finished; the wizard never auto-opens again once true. */
-  setupDone: boolean;
-  /** The wizard's "review your settings" step. Nothing else in the app can observe that a user
-   *  looked at Settings, so this is the only record — it is set when they come back from it. */
-  setupSettingsReviewed: boolean;
-  /** The wizard's optional "share your profile" step, which happens entirely on the website.
-   *  The app can't detect an RSI handle verification, so this records that the user resolved it. */
-  setupShareResolved: boolean;
-  /** Existing users don't get the wizard thrown at them on update — they get one dismissible
-   *  banner. Set when they dismiss it or open the wizard from it, so it never returns. */
-  setupNudgeDismissed: boolean;
-}
-
-const DEFAULTS: Config = {
-  logPath: "C:\\Program Files\\Roberts Space Industries\\StarCitizen\\GAME\\game.log",
-  syncToken: "",
-  syncEnabled: false,
-  fabCapture: false,
-  missionOcr: false,
-  fabClaim: false,
-  miningAssistant: false,
-  miningDebug: false,
-  scanRegion: null,
-  payoutScan: false,
-  // 🔑 A REGION, never null. `null` used to mean "not calibrated yet", and the settings card
-  // disabled the Start button until one existed — while the only surface that could set one was
-  // the box that appears once scanning is armed. Nobody but Sub (who had POSTed his own) could
-  // ever get past it. Everyone now starts from the measured default and DRAGS it if it's wrong,
-  // which turns calibration from a precondition into a correction.
-  contractRegion: DEFAULT_CONTRACT_REGION,
-  miningAutoShow: false,
-  miningOpen: false,
-  notepadOpen: false,
-  notepadFontScale: 1,
-  twitchChannel: "subliminalstv", // default channel — users can point it anywhere
-  twitchChatOpen: false,
-  twitchChatFontScale: 1,
-  twitchClientId: "44srrs673ypzr1e1y8izcfbbirkmso", // Sub's registered Twitch app
-  twitchUserToken: "",
-  twitchUserLogin: "",
-  twitchRefreshToken: "",
-  scFeedOpen: false,
-  unlockAlertOpen: true,
-  scFeedLinkTarget: "site",
-  scFeedVoice: false,
-  scFeedSound: true,
-  scFeedVolume: 0.6,
-  scFeedTone: "",
-  partyOpen: false,
-  battagliaOpen: false,
-  haulingOpen: false,
-  haulingShip: "",
-  haulingPlaces: {},
-  haulingSeenPlaces: [],
-  webViewOpen: false,
-  // A first-run Web Page widget opens on the blueprint tracker rather than an empty form —
-  // it's the page most likely to be wanted beside the game, and it shows what the widget does.
-  webViewUrl: "https://subliminal.gg/blueprints",
-  bindingChartOpen: false,
-  miningTone: "",
-  hwAccel: false,
-  amdCompat: false,
-  bindingPng: "",
-  bindingHotkey: "Ctrl+F3",
-  overlayHotkey: "F3",
-  canvasOffsetX: 0,
-  canvasOffsetY: 0,
-  canvasScale: 1,
-  scFeedShowSeconds: 12,
-  unlockAlertShowSeconds: 8,
-  miningHotkey: "Shift+F3",
-  widgetHotkeys: {},
-  webViewHotkey: "Ctrl+Shift+F3",
-  notepadHotkey: "Alt+F3",
-  interactHotkey: "F",
-  holdToInteract: false,
-  moveHotkey: "Ctrl+Alt+M",
-  fabClaimHotkey: "F4",
-  unfocusedOpacity: 1,
-  opacityHotkey: "",
-  timeRelative: true,
-  shareLogs: false,
-  seenChangelog: "",
-  hideCatbar: false,
-  theme: "mobiglas",
-  overlayTwist: 0, // flat by default; the user can dial in a skew angle in the hub
-  overlayScale: 100,
-  revertThemeOnFoot: false,
-  chatOpen: false,
-  // Production chat (Coolify VPS, CHAT_AUTH=site — identities come from the sync token's
-  // verified RSI handle). Local dev server: ws://127.0.0.1:8788/ws + a chatHandle.
-  chatServerUrl: "wss://chat.subliminal.gg/ws",
-  chatHandle: "",
-  chatChannels: [],
-  chatShareActivity: false,
-  chatHideLocation: false,
-  setupDone: false,
-  setupSettingsReviewed: false,
-  setupShareResolved: false,
-  setupNudgeDismissed: false,
-};
-
-// Set when the config on disk was left ARMED (a crash, or a build from before the forced-off
-// rule). Read once at startup to rewrite the file immediately — see the note in loadConfig.
-let payoutScanWasArmedOnDisk = false;
-
-function loadConfig(): Config {
-  // Prefer the user's saved config; fall back to the bundled default on first run.
-  //
-  // 🔑 `payoutScan` is forced OFF here regardless of what any file says. This is the ONLY thing
-  // keeping the scan session temporary, and it is enough: whatever the file claims, the running
-  // app starts disarmed and the file is rewritten to agree (see the startup save below).
-  //
-  // 🔴 DO NOT go back to stripping it on SAVE. That looked stronger and silently broke the
-  // scanner for a whole release: `electron/capture.cjs` learns the mode by READING config.json
-  // off disk every tick (`readConfig`), so a field that is never written is a field it can never
-  // see — `payout` was permanently false, the contract-region crop at capture.cjs:713 never ran,
-  // and the dashboard sat on "no board on screen" forever while every server-side surface
-  // correctly reported the mode as ON. Nothing failed loudly; `c8c2aca` introduced it as a
-  // tightening and no board was swept afterwards to notice. Forcing it off on LOAD gives the
-  // same guarantee — the mode cannot survive a launch — without lying to the process that has
-  // to act on it.
-  for (const p of [configPath, seedConfigPath]) {
+/** 🔴 THE SIDECAR MUST NOT OUTLIVE THE SHELL THAT SPAWNED IT.
+ *
+ *  An orphan keeps :8778 and nothing can reap or respawn it, so the next app to launch finds
+ *  nowhere to put its own service and gives up — reaching the user as "my background service
+ *  didn't start". That shipped as the 0.1.45 failure and recurred during the 0.1.46 install.
+ *
+ *  The shell already calls `server.kill()` on `before-quit`, and since the dev spawn stopped
+ *  going through `cmd.exe` that call reaches the right process. This watchdog covers the case
+ *  that handler CANNOT: before-quit never runs when the shell is killed rather than quitting —
+ *  a crash, Task Manager, or the elevated `taskkill /F` a stuck app gets. It is also why the
+ *  fix does not rest on tsx's process-tree behaviour, which is emergent and could change.
+ *
+ *  🔑 IT KEYS ON THE SHELL PROCESS, NOT ON HAVING A WINDOW. The overlay is a tray app that
+ *  deliberately prevents `window-all-closed`, so the shell outlives every hidden window and
+ *  toggled-off overlay. Sub's streaming PC talks to this sidecar to sync his stream theme to
+ *  the ship he is in; exiting because a window went away would drop that integration, which is
+ *  worse than the orphan this exists to prevent. Dying too eagerly is the expensive mistake here.
+ *
+ *  ⚠️ NO PARENT PID MEANS NO WATCHDOG, deliberately. A sidecar started by hand
+ *  (`npm run overlay`, a flight's own port, the widget suite's sandbox) has no shell to outlive
+ *  and must never exit on its own.
+ *
+ *  ⚠️ EPERM MEANS ALIVE. `process.kill(pid, 0)` throws EPERM for a process that exists but which
+ *  we may not signal — an elevated shell seen from a less-privileged sidecar. Treating that as
+ *  "gone" would kill a healthy sidecar; the safe direction of error is to linger. */
+const PARENT_PID = Number(process.env.SC_PARENT_PID) || 0;
+const PARENT_POLL_MS = 5000;
+if (PARENT_PID > 0) {
+  setInterval(() => {
     try {
-      if (existsSync(p)) {
-        const raw = JSON.parse(readFileSync(p, "utf8"));
-        if (raw && raw.payoutScan === true) payoutScanWasArmedOnDisk = true;
-        // `contractRegion` is normalised rather than merged: every config written before the
-        // default existed carries an explicit `null`, which a spread preserves — so those users
-        // would keep the un-calibratable state this default was added to end. A region dragged
-        // off-frame or squashed to nothing is replaced for the same reason (it reads an empty
-        // rectangle and looks exactly like a scanner that has stopped working).
-        return { ...DEFAULTS, ...raw, payoutScan: false,
-          contractRegion: contractRegionOrDefault(raw?.contractRegion),
-          // ⚠️ Copied, not spread through. A shallow `{...DEFAULTS}` hands out DEFAULTS' OWN
-          // container for these two, and both are mutated in place (naming a place, learning a
-          // name) — so the defaults object would accumulate this session's data and any later
-          // load would inherit it. Also normalises a config written before the fields existed.
-          haulingPlaces: { ...(raw?.haulingPlaces ?? {}) },
-          haulingSeenPlaces: Array.isArray(raw?.haulingSeenPlaces) ? [...raw.haulingSeenPlaces] : [] };
-      }
-    } catch {
-      /* corrupt — try the next source */
+      process.kill(PARENT_PID, 0);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === "EPERM") return; // exists, just not signalable
+      console.error(`[server] parent ${PARENT_PID} is gone — exiting so :${PORT} is released`);
+      process.exit(0);
     }
-  }
-  return { ...DEFAULTS, haulingPlaces: {}, haulingSeenPlaces: [] };
+  }, PARENT_POLL_MS).unref();
 }
-// 🔑 Whether this is a genuinely FIRST run, decided BEFORE anything can write a config —
-// the setup wizard takes over the screen, so it must never fire at someone who has been
-// using the app for months. An ABSENT `setupDone` cannot serve here: every existing user's
-// config predates the field and would read as fresh.
-//
-// Judged on the USER's config alone. `seedConfigPath` (overlay/config.json) is deliberately
-// excluded: it is a bundled DEFAULT, not evidence that this user has configured anything, and
-// it never ships (tools/build-server.mjs filters it out) so packaged behaviour is unchanged
-// either way. Including it meant the wizard could never fire on a machine that happened to have
-// a dev seed lying around — which is every developer's, and which made `npm run dev:fresh`
-// (the only way to walk first-run setup once you have already done it) silently useless.
-const freshInstall = !existsSync(configPath);
+
 let config: Config = loadConfig();
 
 /** Scan common Star Citizen install locations for per-channel game.log files, newest
@@ -774,10 +382,39 @@ function seedDataDir(): void {
 }
 seedDataDir();
 
+// The dynamic-event registry phones home, because a reward or point value is discovered by
+// PLAYING and would otherwise be stranded behind an app release. `start()` must run AFTER
+// seedDataDir() (which has just clobbered the working copy with the bundle) and BEFORE the
+// tracker is constructed, so its very first read already sees the freshest copy we hold.
+// See src/event-feed.ts for why this is freshness rather than fetch-if-missing.
+const eventFeed = new EventFeed({
+  bundledPath: join(bundledDataDir, "events.json"),
+  workingPath: join(dataDir, "events.json"),
+  cachePath: join(userDir, "events-remote.json"),
+  // SC_EVENTS_URL points a dev run at a staging copy. It is also the only way to exercise the
+  // adopt path end to end before the site has deployed the file.
+  url: process.env.SC_EVENTS_URL || "https://subliminal.gg/sc/events.json",
+});
+eventFeed.start();
+
 // ── Mission / blueprint tracker ─────────────────────────────────────────────
 // remoteBaseUrl: pull a patch's pool data from subliminal.gg if it isn't bundled
 // (offline-first — always falls back to the shipped data/ files).
 const tracker = new MissionTracker({ dataDir, remoteBaseUrl: "https://subliminal.gg/sc" });
+
+/** Re-check the events feed and re-read the file only if it actually changed. Best-effort by
+ *  construction: `refresh()` never throws and never leaves us worse off than the copy in hand. */
+async function refreshEvents(): Promise<boolean> {
+  const changed = await eventFeed.refresh();
+  if (changed) {
+    tracker.reloadEvents();
+    const s = eventFeed.status();
+    console.log(`[events] adopted revision ${s.revision} (${s.source})`);
+  }
+  return changed;
+}
+void refreshEvents();
+setInterval(() => { void refreshEvents(); }, EVENT_REFRESH_MS).unref?.();
 // Name->UUID catalog for the screen-read OCR endpoint; loaded lazily on first use.
 let screenCatalog: CatalogEntry[] | null = null;
 
@@ -1044,6 +681,12 @@ function missionsPayload(): string {
       // calibrating against pixels it cannot see. null = no crop has been taken yet, which is not
       // the same as "it's fine" and must not be reported as such.
       payoutOnPrimary: contractCropOnPrimary,
+      // The REP-page re-baseline: whether it is armed, and what the last scan did. Both ride
+      // prefs so the widget can say "syncing from your rep page" and "the page is scrolled, I
+      // will not guess" from the same place the mode itself is read — the payout panel's lesson
+      // about one switch with one meaning, applied before it can go wrong twice.
+      repScan: config.repScan,
+      repScanLast,
     },
   });
 }
@@ -1052,6 +695,23 @@ function broadcastMissions(): void {
   for (const res of missionClients) res.write(data);
 }
 tracker.on("change", broadcastMissions);
+
+/** Tell every open canvas to reload its widget iframes. Dev only — see POST /api/dev/reload.
+ *
+ *  🔑 IT RIDES THE MISSIONS SSE RATHER THAN ANY IPC, and that is the whole reason this feature is
+ *  cheap. The sidecar is a SEPARATE PROCESS from the shell, so "reload the overlay window" would
+ *  otherwise need a new sidecar->shell channel. It does not: `missions.html` IS the canvas and it
+ *  already holds an EventSource on this stream, so the instruction reaches the renderer that owns
+ *  the frames, and the renderer reloads them itself. Nothing goes near `resetWidgetLayout()`.
+ *
+ *  ⚠️ Every other frame on this stream is a tracker view, which the page renders directly — so
+ *  this one carries a `kind` and the page dispatches on it. Do not remove the discriminator on the
+ *  page side; without it a reload frame is fed to the tracker renderer as if it were a view. */
+function broadcastDevReload(widget: string | null): number {
+  const data = `data: ${JSON.stringify({ kind: "devreload", widget })}\n\n`;
+  for (const res of missionClients) res.write(data);
+  return missionClients.size;
+}
 
 // ── Mining / economy datasets (commodities prices + rock->ore composition) ───
 // Bundled, version-independent reference data for offline use (see MiningEconomyStore).
@@ -1067,6 +727,68 @@ const economy = new MiningEconomyStore(dataDir);
 // Bundled reference data for the hauling optimiser (see HaulingDataStore). Served via
 // /api/ships, /api/hauling-orders and /api/locations; the widget is not built yet.
 const haulingData = new HaulingDataStore(dataDir);
+/**
+ * The commodity runs the player picked in the Commodities tab, to be sequenced into the same route
+ * as the contracts. See `hauling-buys.ts` — the tonnage on one of these is NEVER chosen, it arrives
+ * from the log when the purchase happens.
+ */
+const haulingBuys = new HaulingBuys(userDir);
+/** Everything the commodity-trading subsystem needs. Declared once so the route handler and the
+ *  three log-feed sites cannot drift apart; every field is read lazily inside that module. */
+const tradeDeps = {
+  dataDir, userDir, economy, haulingData, system: currentSystem, logPath: () => config.logPath,
+  /* Where the player is standing, named. The SAME expression the hauling plan uses for its own
+     origin picker (see `atLocationLabel`), so the Commodities tab's "buy where I am" and the Route
+     tab's "Auto" can never disagree about where that is. */
+  place: () => locationTokenLabel(dataDir, haulingWhereAmI(hauling.view())?.token),
+  placeToken: () => haulingWhereAmI(hauling.view())?.token ?? null,
+  /* 🔴 THE PURCHASE OVERRIDE, HOOKED ON THE PARSE RATHER THAN AT THE THREE FEED SITES. This is the
+     other half of "they don't need to pick it… we'll know how much they bought and then it'll
+     override it": a pick routed with an unknown tonnage learns the real one here, and the route,
+     the hold figures and the Stow diagram all follow from that.
+     🔑 The re-broadcast is a CHANGE SIGNAL, not the payload — the widget re-asks for the plan,
+     which it must anyway because the plan depends on the player's own overrides too. Without it a
+     purchase made while the widget is open would sit in the file until something else moved. */
+  onPurchase: (p: CommodityPurchase) => {
+    const filled = haulingBuys.applyPurchase(p);
+    if (!filled) return;
+    console.log(`[hauling] buy filled from the log: ${filled.commodity} ${filled.scu} SCU at ${filled.shopName ?? "an unnamed shop"}`);
+    if (haulingClients.size) haulingSend({ kind: "state", view: hauling.view() });
+  },
+};
+// Observed prices — what the player actually paid, as opposed to what UEX's survey says. Stood up
+// before any seed runs, because the seed is where a purchase from before this launch is found.
+initPriceFeed(userDir);
+// 🔑 STARTED, not merely constructed: the constructor adopts the disk cache (so a widget opened
+// offline still shows the last known pool) and `start()` is what asks the site for a fresher one.
+// Failure is silent by design — a pool that cannot be reached must never take a search down with
+// it, and `status()` carries the reason for /api/diagnostics.
+const pricePool = new PricePoolStore(userDir);
+pricePool.start();
+
+/**
+ * Commodity display name -> `resourceGUID`, built once from the economy dataset.
+ *
+ * 🔑 Rebuilt when the dataset's size changes rather than cached forever: `loadDataset` swaps the
+ * whole economy on a patch flip, and a map pinned at boot would keep resolving names against the
+ * previous patch's commodity list. Cheap enough to check on every call (one property read) and it
+ * cannot go stale the way a boot-time snapshot can.
+ */
+let commodityUuidMap: Map<string, string> | null = null;
+let commodityUuidFor = -1;
+function commodityUuidByName(): Map<string, string> {
+  const all = economy.commodities();
+  const n = Object.keys(all).length;
+  if (commodityUuidMap && commodityUuidFor === n) return commodityUuidMap;
+  const m = new Map<string, string>();
+  for (const [uuid, c] of Object.entries(all)) {
+    const name = (c as { name?: string | null })?.name;
+    if (name) m.set(name.toLowerCase(), uuid);
+  }
+  commodityUuidMap = m;
+  commodityUuidFor = n;
+  return m;
+}
 {
   const c = haulingData.counts();
   console.log(`[hauling] ships: ${c.ships}, contracts: ${c.contracts}, locations: ${c.locations}` +
@@ -1149,6 +871,82 @@ function fuzzyScore(name: string, q: string): number | null {
 }
 
 /** Ranked suggestions for the naming box: names the game has used, then the shipped dataset. */
+/** One row the Route tab's picker can offer. `body`/`system` are separate FIELDS as well as being
+ *  inside `hint`, because a re-point has to carry them and a display string cannot be parsed back
+ *  into them safely. */
+interface PlacePick {
+  name: string;
+  hint: string | null;
+  seen: boolean;
+  price: number | null;
+  scu: number | null;
+  body: string | null;
+  system: string | null;
+}
+
+/**
+ * 🔴 WHERE A COMMODITY LEG CAN ACTUALLY START OR END.
+ *
+ * Sub, on the Route tab: *"right now I can change the drop-off point or the pickup point to
+ * someplace where you can't even pick up Neon. It shows places that are used before, but the only
+ * thing that matters is where you can pick it up from and where you can drop it off at."*
+ *
+ * He is right, and the correct source was already in the process: `lookupCommodity` returns `buyAt`
+ * (cheapest first) and `sellAt` (best first) for exactly this. So the picker on a commodity leg is
+ * fed from the price table rather than from "places you have been", and a place the commodity
+ * cannot be traded at becomes UNREACHABLE rather than merely unlikely.
+ *
+ * ⚠️ SCOPED TO COMMODITY LEGS, and the scope is the whole reason this is safe. A hauling CONTRACT
+ * stop is an anonymous set of coordinates the game handed the player; no price table has an opinion
+ * about where it is, and there the "used before + dataset" list below is exactly right. Constraining
+ * both would break the inline stop-naming control Sub asked for a week earlier — which is also why
+ * his offered fallback (remove the picker outright) was the wrong trade: it amputates a control that
+ * works on contract stops to fix a bug that only exists on commodity ones.
+ *
+ * 🔑 IT STILL RANKS WITH `fuzzyScore` AND STILL CAPS AT `PLACE_LIMIT`, so typing behaves identically
+ * to the unconstrained picker. Only the candidate list changed.
+ */
+function commodityPlaceSuggestions(
+  commodity: string,
+  side: "buy" | "sell",
+  q: string,
+): PlacePick[] {
+  const look = lookupCommodity(tradeTable(tradeDeps).quotes, commodity, "live");
+  if (!look) return [];
+  const ends = side === "buy" ? look.buyAt : look.sellAt;
+  const out: (PlacePick & { rank: number })[] = [];
+  for (const e of ends) {
+    // 🔑 The SHORT name, because that is what every surface in this app renders and therefore what
+    // a player recognises — and what the route's name-merge compares against the game's own names.
+    const s = q ? fuzzyScore(e.terminalShort, q) : 0;
+    if (s === null) continue;
+    out.push({
+      name: e.terminalShort,
+      hint: [e.body, e.system].filter(Boolean).join(" · ") || null,
+      /* 🔴 THE BODY AND THE SYSTEM AS FIELDS, not only inside `hint`. A re-point has to carry them:
+         the tiered travel model prices a leg off which WORLD each end is on, and the price table
+         knows a terminal's body even though it knows no coordinates. Without them every re-pointed
+         leg is charged the flat cross-body rate and every ordering involving one TIES — the
+         "it isn't optimising" failure the contract side already hit through a different door.
+         Caught by driving the picker and re-reading the plan; a screenshot showed nothing wrong. */
+      body: e.body,
+      system: e.system,
+      // `seen` tints a row green in the existing picker to mean "the game has used this name". A
+      // price-table terminal has not been, so it is false — reusing the flag to mean "recommended"
+      // would make one class mean two things in one list.
+      seen: false,
+      price: e.price,
+      scu: e.scu,
+      rank: s,
+    });
+  }
+  // Ties keep the incoming order, which is cheapest-first for a buy and best-first for a sell —
+  // the order `lookupCommodity` already sorted them into, and the useful one either way.
+  out.sort((a, b) => a.rank - b.rank);
+  return out.slice(0, PLACE_LIMIT).map(({ name, hint, seen, price, scu, body, system }) =>
+    ({ name, hint, seen, price, scu, body, system }));
+}
+
 function haulingPlaceSuggestions(q: string): { name: string; hint: string | null; seen: boolean }[] {
   const out: { name: string; hint: string | null; seen: boolean; rank: number }[] = [];
   const taken = new Set<string>();
@@ -1199,6 +997,42 @@ function advisorContracts(): AdvisorContract[] {
   advisorRows = buildContracts(missions as never, orders as never);
   console.log(`[hauling] advisor: ${advisorRows.length} rankable contract types`);
   return advisorRows;
+}
+
+/** How close together a numeric id and a readable token must appear to count as the same place.
+ *  Generous: they come from different terminals at one site and a player wanders between the ASOP
+ *  and the freight lift over minutes. Too tight and nothing ever binds; unbounded and a quantum hop
+ *  would bind a number to the place just left. */
+const PLACE_BIND_WINDOW_MS = 5 * 60_000;
+
+/**
+ * Bind the game's numeric location ids to the readable tokens seen at the same place, and return
+ * the freshest positional evidence available.
+ *
+ * 🔴 THE NUMBER NAMES NOTHING BY ITSELF. `3490636373` is Baijini Point only because `RR_ARC_LEO`
+ * was observed at the same site — the log never states the pairing anywhere. So this learns the
+ * binding when both appear together, persists it, and afterwards lets the number alone stand in.
+ *
+ * 🔑 Why it earns its keep: the named signal fires only at a LOCATION inventory — a freight lift or
+ * storage. The numeric one also fires at the ASOP terminal and on any item moved to or from local
+ * storage, which are exactly the things a player does when they are NOT touching cargo. Sub named
+ * the gap himself: "you might be somewhere and not hit that panel."
+ *
+ * ⚠️ An UNBOUND number resolves to nothing, never to a guess — the same rule as the name join.
+ */
+function haulingWhereAmI(view: HaulingView): { token: string; at: number } | null {
+  const named = view.atLocation;
+  const numeric = view.atLocationId;
+  if (named && numeric && Math.abs(named.at - numeric.at) <= PLACE_BIND_WINDOW_MS
+      && config.haulingPlaceIds[numeric.id] !== named.token) {
+    config.haulingPlaceIds[numeric.id] = named.token;
+    void saveConfig();
+  }
+  // Whichever evidence is FRESHER wins — carrying the position forward at terminals the named
+  // signal never fires at is the entire point.
+  const fromId = numeric ? config.haulingPlaceIds[numeric.id] : undefined;
+  if (fromId && numeric && (!named || numeric.at > named.at)) return { token: fromId, at: numeric.at };
+  return named;
 }
 
 /**
@@ -1300,6 +1134,38 @@ let lastFrame = "";
  *  game is on another monitor" are different answers and only one of them is worth interrupting
  *  someone over. Deliberately NOT persisted: it describes this session's screen layout. */
 let contractCropOnPrimary: boolean | null = null;
+
+/** What the last REP-page scan did — the ONE surface the widget reads, so "the page synced" and
+ *  "the page was refused, here is why" can never be reported by two things that disagree. Rides
+ *  the missions SSE like every other piece of live tracker state. */
+interface RepScanLast {
+  at: number;
+  ok: boolean;
+  refusal?: string;
+  giver?: string;
+  /** The faction heading the page actually showed, verbatim off the OCR. Carried even when the
+   *  scan refused — on `no-giver` it is the ONLY thing that says which faction failed, which is
+   *  what turns "it didn't know the name" into a report somebody can act on. */
+  faction?: string;
+  scope?: string;
+  rank?: number;
+  /** The rank's NAME on the ladder ("Prestige 1"). Present on a refusal too whenever the ladder
+   *  was identified — the page was still read, and saying what it read is the point. */
+  standing?: string | null;
+  progress?: number | null;
+  floor?: number;
+  ceiling?: number | null;
+  before?: number;
+  after?: number;
+  estimated?: boolean;
+  outcome?: "raised" | "lowered" | "unchanged";
+  /** False on a PTU scan: it was read and is being shown, and it was deliberately not stored. */
+  envIsLive?: boolean;
+}
+let repScanLast: RepScanLast | null = null;
+/** The last `[rep-scan] refused:` line written, so an unchanged refusal is not written again on
+ *  every capture tick. Not persisted — it describes this session's log file. */
+let lastRepRefusalLine = "";
 let payoutMatcher: ContractMatcher | null = null;
 let payoutMatcherFor = "";
 
@@ -1473,6 +1339,39 @@ setInterval(() => void flushMissionFeedback(), 10 * 60_000);
 // backlog is urgent enough to race startup for.
 setTimeout(() => void flushMissionFeedback(), 15_000);
 
+/** Push answered tier-reward questions to subliminal.gg.
+ *
+ *  🔑 SAME OPT-IN AS EVERY OTHER CROWDSOURCED SIGNAL — `config.syncEnabled` and the device
+ *  token. A player who has not connected the tracker keeps their answers locally, which is the
+ *  correct behaviour and not a degraded one: the answer still fills in THEIR ladder.
+ *  🔑 One player's answer is a CLAIM, not a fact. Corroboration happens site-side; nothing here
+ *  reaches the shipped events.json on one report. */
+async function flushRewardAnswers(): Promise<void> {
+  if (!config.syncEnabled || !config.syncToken) return;
+  const pending = tracker.unreportedRewardAnswers();
+  if (!pending.length) return;
+  const base = (process.env.SC_SYNC_BASE || "https://subliminal.gg").replace(/\/+$/, "");
+  const bodies = pending.map(rewardReportBody).filter(Boolean);
+  if (!bodies.length) return;
+  try {
+    const res = await fetch(`${base}/api/sc/event-reward`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.syncToken}` },
+      body: JSON.stringify({ reports: bodies }),
+    });
+    if (!res.ok) {
+      console.log(`[event-reward] upload refused (${res.status}) — ${pending.length} answer(s) still queued`);
+      return;
+    }
+    for (const p of pending) tracker.markRewardAnswerReported(p.id);
+    console.log(`[event-reward] uploaded ${pending.length} answer(s) to ${base}`);
+  } catch (err) {
+    console.log(`[event-reward] upload failed (${(err as Error).message}) — ${pending.length} queued`);
+  }
+}
+setInterval(() => void flushRewardAnswers(), 10 * 60_000).unref?.();
+setTimeout(() => void flushRewardAnswers(), 20_000).unref?.();
+
 // Monotonic per-process counter so two runs of the same dev scenario are two distinct
 // completions rather than one the tracker de-duplicates by missionId.
 let replaySeq = 0;
@@ -1562,10 +1461,25 @@ const miningClients = new Set<ServerResponse>();
 // ── Where the player is ─────────────────────────────────────────────────────
 // The body-name map rides in the dataset (`pyro2` -> "Monox"), so it refreshes per
 // patch with everything else rather than being a hard-coded list here.
-const place = new PlaceWatcher(mining.bodyNames());
+//
+// 🔴 THE WATCHERS ARE OWNED BY `PlayerLocation` NOW, and `place`/`sysWatch` are aliases onto its
+// two fields so every existing call site keeps working unchanged. The service is what remembers
+// what a numeric location id and a shop terminal stand for — state that used to live in three
+// files and therefore belonged to nobody. Read its header before changing anything here; it
+// carries the measurements behind the seed fix below.
+//
 // Seeded from the DATASET's own system vocabulary, so a system added in a patch is recognised
 // without a code change — and so nothing outside that vocabulary can be mistaken for one.
-const sysWatch = new SystemWatcher(tracker.knownSystems());
+const playerLocation = new PlayerLocation({
+  bodyNames: mining.bodyNames(),
+  knownSystems: tracker.knownSystems(),
+  // The persisted numeric-id map, shared with `haulingWhereAmI` rather than duplicated — two maps
+  // learning the same pairing would eventually disagree about one log.
+  savedPlaceIds: () => config.haulingPlaceIds,
+  savePlaceId: (id, token) => { config.haulingPlaceIds[id] = token; void saveConfig(); },
+});
+const place = playerLocation.place;
+const sysWatch = playerLocation.system;
 // User override. `auto` trusts the log; the other two are the player saying "I know
 // where I am, stop guessing" -- which matters because the log reading can be ten
 // minutes old and a forced value is never stale.
@@ -1614,6 +1528,60 @@ function haulingSend(msg: unknown): void {
   for (const res of haulingClients) res.write(data);
 }
 hauling.on("change", () => { if (haulingClients.size) haulingSend({ kind: "state", view: hauling.view() }); });
+
+// ── Log view ────────────────────────────────────────────────────────────────
+// A live tail of game.log on screen, as a placeable widget. Sub: "I need a way to be able to read
+// the logs so I can look for things in it. So I can tell you what to look for. So you can pinpoint
+// what state I'm in." It is the standing answer to "is X even logged?" — the question that has
+// produced more wrong conclusions on this project than any other, twice reaching a user.
+//
+// 🔴 THIS IS THE ONLY CHANNEL CARRYING RAW, UNPARSED, UNFILTERED LOG TEXT, so it is also the only
+// one whose volume is set by the GAME rather than by us. Three caps, all deliberate:
+//   1. A bounded ring in memory (LOGVIEW_RING). Maintained even with nobody watching, because that
+//      ring IS the backfill — the widget is nearly always opened AFTER the interesting thing
+//      happened ("I just did X, what did it log?"). ~600 lines is well under 200 KB.
+//   2. Per-line truncation. A line is normally ~120 bytes, but the engine emits multi-KB dumps and
+//      a burst of those is what would actually hurt.
+//   3. 🔑 BATCHED FLUSHES, never a frame per line. The log is loudest exactly when the rest of the
+//      sidecar is busiest, and a frame per line would put an SSE write plus a DOM append in front
+//      of every parse. At LOGVIEW_FLUSH_MS this widget costs at most 4 frames a second whatever
+//      the game does. Anything dropped for exceeding the batch cap is COUNTED and said out loud in
+//      the widget: a diagnostic instrument that silently omits lines is worse than no instrument,
+//      because it answers "is X logged?" with a confident, wrong "no".
+const LOGVIEW_RING = 600;       // lines held for backfill
+const LOGVIEW_BACKFILL = 300;   // lines handed to a widget on connect (Sub's call)
+const LOGVIEW_LINE_MAX = 2000;  // chars per line before truncation
+const LOGVIEW_FLUSH_MS = 250;   // batch window
+const LOGVIEW_BATCH_MAX = 400;  // lines per batch before dropping (and saying so)
+
+interface LogViewLine { n: number; t: number; s: string }
+const logViewClients = new Set<ServerResponse>();
+const logViewRing: LogViewLine[] = [];
+let logViewSeq = 0;
+let logViewPending: LogViewLine[] = [];
+let logViewDropped = 0;
+let logViewTimer: NodeJS.Timeout | null = null;
+
+/** One raw line off the watcher. Runs for EVERY line the game writes — keep it cheap. */
+function noteLogLine(raw: string): void {
+  const s = raw.length > LOGVIEW_LINE_MAX ? `${raw.slice(0, LOGVIEW_LINE_MAX)} …[truncated]` : raw;
+  const entry: LogViewLine = { n: ++logViewSeq, t: Date.now(), s };
+  logViewRing.push(entry);
+  if (logViewRing.length > LOGVIEW_RING) logViewRing.splice(0, logViewRing.length - LOGVIEW_RING);
+  if (!logViewClients.size) return; // nobody watching: the ring alone is the whole cost
+  if (logViewPending.length >= LOGVIEW_BATCH_MAX) { logViewDropped++; return; }
+  logViewPending.push(entry);
+  if (!logViewTimer) logViewTimer = setTimeout(flushLogView, LOGVIEW_FLUSH_MS);
+}
+function flushLogView(): void {
+  logViewTimer = null;
+  if (!logViewPending.length && !logViewDropped) return;
+  const msg = { kind: "lines", lines: logViewPending, dropped: logViewDropped };
+  logViewPending = []; logViewDropped = 0;
+  if (!logViewClients.size) return;
+  const data = `data: ${JSON.stringify(msg)}\n\n`;
+  for (const res of logViewClients) res.write(data);
+}
 
 mining.on("change", () => miningSend({ kind: "state", view: miningViewWithPlace() }));
 // Transient alerts the overlay turns into TTS + sound + a flash.
@@ -1715,6 +1683,84 @@ async function scFeedItems(): Promise<FeedItem[]> {
   return scFeedCache.items;
 }
 
+// ── Third-party emote providers (7TV / BTTV / FFZ) ───────────────────────────
+// 🔴 THE WIDGET MUST NOT FETCH THESE DIRECTLY, and the reason is not tidiness: a provider's
+// outage becomes console noise the app CANNOT SUPPRESS. A cross-origin fetch that fails CORS is
+// reported by Chromium itself, not by our JS — `twitchchat.html` already wraps every provider in
+// Promise.allSettled, so nothing throws and chat renders perfectly, and Chromium still prints
+// "Access to fetch at 'https://api.frankerfacez.com/…' has been blocked by CORS policy" on every
+// load. There is no JS that removes that line while the page issues the request.
+//
+// Measured 2026-08-25, with FFZ's origin down behind Cloudflare (`/v1/set/global` answered 000,
+// 522 and 503 on three consecutive tries, body `error code: 1200`, and www.frankerfacez.com and
+// cdn.frankerfacez.com were down too — a flapping origin, never a policy change). A Cloudflare
+// error page carries none of the origin's headers, so "no Access-Control-Allow-Origin" is a
+// SYMPTOM of the outage rather than a second, separate fault. Two console errors per load, for
+// every user, because `twitchChannel` ships defaulted to subliminalstv.
+//
+// Same reasoning and same shape as the SC Feed proxy above: same-origin through the sidecar, the
+// CORS class of failure cannot exist at all, and a dead provider degrades to "no emotes from
+// them" in silence. Cached so the overlay and an OBS browser-source share one upstream request.
+//
+// 🔑 THE CALLER NAMES A KEY, NEVER A URL. This route is PUBLIC on purpose — OBS browser sources
+// run on a second PC and want emotes too — so a `?url=` passthrough would be an unauthenticated
+// SSRF hop into the user's LAN. `/api/can-embed` is loopback-only for precisely that reason; this
+// one can only ever reach the seven hosts below, and `q` is validated before it is interpolated.
+const EMOTE_PROVIDERS: Record<string, { needs: "id" | "login" | "none"; url: (q: string) => string }> = {
+  "ffz-global":  { needs: "none",  url: () => "https://api.frankerfacez.com/v1/set/global" },
+  "ffz-room":    { needs: "id",    url: (q) => `https://api.frankerfacez.com/v1/room/id/${q}` },
+  "7tv-global":  { needs: "none",  url: () => "https://7tv.io/v3/emote-sets/global" },
+  "7tv-user":    { needs: "id",    url: (q) => `https://7tv.io/v3/users/twitch/${q}` },
+  "bttv-global": { needs: "none",  url: () => "https://api.betterttv.net/3/cached/emotes/global" },
+  "bttv-user":   { needs: "id",    url: (q) => `https://api.betterttv.net/3/cached/users/twitch/${q}` },
+  // Resolves a login to a Twitch user id without an API key — the other five channel lookups are
+  // keyed by that id, so this one runs first and the rest are skipped when it comes back null.
+  "twitch-user": { needs: "login", url: (q) => `https://api.ivr.fi/v2/twitch/user?login=${encodeURIComponent(q)}` },
+};
+const EMOTE_TTL_OK_MS = 15 * 60 * 1000;
+// 🔑 CACHE THE FAILURE TOO. Without this a dead provider becomes one upstream request per widget
+// load — and this widget reloads on every regroup, every hide/show and every OBS source refresh.
+const EMOTE_TTL_FAIL_MS = 60 * 1000;
+const emoteCache = new Map<string, { at: number; ok: boolean; body: unknown }>();
+let emoteLastLogged = "";
+
+/** The provider's own JSON, or `null` for "nothing from them" — down, unreachable, or no such
+ *  channel. Never throws and never reports an error status: from the widget's point of view a
+ *  missing provider is a normal, silent degradation, and the diagnosis belongs in sidecar.log. */
+async function emotePayload(key: string, q: string): Promise<unknown> {
+  const p = EMOTE_PROVIDERS[key];
+  if (!p) return null;
+  if (p.needs === "id" && !/^\d{1,20}$/.test(q)) return null;
+  if (p.needs === "login" && !/^[A-Za-z0-9_]{1,25}$/.test(q)) return null;
+  // The sandboxed widget suite sets this so a run touches no network of its own, exactly as it
+  // does for the two price endpoints. See tools/test-widgets-sandbox.mjs.
+  if (process.env.SC_EMOTE_PROXY === "0") return null;
+
+  const ck = `${key}:${p.needs === "none" ? "" : q}`;
+  const hit = emoteCache.get(ck);
+  if (hit && Date.now() - hit.at < (hit.ok ? EMOTE_TTL_OK_MS : EMOTE_TTL_FAIL_MS)) return hit.body;
+
+  let body: unknown = null;
+  let why = "";
+  try {
+    const r = await fetch(p.url(q), { signal: AbortSignal.timeout(6000) });
+    // A 404 here is the COMMON case, not a fault: it means this channel is not registered with
+    // that provider. It caches as a failure so we re-ask in a minute rather than every load.
+    if (r.ok) body = await r.json();
+    else why = `HTTP ${r.status}`;
+  } catch (e) {
+    why = String((e as Error)?.message ?? e).slice(0, 90);
+  }
+  emoteCache.set(ck, { at: Date.now(), ok: !why, body });
+  // Deduped, so a provider that is down for a week costs one line rather than one per load. The
+  // Log View widget exists because a tripwire nobody reads is not a tripwire.
+  if (why && emoteLastLogged !== key + why) {
+    emoteLastLogged = key + why;
+    console.log(`[emotes] ${key} unavailable (${why}) — chat renders without their emotes`);
+  }
+  return body;
+}
+
 // Subscriber-skin entitlement: poll subliminal.gg with the device token to learn whether the
 // linked account is an ACTIVE Twitch subscriber. That server-resolved result (not the local
 // premiumOverride) is what lets a pinned manufacturer skin stay up instead of reverting after
@@ -1781,6 +1827,10 @@ function syncFull(): void {
  *  week-old log would resurrect contracts that are long gone. */
 const BACKUP_SEED_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
+/** Belt against a pathological logbackups folder. The real bound is the 12-hour window above;
+ *  this only caps how many sessions can sit inside one. */
+const MAX_SEED_BACKUPS = 12;
+
 /**
  * 🔴 A LOG ROTATION MUST NOT ERASE WHAT THE PLAYER ALREADY DID.
  *
@@ -1796,27 +1846,53 @@ const BACKUP_SEED_MAX_AGE_MS = 12 * 60 * 60 * 1000;
  * So: replay the most recent backup first, then the live log on top. Mission events are idempotent
  * — the tracker keys by missionId and objectiveId — so anything restated simply lands twice.
  *
- * ⚠️ Only the newest backup, and only if it is recent. Reading the whole folder would drag back
- * every contract the player has ever flown.
+ * 🔴 EVERY backup inside the window, not just the newest — that was a real hole, not a nicety.
+ * Sub, 2026-08-22, sat at 30,000 event points in his in-game Journal while the widget read 0.7%.
+ * Measured off his own folder: the NEWEST backup held ZERO Orison events, the one before it held
+ * SEVEN (22,000 points), and the live log held one (2,000). 2,000/288,000 = 0.69% — the tracker
+ * reported exactly what it could see, which was one completion out of eleven. Quitting to the
+ * menu and relaunching is enough to rotate a session out of reach, so "the newest backup" is not
+ * a proxy for "the last thing the player did".
+ *
+ * ⚠️ The bound is TIME, not count: only backups within BACKUP_SEED_MAX_AGE_MS, which is what
+ * stops the whole folder dragging back every contract ever flown. MAX_SEED_BACKUPS is a second
+ * belt against a pathological folder, not the primary limit.
  */
 function seedFromRotatedLog(): void {
   try {
     const dir = join(dirname(config.logPath), "logbackups");
     if (!existsSync(dir)) return;
-    const newest = readdirSync(dir)
+    const cutoff = Date.now() - BACKUP_SEED_MAX_AGE_MS;
+    const recent = readdirSync(dir)
       .filter((f) => f.toLowerCase().endsWith(".log"))
       .map((f) => join(dir, f))
       .map((p) => ({ p, at: statSync(p).mtimeMs }))
-      .sort((a, b) => b.at - a.at)[0];
-    if (!newest || Date.now() - newest.at > BACKUP_SEED_MAX_AGE_MS) return;
+      .filter((x) => x.at >= cutoff)
+      .sort((x, y) => x.at - y.at)          // OLDEST first: a later session must win
+      .slice(-MAX_SEED_BACKUPS);
+    if (!recent.length) return;
     let applied = 0;
-    for (const line of readFileSync(newest.p, "utf8").split(/\r?\n/)) {
+    for (const line of recent.flatMap((x) => readFileSync(x.p, "utf8").split(/\r?\n/))) {
       if (!line) continue;
+      // 🔴 THIS LINE IS THE ENVIRONMENT GATE, AND IT WAS MISSING. `seedTrackerFromLog` calls
+      // detectPatch per line; this function did not — so a rotated log replayed here never set
+      // `logEnv`, and `isLiveEnv` (null => LIVE) returned true for a PTU session. Every receipt
+      // in that backup was folded into the real collection, which SiteSync then pushes with
+      // `replace: true`. Caught 2026-08-19 against Sub's own 4.10 PTU logs: the rotated seed
+      // recorded event contributions from an `Environment: PTU` session while the live watcher
+      // had never read a header. The project rule already says LIVE-only has to be enforced in
+      // more than one place; this was the place that was missed.
+      tracker.detectPatch(line);
       const ev = parseMissionEvent(parseLine(line));
       if (ev) { tracker.apply(ev); hauling.apply(ev); applied++; }
+      priceFeedLine(line, tradeDeps);
     }
-    const mins = Math.round((Date.now() - newest.at) / 60000);
-    console.log(`[seed] rotated log replayed: ${applied} mission events from ${mins}m ago (${newest.p})`);
+    const oldest = recent[0], newest = recent[recent.length - 1];
+    const span = Math.round((Date.now() - oldest.at) / 60000);
+    // Say how many FILES were replayed, not just the event count. A seed that silently read one
+    // backup and a seed that read four look identical otherwise, and that is precisely the
+    // difference that hid this bug.
+    console.log(`[seed] ${recent.length} rotated log(s) replayed: ${applied} mission events, oldest ${span}m ago (newest ${newest.p})`);
   } catch (err) {
     console.log(`[seed] rotated log skipped: ${(err as Error).message}`);
   }
@@ -1839,8 +1915,25 @@ function seedTrackerFromLog(): number | null {
     for (const line of text.split(/\r?\n/)) {
       if (!line) continue;
       tracker.detectPatch(line);
-      const ev = parseMissionEvent(parseLine(line));
+      const parsed = parseLine(line);
+      // 🔴 THE SEED USED TO SKIP THE TWO LOCATION WATCHERS ENTIRELY, so every launch began with an
+      // empty body and system tier and the Verse Finder said "Location unknown" until the game
+      // happened to write a fresh terrain report (up to ten minutes) or the player touched a
+      // quantum drive. Launching while already playing is the common case, which is exactly when
+      // it bit. Measured over 533 logs: 105 sessions worth 199.1 h were dark for this reason
+      // alone, and freshness coverage across the corpus goes 35.8% -> 84.3%.
+      //
+      // 🔑 STAMP THE LOG'S OWN TIME. Both watchers default `now` to the wall clock, which is right
+      // for a live tail and wrong for a replay — a three-hour-old terrain report arriving as
+      // brand new would outrank a fix that really is current. `parseLine` already has the value.
+      // 🔑 THE LIVE LOG ONLY. This loop reads `config.logPath`; the game writes a fresh Game.log
+      // per launch, so one file is exactly one session. `seedFromRotatedLog()` above deliberately
+      // does NOT feed these — a backup is a previous session and could seed a system since left.
+      const at = parsed.timestamp ? Date.parse(parsed.timestamp) : NaN;
+      playerLocation.push(line, Number.isFinite(at) ? at : Date.now());
+      const ev = parseMissionEvent(parsed);
       if (ev) { tracker.apply(ev); party.apply(ev); hauling.apply(ev); applyChatSignals(ev); }
+      priceFeedLine(line, tradeDeps);
       const chan = shipChannelEvent(line);
       if (chan) {
         if (chan.action === "enter" && chan.manufacturer) { seedMfr = chan.manufacturer; seedShip = chan.ship; }
@@ -1893,11 +1986,18 @@ function startWatcher(): void {
     // Planet-side vs space, off the engine's terrain-streaming report. A HINT only —
     // it is printed about every 10 minutes, so it can be that stale. It orders the
     // wording of an ambiguous 2,000-step signature; it never suppresses anything.
-    if (place.push(e.raw)) { miningSend({ kind: "state", view: miningViewWithPlace() }); }
     // Which SYSTEM, off the quantum-navigation lines — explicit, and far more frequent than the
     // terrain report above. A change re-broadcasts because the idle panel filters its suggestions
     // by system, and a stale answer there sends someone to another star.
-    if (sysWatch.push(e.raw)) { tracker.setSystem(sysWatch.current()); broadcastMissions(); }
+    //
+    // 🔑 ONE CALL FOR BOTH, through the owner. The live tail takes the wall clock (correct: the
+    // line was just written), unlike the seed above, which must pass the log's own timestamp.
+    // The service also picks the shop terminals out of the same pass.
+    const loc = playerLocation.push(e.raw);
+    if (loc.placeChanged) { miningSend({ kind: "state", view: miningViewWithPlace() }); }
+    if (loc.systemChanged) { tracker.setSystem(sysWatch.current()); broadcastMissions(); }
+    // Commodity purchases and sales, for the trade journal. Cheap: one regex test per line.
+    priceFeedLine(e.raw, tradeDeps);
     const me = parseMissionEvent(e);
     if (me) { tracker.apply(me); party.apply(me); hauling.apply(me); applyChatSignals(me); }
 
@@ -1928,6 +2028,10 @@ function startWatcher(): void {
       }
     }
   });
+  // The Log View widget's raw feed. A SEPARATE listener rather than a branch inside the "event"
+  // handler above, so the one channel that must stay unfiltered can never be narrowed by a change
+  // made for the parser's benefit — "raw" is this widget's entire contract.
+  watcher.on("line", noteLogLine);
   watcher.start();
   console.log(`[watcher] watching ${config.logPath}`);
 }
@@ -2286,6 +2390,40 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     req.on("close", () => missionClients.delete(res));
     return;
   }
+
+  // Commodity trading (hauling phase 2). Every route, default and piece of state for that
+  // subsystem lives in trade-routes.ts on purpose — this is its ONLY hook into this file.
+  if (tradeRoutes(url, req, res, tradeDeps)) return;
+
+  // Verse Finder — "where can I buy this item". Same discipline as trade: every route, default
+  // and piece of state lives in verse-routes.ts and this is its ONLY hook into this file.
+  if (verseRoutes(url, req, res, {
+    dataDir, userDir, tracker, haulingData,
+    // 🔴 The Verse Finder BORROWS the trade subsystem's commodity table rather than building one.
+    // Two stores would refresh on two clocks and the two widgets could quote different prices for
+    // the same commodity in the same second. Read at request time for the same reason the location
+    // signals are: the table is swapped by a background refresh.
+    commodities: () => tradeTable(tradeDeps),
+    // What the player actually paid, borrowed read-only from the price feed. Read at request time
+    // for the same reason the table above is: it changes as they shop.
+    observed: () => observedPrices(),
+    // Everybody else's receipts. A SEPARATE borrow from `observed` above, because the two answer
+    // different questions: yours is a fact about you at n=1, the pool is a median over strangers
+    // carrying a contributor count. `observedFor` merges them per terminal at render time.
+    pool: () => pricePool,
+    // A commodity row carries no UUID (it is built from UEX's name-keyed table) while a purchase
+    // states only `resourceGUID`, so the two halves meet through our own dataset. Memoised: the
+    // map is 738 entries and the dataset only changes on a patch flip.
+    commodityUuid: (name: string) => commodityUuidByName().get(name.toLowerCase()) ?? null,
+    // Read at request time, never cached: these watchers are updated by the log tail and a
+    // snapshot taken at startup would pin the player wherever they were when the app launched.
+    // 🔑 ONE OWNER ANSWERS THIS. The sidecar used to assemble the five fields by hand from three
+    // objects; the numeric location id went out RAW and nothing downstream could resolve a number,
+    // so the most frequent "where am I" signal in the log was silently dropped for as long as it
+    // existed. `PlayerLocation.inputs()` resolves it, adds the terminal, and is the only place
+    // that decides what the ladder is shown.
+    locationSignals: () => playerLocation.inputs(hauling.view()),
+  })) return;
 
   // Current mission/blueprint view (snapshot).
   if (url === "/api/missions" && req.method === "GET") {
@@ -2658,6 +2796,10 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // true on frames where no signature parsed — which is exactly when the capture loop still
     // needs to know the player is scanning, so it can keep polling fast instead of idling.
     let scanHud = false;
+    // The REP page read for this same frame, when that mode is armed. Null means "not armed, or
+    // not looked at on this branch"; an object with ok:false carries WHY the page was refused,
+    // which is what the player gets told instead of being left staring at a page not syncing.
+    let repRead: unknown = null;
     if (!screenCatalog) screenCatalog = loadCatalog(dataDir);
     if (body.miningCrop === true && Array.isArray(body.lines)) {
       // RapidOCR re-read of a TIGHT CROP already limited to the configured mining scan region —
@@ -2723,6 +2865,20 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       const ocr = await ocrImage(body.path);
       result = classifyScreen(ocr, screenCatalog, { scanRegion: config.scanRegion });
       scanHud = hasScanHud(ocr);
+      // 🔑 The REP page rides on THIS OCR rather than taking one of its own. 4.10's reputation
+      // page is set large enough that Windows OCR reads every rank name on it correctly — unlike
+      // the contract board in the note just below — so the full-frame glance that already happens
+      // every tick is all it needs, and the whole feature costs no extra capture, no extra OCR
+      // and no extra round trip. It is attached BESIDE `result` rather than becoming another
+      // `kind`, because the two answer different questions and a frame can legitimately be
+      // neither of them.
+      if (config.repScan) {
+        const rp = readRepPage(ocr, tracker.repScopesForScan(), tracker.giverScopes());
+        // 🔴 ONE PROJECTION, TWO ROUTES. This is the call site the capture loop actually
+        // consumes; /api/rep-read is the other. They were written out by hand and diverged the
+        // moment refusal detail was added to only one — see repReadPayload's comment.
+        repRead = repReadPayload(rp);
+      }
       // 🔑 Contract parsing does NOT happen on this branch. This is Windows OCR, which
       // mangles the panel's ~12px giver line badly enough to lose otherwise-perfect rows
       // ("UNG FAMILY HAULING" for Ling Family Hauling, "ROUGH B READY" for Rough & Ready,
@@ -2758,7 +2914,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // share the one captured image across all of them (the log/kiosk can't say which size).
     else if (rd.kind === "fabricator" && rd.name) rd.items = tracker.itemUuidsForName(rd.name);
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ...(result as object), scanHud }));
+    res.end(JSON.stringify({ ...(result as object), scanHud, rep: repRead }));
     return;
   }
 
@@ -2888,6 +3044,31 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     return;
   }
 
+  // Log View: the raw game.log tail. Opens with the backfill so the widget answers "what did that
+  // just log?" rather than only "what will it log next" — you almost always open it after the
+  // thing you wanted to see. `watching` is what tells an empty panel apart from a broken one: no
+  // log path (or the game not launched) looks identical to a quiet log otherwise.
+  if (url === "/logview/events") {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+    res.write("\n");
+    logViewClients.add(res);
+    res.write(`data: ${JSON.stringify({
+      kind: "backfill",
+      watching: watcher != null, path: config.logPath || "",
+      lines: logViewRing.slice(-LOGVIEW_BACKFILL),
+    })}\n\n`);
+    req.on("close", () => logViewClients.delete(res));
+    return;
+  }
+  if (url === "/api/logview" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({
+      ok: true, watching: watcher != null, path: config.logPath || "",
+      lines: logViewRing.slice(-LOGVIEW_BACKFILL),
+    }));
+    return;
+  }
+
   // Hauling optimiser: live contract state + the "please track these" list.
   if (url === "/hauling/events") {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
@@ -2919,9 +3100,26 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
    * just autocorrect it."
    */
   if (url.startsWith("/api/hauling/places") && req.method === "GET") {
-    const q = (new URL(req.url ?? "", "http://x").searchParams.get("q") ?? "").trim();
+    const qs = new URL(req.url ?? "", "http://x").searchParams;
+    const q = (qs.get("q") ?? "").trim();
+    /* 🔴 A COMMODITY LEG GETS A DIFFERENT LIST. See `commodityPlaceSuggestions` for why, and for
+       why a CONTRACT stop must keep the unconstrained one. Both params are required together: a
+       side with no commodity has nothing to look up, and a commodity with no side cannot tell a
+       pickup from a drop-off — either alone falls through to the general list rather than
+       guessing, because guessing here is how the wrong places got offered in the first place. */
+    const commodity = (qs.get("commodity") ?? "").trim();
+    const side = qs.get("side");
+    if (commodity && (side === "buy" || side === "sell")) {
+      const places = commodityPlaceSuggestions(commodity, side, q);
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      /* `constrained` is reported rather than inferred from the rows. An empty list from the price
+         table and an empty list from the dataset mean opposite things — "nowhere trades this" and
+         "no match for what you typed" — and the widget must be able to say which. */
+      res.end(JSON.stringify({ ok: true, constrained: true, commodity, side, places }));
+      return;
+    }
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ ok: true, places: haulingPlaceSuggestions(q) }));
+    res.end(JSON.stringify({ ok: true, constrained: false, places: haulingPlaceSuggestions(q) }));
     return;
   }
   /**
@@ -2953,7 +3151,39 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
        wrong across four — so it is called with no standing at all (nothing locked) and the lock is
        applied here, against the giver each contract actually belongs to. A contract from a faction
        we have never worked for gates on 0, which is correct: that is exactly what the board shows. */
-    const ranked = rankContracts(advisorContracts(), { ship, goal, includeLocked: true, missionType: wantType || null })
+    /* 🔴 THE HOLD IS A GATE, NOT A HINT. A 4 SCU Paladin was being offered contracts that ship
+       8 SCU containers, and a container cannot be split — so the board was recommending work the
+       selected ship physically cannot take. Resolved the same way the planner resolves it, so a
+       hull the planner understands is a hull this understands. Unknown hull => null => nothing
+       flagged, which is the only safe reading of "we do not know what you are flying". */
+    /* 🔴 A LOOKUP MISS MUST NOT EMPTY THE BOARD. This resolved the hull from the query param
+       ALONE, and `haulingData.ship()` matches a className or a displayName exactly — so "Hull A"
+       finds nothing while "MISC Hull A" finds it. Sub picked a Hull A and got a blank Rank tab:
+       maxBoxScu came back null, which the endpoint read as "no ship" and answered with nothing.
+       Two separate mistakes in one line, so both are fixed:
+         1. Resolve like the PLANNER does — picked, then what the log saw, then the app's own ship
+            detector. The advisor being stricter than the planner about the same ship is a bug on
+            its face.
+         2. Distinguish "no ship named" from "ship named, not in ships.json". The first is a
+            question to ask; the second is a gap in our data, and punishing the player for it by
+            hiding every contract is worse than not checking fit at all. */
+    /* `ship` above is ALREADY the resolution chain the planner uses — explicit pick, then the saved
+       one, then what the log saw. Re-deriving it here is how the first attempt at this inverted the
+       precedence; use it as given. The extra fallback is only for the case where the PICKED string
+       is not in ships.json but the log's own name is. */
+    const named = (ship || "").trim();
+    const hull = named
+      ? (haulingData.ship(named) ?? (shipName ? haulingData.ship(shipName.trim()) : null))
+      : null;
+    const maxBoxScu = hull ? largestBoxScu(gridsOf(hull)) : null;
+    /** Named a ship we cannot find: rank everything, and say we could not check the fit. */
+    const shipUnknownToUs = !!named && !hull;
+    /* 🔴 HIDDEN, NOT GREYED — Sub's ruling: "If the person has a ship that can't pick up the box,
+       hide it. I don't know why you'd want to keep them visible." He is right: a locked contract is
+       something you can work towards, an oversize one is not a goal, it is noise on a list whose
+       whole job is to say what to fly next. And with no ship known we show NOTHING and say so,
+       rather than ranking a board against a hold we cannot check. */
+    const ranked = rankContracts(advisorContracts(), { ship, goal, includeLocked: true, missionType: wantType || null, maxBoxScu, dropOversize: true })
       .map((r) => {
         const giver = r.contract.giver ?? "";
         const standing = standings.get(giver) ?? 0;
@@ -2963,8 +3193,10 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
         const locked = idx >= 0 && HAULING_LADDER[idx].minRep > standing;
         return { ...r, locked, giver, standing };
       })
-      .sort((a, b) => Number(a.locked) - Number(b.locked) || b.score - a.score
-        || a.effort.stops - b.effort.stops || a.effort.boxes - b.effort.boxes);
+      /* Cannot-fit sinks below cannot-yet. This re-sort exists because `locked` is recomputed
+         per giver above, and it has to carry `oversize` too or rankContracts' ordering is lost. */
+      .sort((a, b) => Number(a.oversize) - Number(b.oversize) || Number(a.locked) - Number(b.locked)
+        || b.score - a.score || a.effort.stops - b.effort.stops || a.effort.boxes - b.effort.boxes);
     const regime = regimeFor(ship);
     // The rate to quote the climb against: what the player is actually managing, else the plan's
     // forecast. See haulingClimb — a modelled per-run time would be a floor, not an answer.
@@ -3023,6 +3255,13 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       boxes: r.effort.boxes,
       repRate: r.repRate,
       moneyRate: r.moneyRate,
+      /* 🔴 THESE MUST BE HERE. This projection is an explicit field list, so adding a figure to
+         ScoredContract does NOT make it reach the widget — and the per-hour line then called
+         .toFixed() on undefined, threw inside renderAdvisor, and the Rank tab rendered NOTHING.
+         Sub read it as "Hull A gets no recommended missions"; it was every ship, and it was this. */
+      minutes: r.minutes,
+      repPerHour: r.repPerHour,
+      moneyPerHour: r.moneyPerHour,
       locked: r.locked,
       standing: r.standing,
     }));
@@ -3040,10 +3279,16 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({
       ok: true, goal, regime,
+      /** NOTHING named => ask. A name we cannot resolve is not the player's fault, so the board
+       *  still lists — see `fitUnchecked`. */
+      needShip: !named,
+      fitUnchecked: shipUnknownToUs,
+      shipName: hull?.displayName ?? hull?.className ?? (ship?.trim() || null),
+      maxBoxScu,
       type: wantType || null,
       types: [...types.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })),
       ladder: HAULING_LADDER,
-      contracts: top,
+      contracts: named ? top : [],
       climbs,
       /** Measured, from his own finished runs — see haulingRunMinutes. */
       runMinutes: haulingRunMinutes(),
@@ -3056,6 +3301,13 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   }
   /** Name a place by hand — or clear it by sending an empty name. Keyed by the planner's location
    *  id, which IS the coordinates (see PlanOptions.placeNames). */
+  if (url === "/api/hauling/reset-rates" && req.method === "POST") {
+    // Measurement only — see HaulingTracker.resetRun. The board is deliberately left alone.
+    hauling.resetRun();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
   if (url === "/api/hauling/place" && req.method === "POST") {
     const body = (await readBody(req)) as Record<string, unknown>;
     const id = typeof body.locationId === "string" ? body.locationId : "";
@@ -3068,6 +3320,122 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     }
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ ok: !!id }));
+    return;
+  }
+  /**
+   * 🔴 THE COMMODITY PICKS — the two writes that let a commodity run into the route.
+   *
+   * ⚠️ THEY ARE SERVER-SIDE STATE, NOT `localStorage`, and that is not a preference. A widget
+   * iframe RELOADS whenever the player regroups or hides it, so anything the route must survive a
+   * regroup with has to live where the plan is solved. The same rule the chat widget's pins follow.
+   *
+   * ⚠️ NEITHER TAKES A TONNAGE, and neither may ever grow one. See hauling-buys.ts: the quantity
+   * comes from the purchase line and from nowhere else. A `scu` parameter here would be the exact
+   * optimiser Sub ruled out, wearing a different hat.
+   *
+   * Both are POSTs, so `overlay-server.ts` has already refused anything that is not from this
+   * machine AND anything carrying a foreign `Origin` before either is reached.
+   */
+  if (url === "/api/hauling/buy" && req.method === "POST") {
+    const body = (await readBody(req)) as Record<string, unknown>;
+    const str = (v: unknown, max = 120): string => (typeof v === "string" ? v.trim().slice(0, max) : "");
+    const numOrNull = (v: unknown): number | null => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+    const end = (v: unknown) => {
+      const o = (v ?? {}) as Record<string, unknown>;
+      return { terminal: str(o.terminal), body: str(o.body) || null, system: str(o.system, 40) || null };
+    };
+    const from = end(body.from), to = end(body.to);
+    const commodity = str(body.commodity, 80);
+    // 🔑 Refused rather than stored half-formed. A pick with no commodity or no ends cannot be
+    // routed and cannot be filled from the log either, so it would sit in the file as a row the
+    // player can only delete — which reads as the button being broken.
+    if (!commodity || !from.terminal || !to.terminal) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ ok: false, error: "commodity_and_both_ends_required" }));
+      return;
+    }
+    /* 🔴 THE UUID IS RESOLVED HERE, NOT SENT BY THE WIDGET. The price table knows a commodity by
+       NAME and carries no uuid at all, while the log writes only a uuid — so somebody has to make
+       the join, and the sidecar is the side that holds `commodities.json`. Doing it here also means
+       a widget cannot get it wrong: this is the field that decides whether a purchase can ever be
+       matched to this pick, and a pick with a wrong one is unfillable in a way nothing on screen
+       would explain.
+       🔑 EXACTLY ONE MATCH OR NOTHING. An ambiguous name tells us nothing, and guessing between two
+       uuids would silently attach the tonnage of one commodity to a run in another. The caller is
+       told (`matchable`) so the row can say the tonnage will have to be watched for by hand rather
+       than appearing to be broken. */
+    const guidOf = (name: string): string | null => {
+      const want = name.trim().toLowerCase();
+      let hit: string | null = null;
+      try {
+        for (const [uuid, c] of Object.entries(economy.commodities() as Record<string, { name?: string | null }>)) {
+          if ((c?.name ?? "").trim().toLowerCase() !== want) continue;
+          if (hit) return null;     // ambiguous — see above
+          hit = uuid;
+        }
+      } catch { return null; }      // no dataset: the pick still routes, it just cannot self-fill
+      return hit;
+    };
+    const buy = haulingBuys.add({
+      commodity,
+      resourceGuid: guidOf(commodity),
+      from, to,
+      buyPrice: numOrNull(body.buyPrice),
+      sellPrice: numOrNull(body.sellPrice),
+    }, Date.now());
+    hauling.emit("change");   // re-solve and push, so the route picks it up immediately
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, buy, matchable: !!buy.resourceGuid }));
+    return;
+  }
+  if (url === "/api/hauling/buy/forget" && req.method === "POST") {
+    const id = new URL(req.url ?? "/", "http://localhost").searchParams.get("id") ?? "";
+    const gone = id ? haulingBuys.remove(id) : null;
+    if (gone) hauling.emit("change");
+    // 🔑 `removed: false` is a 200, not a 404 — the row is off the list either way, which is what
+    // the caller asked for, and a second click on a stale widget is not an error worth colouring
+    // red. Same rule as the trade journal's own forget. The flag is reported so a caller CAN tell.
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, removed: !!gone, buy: gone }));
+    return;
+  }
+  /**
+   * Move one end of a commodity pick to a different terminal.
+   *
+   * 🔴 THE ROUTE TAB'S PICKER USED TO WRITE A DISPLAY NAME AND NOTHING ELSE. On a commodity leg it
+   * relabelled the stop while the route went on buying where it always had — so the control looked
+   * like it changed where you go and did not. This is the write that makes it true.
+   *
+   * ⚠️ `moved: false` is a 200, like `buy/forget`'s `removed: false`. The refusals are ordinary
+   * outcomes with reasons a player can act on (the log already saw this purchase; both ends would
+   * be the same place), not server errors — but they are REPORTED, because a control that silently
+   * does nothing is the failure being fixed here.
+   */
+  if (url === "/api/hauling/buy/repoint" && req.method === "POST") {
+    const body = (await readBody(req)) as Record<string, unknown>;
+    const id = typeof body.id === "string" ? body.id : "";
+    const side = body.side === "to" ? "to" : "from";
+    const t = (body.terminal ?? {}) as Record<string, unknown>;
+    const end = {
+      terminal: typeof t.terminal === "string" ? t.terminal : "",
+      body: typeof t.body === "string" ? t.body : null,
+      system: typeof t.system === "string" ? t.system : null,
+    };
+    const price = typeof body.price === "number" && Number.isFinite(body.price) ? body.price : null;
+    const before = id ? haulingBuys.list().find((b) => b.id === id) ?? null : null;
+    const moved = id && end.terminal ? haulingBuys.repoint(id, side, end, price) : null;
+    if (moved) hauling.emit("change");
+    // Name the reason. "It did not move" and "it did not move BECAUSE you already bought it there"
+    // are different messages, and only the second one tells the player what to do next.
+    const why = moved ? null
+      : !before ? "that run is no longer on the plan"
+        : before.scu !== null ? "the log already recorded this purchase, so where it happened is a fact rather than a plan"
+          : "both ends of the run would be the same place";
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, moved: !!moved, why, buy: moved }));
     return;
   }
   // The solved plan: route order, box layout, and every load figure tagged with where it came
@@ -3102,6 +3470,14 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // Places the player named by hand. See ConfigShape.haulingPlaces — keyed by coordinates, so
       // an answer given once holds for good.
       placeNames: config.haulingPlaces,
+      // Where the player is, with the game's numeric location ids resolved through the bindings
+      // this process has learned. See haulingWhereAmI.
+      atLocation: haulingWhereAmI(hauling.view()),
+      // A name for that token that a player recognises. Display only — see locationTokenLabel.
+      atLocationLabel: locationTokenLabel(dataDir, haulingWhereAmI(hauling.view())?.token),
+      // The commodity runs the player picked, sequenced into the same route — never ranked against
+      // the contracts. Read fresh on every plan so a purchase that landed a second ago is in it.
+      buys: haulingBuys.list(),
     });
     // 🔑 LEARN EVERY NAME THE GAME STATES. locations.json does not carry city spaceports —
     // "Riker Memorial Spaceport" is not in its 1,968 rows — so the dataset alone cannot offer the
@@ -3423,6 +3799,11 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       || (typeof body.syncToken === "string" && body.syncToken.trim().length > 0)
       || body.clearToken === true;
     const touchedShareLogs = typeof body.shareLogs === "boolean";
+    // "Touched" above means the field was PRESENT, not that it changed — the settings page saves
+    // the whole form, so it is true on every save. Only a real off->on transition is the user's
+    // recovery gesture; clearing the skipped list on every save would re-offer the entire backlog
+    // each time and undo the per-tick bound that makes rejections cheap.
+    const turnedOnShareLogs = touchedShareLogs && body.shareLogs === true && config.shareLogs === false;
     if (touchedLogPath) config.logPath = body.logPath;
     // Apply the checkbox first, then let a freshly-pasted token force sync ON — pasting a
     // token IS the intent to sync, so it can't be left silently disabled. The token is only
@@ -3438,6 +3819,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     if (typeof body.missionOcr === "boolean") config.missionOcr = body.missionOcr;
     if (typeof body.fabClaim === "boolean") config.fabClaim = body.fabClaim;
     if (typeof body.miningAssistant === "boolean") config.miningAssistant = body.miningAssistant;
+    if (typeof body.repScan === "boolean") config.repScan = body.repScan;
     // The dragged scan region. `null` resets to the default band. Stored as fractions, and only
     // if it's usable: a region dragged off-frame or collapsed to nothing would silently stop all
     // scanning, and "my scanner died and I don't know why" is the worst outcome here.
@@ -3476,6 +3858,8 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     if (typeof body.partyOpen === "boolean") config.partyOpen = body.partyOpen;
     if (typeof body.battagliaOpen === "boolean") config.battagliaOpen = body.battagliaOpen;
     if (typeof body.haulingOpen === "boolean") config.haulingOpen = body.haulingOpen;
+    if (typeof body.logViewOpen === "boolean") config.logViewOpen = body.logViewOpen;
+    if (typeof body.verseFinderOpen === "boolean") config.verseFinderOpen = body.verseFinderOpen;
     if (typeof body.haulingShip === "string") config.haulingShip = body.haulingShip.trim();
     if (typeof body.webViewOpen === "boolean") config.webViewOpen = body.webViewOpen;
     // http/https only — this string ends up as an iframe src.
@@ -3609,8 +3993,13 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // Re-arm chat (widget toggled, backend switched, identity changed). Internally compares
     // its config and only tears the socket down on a REAL change, so it needs no touched* gate.
     chatConfigure();
-    // If log-sharing was just turned on, upload the current session now.
-    if (touchedShareLogs) void maybeShareLog(config, APP_VERSION, sharedLogStatePath);
+    // If log-sharing was just turned on, upload the current session now. Turning it off and back
+    // on is also the only recovery gesture the settings page offers, so honour it: re-offer the
+    // backups that were skipped for being from another game patch (never the ones already sent).
+    if (touchedShareLogs) {
+      if (turnedOnShareLogs) clearSkippedBackups(sharedLogStatePath);
+      void maybeShareLog(config, APP_VERSION, sharedLogStatePath);
+    }
     // Push prefs (e.g. the time-format toggle) to any open overlay immediately.
     broadcastMissions();
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -3626,6 +4015,96 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     const track = tracker.giverTrack(giver);
     res.writeHead(track ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(track ?? { error: "unknown_giver", giver }));
+    return;
+  }
+
+  // Dynamic-event progress (the Event Tracker's per-event tabs), from data/events.json.
+  // Always 200 with a list — an empty list is a legitimate answer ("no events declared") and
+  // must not be reported as an error the widget then has to distinguish from a real failure.
+  // ?reload=1 re-reads events.json so a point value measured mid-event applies without a restart.
+  if (url?.startsWith("/api/events") && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://x").searchParams;
+    // ?reload=1 re-reads the file off disk (for a hand edit); ?refresh=1 re-checks the site
+    // first. Two switches on purpose — a hand edit must not be silently overwritten by a
+    // fetch, and a fetch must not be skipped because someone only wanted a re-read.
+    if (q.get("refresh") === "1") await refreshEvents();
+    if (q.get("reload") === "1") tracker.reloadEvents();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    // `feed` is the provenance of the events data itself — live / cache / bundled. It rides
+    // every response because Sub's standing requirement is that a player can tell when they
+    // are looking at a fallback rather than having to infer it from the values being stale.
+    res.end(JSON.stringify({
+      events: tracker.allEventProgress(),
+      feed: eventFeed.status(),
+      // The "you just crossed a tier — is this what you got?" question, at most one at a time.
+      // Rides the response the widget already polls rather than adding a channel: an extra
+      // endpoint would need its own poll and could then disagree with the ladder beside it.
+      rewardPrompt: tracker.eventRewardPrompts()[0] ?? null,
+      // Reporting is opt-in and rides the SAME switch as every other crowdsourced signal. The
+      // widget must know, because a card that promises to help everyone while sending nothing
+      // is worse than not asking.
+      reporting: !!(config.syncEnabled && config.syncToken),
+    }));
+    return;
+  }
+
+  // The player's answer to a tier-reward question. Loopback+Origin gated automatically by
+  // being a POST (see the mutating-request guard), like every other write here.
+  // Two shapes, one route and one upload pipe:
+  //   { id, source, name }           — answering a tier-crossing card (the original).
+  //   { event, tier, source, name }  — correcting the LADDER, with no crossing behind it. Sub's
+  //                                    ask, 2026-08-22: a player must be able to tell us we have
+  //                                    a reward wrong at the moment they SEE it wrong, not only
+  //                                    in the two minutes after they happen to cross that tier.
+  if (url === "/api/events/reward" && req.method === "POST") {
+    const body = (await readBody(req)) as { id?: unknown; name?: unknown; source?: unknown; event?: unknown; tier?: unknown };
+    const id = typeof body.id === "string" ? body.id : "";
+    const source = body.source === "confirmed" || body.source === "corrected" || body.source === "typed" || body.source === "none"
+      ? body.source : null;
+    const event = typeof body.event === "string" ? body.event : "";
+    const tier = typeof body.tier === "number" && Number.isFinite(body.tier) ? body.tier : null;
+    if (!source || (!id && !(event && tier != null))) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "source, plus either id or event+tier, are required" }));
+      return;
+    }
+    const p = id
+      ? tracker.answerRewardPrompt(id, typeof body.name === "string" ? body.name : null, source)
+      : tracker.reportEventReward(event, tier as number, typeof body.name === "string" ? body.name : null, source);
+    // Push straight away rather than waiting out the retry timer: the player just answered a
+    // question and the answer is small. A failure simply leaves it queued.
+    if (p) void flushRewardAnswers();
+    res.writeHead(p ? 200 : 409, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(p ? { ok: true } : { error: id ? "unknown_or_already_answered" : "unknown_event_or_tier" }));
+    return;
+  }
+
+  // Forget one event's witnessed progress. See MissionTracker.resetEventProgress for why this
+  // has to exist at all: the app can never observe a server-side wipe, so no amount of
+  // environment-stamping can keep the counter honest across a reset.
+  //
+  // 🔑 POST, so it lands in the single mutating bucket at the top of handleRequest (this machine
+  // + Origin) rather than needing a rule of its own — see references/security.md. It is
+  // deliberately NOT gated on SC_DEV: a released build is exactly where a player needs it.
+  if (url === "/api/events/reset" && req.method === "POST") {
+    const body = (await readBody(req)) as { event?: unknown };
+    const event = typeof body.event === "string" ? body.event.trim() : "";
+    if (!event) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "event is required" }));
+      return;
+    }
+    // Distinguish "no such event" from "an event that had nothing recorded" — 0 is a legitimate
+    // success here (resetting an already-empty event is a no-op, not a failure), so the two must
+    // not share a response or the widget cannot tell a typo from a clean slate.
+    if (!tracker.eventProgress(event)) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "unknown_event" }));
+      return;
+    }
+    const discarded = tracker.resetEventProgress(event);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, event, discarded }));
     return;
   }
 
@@ -3918,6 +4397,12 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
       // state, and it presents as "none of my settings stick" with nothing else to go on.
       data: {
         patch: tracker.view().patch ?? "(none loaded)", userDir, userDirWritable,
+        // 🔑 The environment belongs in the report a user COPIES, because "my blueprints aren't
+        // showing" is exactly what a PTU session looks like from the outside — and until now
+        // nothing anywhere said so. `logEnv` is the header tag; `envIsLive` is whether receipts
+        // count. Deliberately NOT derived from `patch` above: that is the DATASET label and
+        // currently reads 4.10.0-PTU even for a live build.
+        logEnv: tracker.view().logEnv ?? "(no header seen)", envIsLive: tracker.view().envIsLive,
         configPath,
         configSave: lastSaveError
           ? { ok: false, at: lastSaveError.at, error: lastSaveError.error }
@@ -4050,6 +4535,156 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     return;
   }
 
+  // ── The in-game REP page ──────────────────────────────────────────────────────────────
+  //
+  // Two steps, because reading this page takes both halves of the machine and they live in
+  // different processes. The page states which ladder you are looking at in TEXT (so the sidecar,
+  // which owns the datasets, can resolve it) and states where you are on it in COLOUR ONLY (so
+  // only capture.cjs, which holds the bitmap, can answer it). The same split the mining scan
+  // glyph already uses, for the same reason.
+  //
+  //   1. capture.cjs POSTs the frame's OCR lines here -> we return the ladder and, per rank card,
+  //      the box to read that card's progress bar out of.
+  //   2. capture.cjs reads those boxes and POSTs the bar readings to /api/rep-scan, which decides
+  //      the rank and re-baselines.
+  //
+  // 🔑 Step 1 answers with a REFUSAL rather than a guess whenever the page is not unambiguous — a
+  // partly-scrolled ladder above all. Because a scan OVERWRITES the stored standing, an uncertain
+  // read has to produce nothing at all. See src/rep-page.ts.
+  if (url === "/api/rep-read" && req.method === "POST") {
+    const body = await readBody(req);
+    let out: unknown = { ok: false, refusal: "not-armed" };
+    if (config.repScan && Array.isArray(body?.lines)) {
+      const ocr: OcrResult = { w: Number(body.w) || 0, h: Number(body.h) || 0, lines: body.lines };
+      const r = readRepPage(ocr, tracker.repScopesForScan(), tracker.giverScopes());
+      // Same projection the screen-read glance uses — see repReadPayload.
+      out = repReadPayload(r);
+    }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(out));
+    return;
+  }
+
+  if (url === "/api/rep-scan" && req.method === "POST") {
+    const body = await readBody(req);
+    // A refusal the player can act on, forwarded with no bars — see ACTIONABLE_REP_REFUSALS in
+    // capture.cjs. Broadcast so the widget can say WHY the page in front of them is not syncing.
+    if (typeof body?.refusalOnly === "string") {
+      const rf = typeof body?.faction === "string" ? body.faction : "";
+      const rs = typeof body?.section === "string" ? body.section : "";
+      const rg = typeof body?.giver === "string" ? body.giver : "";
+      // ⚠️ `rs` is the SECTION HEADER ("Standing"), a display name — deliberately not stored as
+      // `scope`, which everywhere else in this file means a scope KEY. It belongs in the log line
+      // and nowhere else.
+      repScanLast = { at: Date.now(), ok: false, refusal: body.refusalOnly,
+                      faction: rf || undefined, giver: rg || undefined };
+      // 🔴 THIS PATH DID NOT LOG AT ALL, and it is the path the three refusals a player can
+      // actually act on travel down — so the only refusals that reach a human were the only ones
+      // absent from the log. That is how "Covalex and Wikelo Emporium don't seem to be working"
+      // arrived with nothing in `sidecar.log` to explain it while eight other factions scanned
+      // cleanly in the same session.
+      //
+      // 🔑 `tried` is what makes the line diagnostic rather than merely present. On a `no-scope`
+      // an EMPTY tried means the giver resolved and our dataset says it never awards this scope
+      // (a data gap); a NON-empty one means we weighed real ladders and none matched the cards
+      // (an OCR or layout problem). Same refusal string, opposite fixes.
+      // 🔴 AN ABSENT `tried` AND AN EMPTY ONE MEAN COMPLETELY DIFFERENT THINGS, and collapsing
+      // them is how this line told its first lie: patched into only one of the two readRepPage
+      // call sites, the field never arrived, and the log confidently reported "no candidate
+      // ladders were even considered" — i.e. a DATA GAP — about a frame nobody had asked. Say
+      // "the caller sent none" when the field is missing; only a real empty array is evidence.
+      const sentTried = Array.isArray(body?.tried);
+      const tried = sentTried
+        ? (body.tried as { scope: string; matched: number; of: number }[]) : [];
+      const why = !sentTried
+        ? "no candidate detail sent"
+        : tried.length
+          ? tried.map((t) => `${t.scope} ${t.matched}/${t.of}`).join(", ")
+          : "no candidate ladders were even considered (the giver awards none of them)";
+      const line = `[rep-scan] refused: ${body.refusalOnly}`
+        + ` (heading ${rf ? JSON.stringify(rf) : "?"}`
+        + `${rs ? ` / section ${JSON.stringify(rs)}` : ""}`
+        + `${rg ? ` -> giver ${JSON.stringify(rg)}` : " -> no giver matched"})`
+        + ` [${why}]`;
+      if (line !== lastRepRefusalLine) { lastRepRefusalLine = line; console.log(line); }
+      broadcastMissions();
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ ok: false, refusal: body.refusalOnly }));
+      return;
+    }
+    const scope = typeof body?.scope === "string" ? body.scope : "";
+    const giver = typeof body?.giver === "string" ? body.giver : "";
+    const faction = typeof body?.faction === "string" ? body.faction : "";
+    const bars = Array.isArray(body?.bars) ? (body.bars as RepBarRead[]) : [];
+    const v = repRankFromBars(bars);
+    // The rank the page STATED, named. Available on the refusal paths too, because on those the
+    // page really was read and refusing to repeat back what we read is what makes the feature
+    // look broken rather than careful.
+    const standing = scope && typeof v.rank === "number"
+      ? tracker.repStandingAtRank(scope, v.rank) : null;
+    let out: Record<string, unknown>;
+    if (!scope || !giver) {
+      // A page whose faction did not resolve to a dataset giver is readable but not writable:
+      // `repWitnessed` is keyed by giver, so there is nowhere to put the answer. Say so rather
+      // than inventing a key — a giver spelling we made up would never be read back by anything.
+      //
+      // 🔑 It carries the FACTION HEADING it read. Sub's report was "some mission givers didn't
+      // record anything — it was like it didn't know the name", and without the name neither he
+      // nor the app can say WHICH faction is missing. This is the whole measurement: the
+      // exhaustive in-game faction list is inside Data.p4k, so the residual is closed by the app
+      // naming what it saw rather than by a data pull.
+      out = { ok: false, refusal: "no-giver", faction, scope, rank: v.rank, progress: v.progress, standing };
+    } else if (v.refusal) {
+      out = { ok: false, refusal: v.refusal };
+    } else if (!tracker.envIsLiveForScan) {
+      // 🔴 THE PTU GATE — Sub's call, 2026-08-26, taken over refusing to scan at all. Reputation
+      // on the test server is not the player's reputation, so a scan taken there must never reach
+      // the stored standing or the sync push. It still READS and still reports, because the PTU is
+      // where a new patch's page exists first and a feature that cannot be exercised there cannot
+      // be ready when it goes live. This is the app's THIRD isLiveEnv gate, beside the blueprint
+      // receipt and the event journal entry, and it reads the same getter they do.
+      out = { ok: false, refusal: "not-live", rank: v.rank, progress: v.progress,
+              scope, giver, faction, standing, envIsLive: false };
+    } else {
+      const applied = tracker.applyRepScan(giver, scope, v.rank!, v.progress);
+      out = applied
+        ? { ok: true, ...applied, faction, progress: v.progress, envIsLive: true }
+        : { ok: false, refusal: "unknown-scope" };
+      if (applied) {
+        console.log(
+          `[rep-scan] ${giver} / ${scope}: page says rank ${applied.rank} ` +
+          `(${applied.standing ?? "unnamed"}) ` +
+          `(band ${applied.floor}..${applied.ceiling ?? "max"}, bar ` +
+          `${Math.round((v.progress ?? 0) * 100)}%), stored ${applied.before} -> ${applied.after} ` +
+          `(${applied.outcome}${applied.estimated ? ", interpolated" : ", band floor"})`,
+        );
+        broadcastMissions();
+      }
+    }
+    // 🔑 Names the FACTION HEADING on a refusal, not just the giver — on `no-giver` the giver is
+    // empty by definition, so the old form logged `( / Courier)` and the one fact worth having
+    // (which faction the app failed to recognise) went nowhere.
+    //
+    // ⚠️ DEDUPED, because the scan re-fires every capture tick while the page is up — up to
+    // once a second. Undeduped it writes the same line ~60 times a minute, which pushes
+    // everything else out of the 60-line `logTail` that "Copy diagnostics" sends. That matters
+    // more now than it did: with the faction named, this line IS the record of which factions
+    // the app does not recognise, and a record that drowns the rest of the log is not one.
+    if (!out.ok) {
+      const who = giver || (faction ? `heading "${faction}"` : "");
+      const line = `[rep-scan] refused: ${out.refusal}`
+        + (who || scope ? ` (${who}${scope ? ` / ${scope}` : ""})` : "");
+      if (line !== lastRepRefusalLine) { lastRepRefusalLine = line; console.log(line); }
+    } else {
+      lastRepRefusalLine = "";   // a good read re-arms it, so the NEXT refusal is logged
+    }
+    repScanLast = { at: Date.now(), ...out } as RepScanLast;
+    if (!out.ok) broadcastMissions();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(out));
+    return;
+  }
+
   // ── Dev replay ────────────────────────────────────────────────────────────────────────
   // Simulate a mission ending so the report card and its questions can be tested without
   // playing. Feeds real log LINES through the real parser into the live tracker.
@@ -4122,6 +4757,41 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     }
     res.writeHead(204, { "Cache-Control": "no-store" });
     res.end();
+    return;
+  }
+
+  // 🔴 DEV RELOAD. Two gates, for two different reasons — neither is caution for its own sake.
+  //
+  // **POST on purpose.** That puts it in the ONE mutating bucket at the top of `handleRequest`
+  // (this machine + an Origin check) instead of inventing a rule of its own. references/
+  // security.md is explicit that per-route gating is exactly what let the read paths get missed
+  // while the POSTs were correctly gated, so a new route that ACTS belongs in the existing bucket.
+  // The Origin half matters here specifically: the Web Page widget can load any site, and a page
+  // running in it is ON this machine, so it passes every loopback check.
+  //
+  // **SC_DEV on purpose**, so it does not exist in a packaged build at all. The packaged sidecar
+  // serves its OWN bundled `overlay/` out of `resources/`, so reloading an installed app can only
+  // ever redraw the same frozen files — the endpoint is USELESS there. Shipping a window-reload
+  // primitive to every user in exchange for nothing is a bad trade.
+  //
+  // ⚠️ 404 rather than 403, matching the sibling dev routes: do not confirm the route exists.
+  if (url?.startsWith("/api/dev/reload")) {
+    if (process.env.SC_DEV !== "1" || !fromThisMachine(req)) {
+      res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "not available" }));
+      return;
+    }
+    if (req.method !== "POST") {
+      res.writeHead(405, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ error: "POST only" }));
+      return;
+    }
+    const widget = new URL(req.url ?? "", "http://x").searchParams.get("widget") || null;
+    const canvases = broadcastDevReload(widget);
+    // `canvases: 0` is the useful answer, not an error: it means no overlay is listening, which is
+    // what a flight sees when the app is not running. Saying so beats a silent 204.
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ reloaded: true, widget, canvases }));
     return;
   }
 
@@ -4303,6 +4973,18 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
   }
 
   // SC Feed (OmniFeed) headlines for the SC Feed widget — proxied + flattened, see scFeedItems().
+  // Third-party emotes for the Twitch Chat widget — proxied so the page never makes a
+  // cross-origin request it cannot report on, see emotePayload(). PUBLIC on purpose: OBS browser
+  // sources on a second PC render chat too. It reaches a fixed table of seven hosts and accepts
+  // no caller-supplied URL, so it is not an SSRF hop and does not belong in SENSITIVE_GET.
+  if (url === "/api/emotes" && req.method === "GET") {
+    const qs = new URL(req.url ?? "/", "http://localhost").searchParams;
+    const body = await emotePayload(qs.get("p") ?? "", qs.get("q") ?? "");
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(body ?? null));
+    return;
+  }
+
   if (url === "/api/scfeed" && req.method === "GET") {
     const items = await scFeedItems();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });

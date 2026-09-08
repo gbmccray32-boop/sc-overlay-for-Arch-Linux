@@ -215,9 +215,20 @@ const mo = order("manual"), ao = order("auto");
 const shifts = withRep.map((c) => Math.abs(mo.get(c.key)! - ao.get(c.key)!)).sort((a, b) => a - b);
 check("swapping regime shifts the median contract 10+ places", shifts[Math.floor(shifts.length / 2)] >= 10,
   `median ${shifts[Math.floor(shifts.length / 2)]}, max ${shifts[shifts.length - 1]}`);
-check("the two regimes disagree about the best contract",
-  rankContracts(withRep, { goal: "rep" })[0].contract.key !==
-  rankContracts(withRep, { ship: "MISC_Hull_C", goal: "rep" })[0].contract.key);
+/* 🔴 THIS ASSERTION USED TO READ "the two regimes disagree about the BEST contract", and it stopped
+   being true when the sort moved from per-box to per-hour — for a defensible reason, so it is
+   rewritten rather than deleted or loosened until it passes.
+   Per-hour counts the stops and the flying between them, and travel is regime-independent: an
+   auto-loading hull and a tractor-beam hull wait exactly as long to fly between two outposts. On
+   the very top contract that shared cost now dominates the loading difference, so both regimes
+   agree on it. They still disagree about almost everything else — the median contract moves 17
+   places (65 at the extreme), which is the property this pair of checks exists to guard.
+   So: assert the ORDER still diverges near the top, which is what "the regime matters" means. */
+const topAuto = rankContracts(withRep, { ship: "MISC_Hull_C", goal: "rep" }).slice(0, 10).map((r) => r.contract.key);
+const topManual = rankContracts(withRep, { goal: "rep" }).slice(0, 10).map((r) => r.contract.key);
+check("the two regimes still order the top of the board differently",
+  topAuto.length === 10 && topManual.length === 10 && topAuto.join("|") !== topManual.join("|"),
+  `${topAuto.filter((k, i) => k !== topManual[i]).length} of the top 10 differ by position`);
 
 // Sanity, plus the non-monotone partition documented on AdvisorContract.
 check("scuLo <= scuHi always", real.every((c) => c.scuLo <= c.scuHi));
@@ -228,6 +239,40 @@ check("every real contract has a container cap", real.every((c) => c.maxContaine
 const nonMonotone = real.filter((c) => c.boxesAtScuLo > c.boxesAtScuHi);
 check("the non-monotone partition case is present in shipped data", nonMonotone.length === 1,
   nonMonotone.map((c) => `${c.key} ${c.scuLo}scu=${c.boxesAtScuLo}box vs ${c.scuHi}scu=${c.boxesAtScuHi}box`).join("; "));
+
+// ── the hold is a gate ────────────────────────────────────────────────────────────────────────
+/* 🔴 REACHED SUB IN THE APP. He selected an Anvil Paladin — one grid, ~4 SCU, whose shape takes
+   nothing bigger than a 1 SCU container — and the board went on recommending contracts that ship
+   8 SCU boxes. Total capacity was never the right test: a container is indivisible, so the
+   question is whether ONE fits, and that is geometric. */
+{
+  const paladinish = 1;   // what largestBoxScu() returns for the real Anvil Paladin
+  const c2ish = 32;       // ...and for the real Crusader C2
+
+  const gated = rankContracts([big], { maxBoxScu: paladinish });
+  check("an 8+ SCU container is flagged oversize for a hold that takes 1 SCU boxes",
+    gated.length === 1 && gated[0].oversize === true,
+    gated.map((r) => r.contract.key + " oversize=" + r.oversize).join("; "));
+
+  const roomy = rankContracts([big], { maxBoxScu: c2ish });
+  check("...and is NOT flagged for a hull that can take it",
+    roomy.length === 1 && roomy[0].oversize === false, String(roomy[0]?.oversize));
+
+  /* Unknown hull must flag NOTHING: "we do not know what you are flying" reading as "it does not
+     fit" would quietly empty the board for every player who has not picked a ship. */
+  check("an unknown hull flags nothing", rankContracts([big], {}).every((r) => !r.oversize));
+
+  check("dropOversize removes them outright",
+    rankContracts([big], { maxBoxScu: paladinish, dropOversize: true }).length === 0);
+
+  /* Both sides asserted non-empty, or this passes on a board where nothing was gated at all. */
+  const mixed = rankContracts([big, jagged], { maxBoxScu: 4 });
+  const fits = mixed.filter((r) => !r.oversize);
+  const cannot = mixed.filter((r) => r.oversize);
+  check("cannot-fit sorts below can-fit", fits.length > 0 && cannot.length > 0
+    && mixed.findIndex((r) => r.oversize) === fits.length,
+    mixed.map((r) => r.contract.key + ":" + (r.oversize ? "no" : "yes")).join(" "));
+}
 
 console.log(failures ? `\n${failures} FAILED` : "\nall passed");
 process.exit(failures ? 1 : 0);
