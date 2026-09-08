@@ -12,7 +12,7 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
-## Current state — September 7, 2026
+## Current state — September 8, 2026
 
 | Item | Current value |
 | --- | --- |
@@ -33,10 +33,11 @@ Do not convert one label into another without new evidence.
 | Candidate 8i in-game status | **Field tested, failed** — September 6 log contains 331 Mining localhost timeouts and about 82.6 minutes of failure windows in a 148.2-minute run; OCR and direct PipeWire remain fast when the route is healthy |
 | Latest field-tested candidate | Candidate 8j, tested September 7, 2026 |
 | Candidate 8j in-game status | **Mining field verified; candidate failed overall** — Mining recognized and committed several signatures at the intended 1200/900 ms rates, but the watchdog caused two unnecessary sidecar restarts and eventually exhausted the ordinary crash budget |
-| Candidate 8k in-game status | **Unverified** — automated and packaged verification passed; no Candidate 8k field log has been supplied yet |
-| Frozen upstream target | `aecabc2c2ec25822e2e784832ee6d6cfa9892d30`, upstream version `0.1.46` |
-| Upstream delta | 68 commits after the earlier frozen `97e381fd` target |
-| Immediate next step | Long-session field-test Candidate 8k. Confirm Candidate 8j Mining behavior is unchanged and the sidecar no longer restarts from stale health strikes; preserve both `electron.log` and `sidecar.log` |
+| Candidate 8k in-game status | **Field verified for Mining and base operation** — Gabe reported both working well after the long-session test. The separate display freeze is being handled as a KWin/AMDGPU/Overdrive and recurring `kscreen-doctor` system issue; no ArchVerse change is justified by that evidence. |
+| Active integration branch | `agent/alpha23-upstream-fbe3fae-integration` |
+| Frozen upstream target | `fbe3faedb38c82d11650ef6424e4037a9806cf95`, upstream version `0.1.46` |
+| Upstream delta | 285 non-merge commits after `v0.1.44`; 12 commits after the prior frozen `aecabc2c` target |
+| Immediate next step | Run the Alpha 23 source/baseline audit, then port platform-neutral upstream behavior onto an exact Candidate 8k package while keeping Mining and Linux runtime contracts frozen. |
 
 The branch `agent/archverse-continuity-handoff` contains continuity infrastructure only and starts
 from Candidate 8f. Candidate 8k branches from Candidate 8j and rebuilds from its exact
@@ -285,17 +286,18 @@ If a case fails, preserve the log and create one candidate that addresses only t
 
 ## Upstream target and porting order
 
-Gabe selected the latest reviewed upstream commit as the target. The frozen target is:
+On September 8, 2026, Gabe approved resuming upstream integration after Candidate 8k Mining and base
+operation worked well. The new frozen target is:
 
 - Repository: `https://github.com/SubliminalsTV-Projects/sc-overlay`
-- Commit: `aecabc2c2ec25822e2e784832ee6d6cfa9892d30`
-- Commit date: August 27, 2026
+- Commit: `fbe3faedb38c82d11650ef6424e4037a9806cf95`
+- Commit date: September 6, 2026
 - Upstream package version: `0.1.46`
-- Subject: `Merge orisonfix: ignore event contributions earned before the event's live run`
+- Subject: `Merge: test-widgets-sandbox forwards suite args and --port`
 
-Candidate 8j is still based on the `0.1.44` integration line. After Candidate 8j passes its field
-gate, compare the 68 remaining upstream commits by behavior group. Port one group at a time and keep
-the target frozen until every group is reconciled and tested.
+Candidate 8k is still based on the `0.1.44` integration line. Compare the complete delta by behavior
+group, port one group at a time, and keep the target frozen until every group is reconciled and
+tested. The audit and port order are recorded in `docs/UPSTREAM-FBE3FAE-INTEGRATION.md`.
 
 ## Binding Linux decisions
 
