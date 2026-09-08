@@ -8,7 +8,10 @@ import { build } from "esbuild";
 import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { applyArchVerseOverlayPatches } from "./archverse-overlay-patches.mjs";
-import { applyArchVerseServerSourcePatches } from "./archverse-server-patches.mjs";
+import {
+  applyArchVerseServerConfigSourcePatches,
+  applyArchVerseServerSourcePatches,
+} from "./archverse-server-patches.mjs";
 import { applyArchVerseScreenReadSourcePatches } from "./archverse-screen-read-patches.mjs";
 
 const out = "build/server";
@@ -27,6 +30,10 @@ await build({
   plugins: [{
     name: "archverse-screen-read-contract",
     setup(ctx) {
+      ctx.onLoad({ filter: /server-config\.ts$/ }, (args) => ({
+        contents: applyArchVerseServerConfigSourcePatches(readFileSync(args.path, "utf8")),
+        loader: "ts",
+      }));
       ctx.onLoad({ filter: /screen-read\.ts$/ }, (args) => ({
         contents: applyArchVerseScreenReadSourcePatches(readFileSync(args.path, "utf8")),
         loader: "ts",

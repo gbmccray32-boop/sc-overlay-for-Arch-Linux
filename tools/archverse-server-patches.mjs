@@ -16,14 +16,14 @@ function replaceOnce(text, from, to, label) {
   return text.replace(from, to);
 }
 
-export function applyArchVerseServerSourcePatches(source) {
+export function applyArchVerseServerConfigSourcePatches(source) {
   let s = source;
 
   // One physical config root for Electron, capture and sidecar. HOME/APPDATA is a fallback only.
   s = replaceOnce(
     s,
-    'const userDir = join(process.env.APPDATA ?? process.env.HOME ?? ".", "sc-blueprint-tracker");',
-    'const userDir = process.env.SC_TRACKER_CONFIG_DIR || join(process.env.APPDATA ?? process.env.HOME ?? ".", "sc-blueprint-tracker"); // ARCHVERSE_LINUX_CONFIG_ROOT',
+    'export const userDir = join(process.env.APPDATA ?? process.env.HOME ?? ".", "sc-blueprint-tracker");',
+    'export const userDir = process.env.SC_TRACKER_CONFIG_DIR || join(process.env.APPDATA ?? process.env.HOME ?? ".", "sc-blueprint-tracker"); // ARCHVERSE_LINUX_CONFIG_ROOT',
     'canonical Linux config root',
   );
 
@@ -54,9 +54,21 @@ export function applyArchVerseServerSourcePatches(source) {
     'Linux OCR region defaults',
   );
 
-  const loadAnchor = 'const freshInstall = !existsSync(configPath);\nlet config: Config = loadConfig();';
+  must(s.includes('ARCHVERSE_LINUX_CONFIG_ROOT'), 'canonical config marker missing');
+  must(s.includes('ARCHVERSE_LINUX_OCR_REGION_CONFIG'), 'Linux OCR region config marker missing');
+  return s;
+}
+
+export function applyArchVerseServerSourcePatches(source) {
+  let s = source;
+
+  const loadAnchor = 'let config: Config = loadConfig();';
   const repairBlock = `// ARCHVERSE_LINUX_CONFIG_CONTRACT\nfunction deriveScreenReaderProfile(c: Pick<Config, "fabCapture" | "missionOcr" | "miningAssistant">): Config["screenReaderProfile"] {\n  if (!c.fabCapture && !c.missionOcr && !c.miningAssistant) return "lightweight";\n  if (!c.fabCapture && c.missionOcr && !c.miningAssistant) return "balanced";\n  if (!c.fabCapture && !c.missionOcr && c.miningAssistant) return "mining";\n  return "custom";\n}\nfunction repairArchVerseLinuxConfig(c: Config): void {\n  c.screenReaderProfile = deriveScreenReaderProfile(c);\n  if (!c.linuxOcrRegions || typeof c.linuxOcrRegions !== "object") c.linuxOcrRegions = {};\n  // Alpha20/21 used scanRegion for Resource Scanner. Mirror it into the independent-region map\n  // unless a newer config already has an explicit resourceSignature entry.\n  if (!("resourceSignature" in c.linuxOcrRegions) && c.scanRegion) c.linuxOcrRegions.resourceSignature = c.scanRegion;\n  if (process.platform !== "linux") return;\n  // These are reachability/interaction invariants on Linux, not ordinary preferences.\n  c.interactHotkey = "F";\n  c.holdToInteract = true;\n  c.moveHotkey = "Shift+F6";\n}\n\nconst freshInstall = !existsSync(configPath);\nlet config: Config = loadConfig();\nrepairArchVerseLinuxConfig(config);`;
-  s = replaceOnce(s, loadAnchor, repairBlock, 'Linux config repair helper');
+  const currentRepairBlock = repairBlock.replace(
+    'const freshInstall = !existsSync(configPath);\n',
+    '',
+  );
+  s = replaceOnce(s, loadAnchor, currentRepairBlock, 'Linux config repair helper');
 
   s = replaceOnce(
     s,
@@ -123,9 +135,7 @@ export function applyArchVerseServerSourcePatches(source) {
   must(s.includes('seedEndsAt = buf.length;'), 'byte-exact live-log seed handoff missing upstream');
   must(s.includes('...(seedEndsAt != null ? { startPosition: seedEndsAt } : {})'), 'watcher does not start at seed byte offset');
 
-  must(s.includes('ARCHVERSE_LINUX_CONFIG_ROOT'), 'canonical config marker missing');
   must(s.includes('ARCHVERSE_LINUX_CONFIG_CONTRACT'), 'Linux config contract marker missing');
-  must(s.includes('ARCHVERSE_LINUX_OCR_REGION_CONFIG'), 'Linux OCR region config marker missing');
   must(s.includes('ARCHVERSE_LINUX_NO_WINDOWS_MEDIA_OCR'), 'Windows OCR is not hard-gated off Linux');
   must(s.includes('ARCHVERSE_LINUX_OCR_HEALTH'), 'Linux OCR health marker missing');
   return s;
