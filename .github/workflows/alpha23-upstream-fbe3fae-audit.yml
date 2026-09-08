@@ -1,0 +1,165 @@
+name: Alpha23 Upstream fbe3fae Integration Audit
+
+on:
+  push:
+    branches: [agent/alpha23-upstream-fbe3fae-integration]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: alpha23-upstream-fbe3fae-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UPSTREAM_REPOSITORY: SubliminalsTV-Projects/sc-overlay
+  UPSTREAM_SHA: fbe3faedb38c82d11650ef6424e4037a9806cf95
+  UPSTREAM_VERSION: 0.1.46
+  VERIFIED_C8K_RUN_ID: '34138147146'
+  VERIFIED_C8K_ARTIFACT_ID: '10024814784'
+  VERIFIED_C8K_ARTIFACT: ArchVerse-0.1.44-Alpha22-Candidate8k
+  VERIFIED_C8K_HEAD_SHA: 233c5a47c0b6b1c23fbc2a9951f1675f3cfc8bd8
+  VERIFIED_C8K_TARBALL_SHA256: 56f57fa9ce688f0488b461882741d3c4bac5ac7beaba4034706ea67488302f17
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out ArchVerse integration tools
+        uses: actions/checkout@v4
+        with:
+          path: archverse
+
+      - name: Check out exact upstream target
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPOSITORY }}
+          ref: ${{ env.UPSTREAM_SHA }}
+          fetch-depth: 0
+          path: upstream
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: upstream/package-lock.json
+
+      - name: Verify target identity
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$UPSTREAM_SHA"
+          test "$(node -p "require('./package.json').version")" = "$UPSTREAM_VERSION"
+          git merge-base --is-ancestor v0.1.44 "$UPSTREAM_SHA"
+
+      - name: Install exact upstream dependencies
+        working-directory: upstream
+        run: npm ci
+
+      - name: Run upstream source gates
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm run test:localization
+          npm run test:handover
+          npm run test:contracts
+          npm run test:hauling
+          npm run test:solver
+          npm run test:haulplan
+          npm run test:advisor
+          npm run test:mining
+          npm run test:screenocr
+          npm run test:clienterror
+          npm run test:location
+          npm run test:events
+          npm run test:repaccrual
+          npm run test:reppage
+
+      - name: Run upstream widget gates
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          node --check tools/widget-dom-test.cjs
+          node --check tools/test-widgets-sandbox.mjs
+          xvfb-run -a npm run test:widgets:release
+
+      - name: Build exact upstream sidecar
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          npm run build:server
+          node --check build/server/server.mjs
+          test -s build/server/overlay/versefinder.html
+          test -s build/server/overlay/hauling.html
+          test -s build/server/overlay/rep-status.js
+
+      - name: Verify pinned Candidate 8k provenance
+        working-directory: archverse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$VERIFIED_C8K_ARTIFACT_ID")"
+          test "$(jq -r .name <<<"$meta")" = "$VERIFIED_C8K_ARTIFACT"
+          test "$(jq -r .expired <<<"$meta")" = false
+          test "$(jq -r .workflow_run.id <<<"$meta")" = "$VERIFIED_C8K_RUN_ID"
+          test "$(jq -r .workflow_run.head_sha <<<"$meta")" = "$VERIFIED_C8K_HEAD_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_C8K_RUN_ID" --jq .conclusion)" = success
+
+      - name: Download pinned Candidate 8k artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.VERIFIED_C8K_ARTIFACT }}
+          path: ${{ runner.temp }}/candidate8k-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.VERIFIED_C8K_RUN_ID }}
+
+      - name: Verify Candidate 8k Linux baseline
+        working-directory: archverse
+        run: |
+          set -euo pipefail
+          tarball="$(find "$RUNNER_TEMP/candidate8k-artifact" -type f -name 'ArchVerse-Native-0.1.44-r31.alpha22.candidate8k.tar.gz' -print -quit)"
+          test -n "$tarball"
+          test "$(sha256sum "$tarball" | awk '{print $1}')" = "$VERIFIED_C8K_TARBALL_SHA256"
+          mkdir -p "$RUNNER_TEMP/candidate8k"
+          tar --no-same-owner -C "$RUNNER_TEMP/candidate8k" -xzf "$tarball"
+          root="$RUNNER_TEMP/candidate8k/ArchVerse-Native-0.1.44-r31.alpha22.candidate8k"
+
+          node packaging/common/candidate8k-sidecar-supervision-selftest.mjs "$root"
+
+          test "$(sha256sum "$root/app/electron/mining-result-transport.cjs" | awk '{print $1}')" = 380274e0af93cef2b130f7ab9eda8a5725211f908c8c00acc8c3a6954b738dde
+          test "$(sha256sum "$root/app/electron/mining-vehicle-presence.cjs" | awk '{print $1}')" = f28eb7ca09e3796e6564f90c4a5eb6066a8d13332fe2c9ad4e347f80c02a5cc9
+          test "$(sha256sum "$root/app/electron/mining-signature-catalog.cjs" | awk '{print $1}')" = 09dfd261b2f4b2e261a01abd2d117259970b939ac199a3658d094fd260e16ed6
+          test "$(sha256sum "$root/app/electron/persistent-gamescope-pipewire.cjs" | awk '{print $1}')" = 831fdf3584cfa0cd0df15076ab0d6a5c5e010c842b12f08bf3c87ec82333b07b
+
+          grep -q 'ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_CAPTURE' "$root/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_PERSISTENT_STREAM' "$root/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_NONBLOCKING_COMMIT' "$root/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_MINING_STABLE_CADENCE' "$root/app/electron/capture.cjs"
+          grep -q 'ARCHVERSE_LINUX_SIDECAR_HEALTH_WATCHDOG_V2' "$root/app/electron/sidecar-health-watchdog.cjs"
+          grep -q 'keyboard authority=evdev' "$root/app/electron/main.cjs"
+          grep -q '__overlayClassifyPoint' "$root/app/electron/main.cjs"
+
+      - name: Record runtime overlap inventory
+        run: |
+          set -euo pipefail
+          mkdir -p audit
+          git -C upstream diff --name-status v0.1.44.."$UPSTREAM_SHA" > audit/upstream-files.txt
+          git -C upstream log --reverse --format='%H %s' v0.1.44.."$UPSTREAM_SHA" > audit/upstream-commits.txt
+          {
+            echo "upstream=$UPSTREAM_SHA"
+            echo "version=$UPSTREAM_VERSION"
+            echo "non_merge_commits=$(git -C upstream rev-list --no-merges --count v0.1.44.."$UPSTREAM_SHA")"
+            echo "changed_files=$(wc -l < audit/upstream-files.txt)"
+          } > audit/summary.txt
+
+      - name: Upload integration audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha23-fbe3fae-integration-audit
+          path: audit/
+          if-no-files-found: error
