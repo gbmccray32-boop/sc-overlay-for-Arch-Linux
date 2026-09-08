@@ -14,6 +14,21 @@ Do not convert one label into another without new evidence.
 
 ## Overnight checkpoint — September 8, 2026 UTC
 
+### Resumed checkpoint
+
+The saved branch was recovered from GitHub after the workspace reopened on Candidate 8h.
+Audit #8 for `8ebdecd82c9a0c5aaca66a225fbafdb8fc5bce24` is now verified successful:
+run `34183388450`, job `101926835112`. All configured steps passed, including the merged
+server build, pinned Candidate 8k provenance, and Candidate 8k baseline checks. The existing
+upstream age-band assertion exception remains; this is not an unconditional full-suite pass.
+
+The merged server also built locally after dependency installation. Added
+`tools/archverse-config-e2e.mjs` to exercise the real bundled config API with isolated canonical
+and conflicting legacy directories. Local execution was stopped by a network-approval cancellation;
+its runtime assertions are unverified. Do not treat the new test as passed or silently bypass the
+approval. Next: resolve the loopback-test execution approval, run this regression, then continue
+renderer/preload reconstruction. No Alpha23 field package exists yet.
+
 Gabe requested a pause and a durable handoff for tomorrow. No further field test is requested tonight.
 
 - Resume branch: `agent/alpha23-upstream-fbe3fae-integration`.
