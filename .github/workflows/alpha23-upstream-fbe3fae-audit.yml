@@ -85,6 +85,25 @@ jobs:
           node tools/check-suite-literals.cjs
           node --check tools/widget-dom-test.cjs
           node --check tools/test-widgets-sandbox.mjs
+
+          npm run overlay >"$RUNNER_TEMP/upstream-overlay.log" 2>&1 &
+          overlay_pid=$!
+          trap 'kill "$overlay_pid" 2>/dev/null || true' EXIT
+
+          ready=0
+          for _ in {1..30}; do
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:8778/missions.html >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != 1 ]]; then
+            cat "$RUNNER_TEMP/upstream-overlay.log"
+            exit 1
+          fi
+
           xvfb-run -a ./node_modules/.bin/electron --no-sandbox tools/widget-dom-test.cjs --pairs
 
       - name: Build exact upstream sidecar
