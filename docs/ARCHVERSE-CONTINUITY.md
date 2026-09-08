@@ -16,6 +16,16 @@ Do not convert one label into another without new evidence.
 
 ### Resumed checkpoint
 
+Gabe authorized GitHub CI execution of the loopback regression. The dedicated workflow
+`Alpha23 Linux Config Regression` passed at remote commit
+`d7790a76847605811ad176c4026f9019080745ab`: run `34291326179`, job `102278286861`.
+It built the merged sidecar and passed the real config API assertions for canonical directory
+precedence, locked F/hold/Shift+F6 controls, Mining/Balanced/Lightweight profiles, disk persistence,
+and bidirectional Resource Signature region updates. The earlier local approval cancellation is
+superseded for this validation by the authorized CI result. The full integration audit also started
+as run `34291326114`; its result has not yet been checked. Next development group: renderer/preload
+reconstruction, retaining the Candidate 8k packaged Mining baseline. No Alpha23 field package yet.
+
 The saved branch was recovered from GitHub after the workspace reopened on Candidate 8h.
 Audit #8 for `8ebdecd82c9a0c5aaca66a225fbafdb8fc5bce24` is now verified successful:
 run `34183388450`, job `101926835112`. All configured steps passed, including the merged
