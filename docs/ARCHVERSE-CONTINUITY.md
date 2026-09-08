@@ -12,6 +12,49 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Overnight checkpoint — September 8, 2026 UTC
+
+Gabe requested a pause and a durable handoff for tomorrow. No further field test is requested tonight.
+
+- Resume branch: `agent/alpha23-upstream-fbe3fae-integration`.
+- Last pushed implementation: `8ebdecd82c9a0c5aaca66a225fbafdb8fc5bce24`.
+- Equivalent local implementation: `29baad4a7600d96c6335511d51a29565be4ef952`.
+- Matching implementation tree: `e72198cb1160cb71b8d4ae5bbc1714ceefe7c38b`.
+- Local Git and remote commit IDs differ because the authorized GitHub API published equivalent
+  trees. Do not force-push local history over remote history.
+- Phase 1 imports upstream 0.1.46 backend, data, tests, and tools. Electron and renderer source
+  trees were retained from the pre-merge branch. This is not a reconstructed Candidate 8k package;
+  package-only Mining fixes must still be preserved when assembling Alpha23.
+- Audit #7, run `34182810868`, job `101925141159`, failed during the merged server build:
+  `canonical Linux config root: expected exactly one anchor, found 0`.
+- Upstream moved config declarations into `src/server-config.ts`. The last implementation adds
+  `applyArchVerseServerConfigSourcePatches` and its esbuild loader, leaving runtime patches in
+  `applyArchVerseServerSourcePatches`. Local syntax and patch-anchor checks passed.
+- The replacement CI result for `8ebdecd` has NOT been checked. Do not call it CI-green or assume
+  that an Alpha23 archive exists. No Alpha23 field candidate has been delivered.
+- Audit #7 passed the configured upstream and merged-source tests before the build failure.
+  The upstream widget run reported 53 suites and 1,390 assertions with one failure:
+  `the band really matches the age it prints`, expected `stale`, actual `ancient`.
+  The workflow currently allows this one named failure with matching suite/assertion totals.
+  The earlier explanation that a fixture expired is an inference, not a completed root-cause test.
+  Review the age-band calculation and test before treating that exception as permanent.
+- Full config/runtime regression coverage for the split patch remains pending; the prior promise
+  of tests for both source layouts was not implemented. Only current-source anchor checks ran locally.
+- Candidate 8k remains the packaged, field-reported working Mining/base fallback. GPU-crash
+  investigation is deferred at Gabe's request; do not change GPU settings or launcher scripts.
+
+### First action tomorrow
+
+Inspect the Actions run for implementation commit `8ebdecd82c9a0c5aaca66a225fbafdb8fc5bce24`.
+Read its failed step and complete relevant logs if it failed. Finish the split-config build and
+regression gates before porting the renderer/preload group. Then reconstruct and test a package
+from the pinned Candidate 8k artifact, preserving its Mining transport, capture, and supervision
+contracts. Keep the upstream target frozen at `fbe3faedb38c82d11650ef6424e4037a9806cf95`.
+
+This checkpoint is documentation-only. Use `[skip ci]` when publishing it so it does not start
+another audit merely to save the session. Work resumes when Gabe returns; no background development
+or overnight monitoring has been scheduled.
+
 ## Current state — September 8, 2026
 
 | Item | Current value |
@@ -31,7 +74,7 @@ Do not convert one label into another without new evidence.
 | Native archive SHA-256 | `56f57fa9ce688f0488b461882741d3c4bac5ac7beaba4034706ea67488302f17` |
 | Artifact integrity | **Packaged verified** — downloaded artifact, GitHub digest, ZIP integrity, inner checksum, embedded version, syntax, Candidate 8j baseline/soak tests, and Candidate 8k supervision tests passed |
 | Candidate 8i in-game status | **Field tested, failed** — September 6 log contains 331 Mining localhost timeouts and about 82.6 minutes of failure windows in a 148.2-minute run; OCR and direct PipeWire remain fast when the route is healthy |
-| Latest field-tested candidate | Candidate 8j, tested September 7, 2026 |
+| Latest field-tested candidate | Candidate 8k; Mining and base operation reported working by Gabe |
 | Candidate 8j in-game status | **Mining field verified; candidate failed overall** — Mining recognized and committed several signatures at the intended 1200/900 ms rates, but the watchdog caused two unnecessary sidecar restarts and eventually exhausted the ordinary crash budget |
 | Candidate 8k in-game status | **Field verified for Mining and base operation** — Gabe reported both working well after the long-session test. The separate display freeze is being handled as a KWin/AMDGPU/Overdrive and recurring `kscreen-doctor` system issue; no ArchVerse change is justified by that evidence. |
 | Active integration branch | `agent/alpha23-upstream-fbe3fae-integration` |
@@ -255,7 +298,8 @@ and watchdog recovery does not consume the crash budget.
 6. Confirm controlled watchdog recovery does not raise the ordinary sidecar crash count.
 7. Preserve the complete `electron.log` and `sidecar.log`, including normal startup and shutdown.
 
-Candidate 8k remains field-unverified until this gate is completed.
+Gabe subsequently reported Candidate 8k Mining and base operation working. This does not establish
+that every individual test case above was exercised; retain that distinction for release approval.
 
 The planned Candidate 8j field gate was:
 
@@ -338,10 +382,10 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest verified packaged deliverable is the quarantined Candidate 8j native tar/zip artifact.
-It passed CI and independent artifact verification, but it has not passed its in-game field gate.
+The latest verified packaged deliverable is the Candidate 8k native artifact recorded above.
+It passed CI and independent artifact verification; Gabe reported Mining and base operation working.
 The last documented Arch, Fedora, and Debian package set belongs to the older Alpha 21 line. Do not
-describe Candidate 8j as a completed three-distribution release until fresh packages pass their own
+describe Candidate 8k or Alpha23 as a completed three-distribution release until fresh packages pass their own
 checks and field tests.
 
 ## Continuity maintenance
