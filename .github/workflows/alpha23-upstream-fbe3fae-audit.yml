@@ -82,9 +82,10 @@ jobs:
         working-directory: upstream
         run: |
           set -euo pipefail
+          node tools/check-suite-literals.cjs
           node --check tools/widget-dom-test.cjs
           node --check tools/test-widgets-sandbox.mjs
-          xvfb-run -a npm run test:widgets:release
+          xvfb-run -a ./node_modules/.bin/electron --no-sandbox tools/widget-dom-test.cjs --pairs
 
       - name: Build exact upstream sidecar
         working-directory: upstream
