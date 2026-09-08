@@ -1,0 +1,34 @@
+name: Alpha23 Linux Config Regression
+
+on:
+  push:
+    branches: [agent/alpha23-upstream-fbe3fae-integration]
+    paths:
+      - .github/workflows/alpha23-config-regression.yml
+      - tools/archverse-config-e2e.mjs
+      - tools/archverse-server-patches.mjs
+      - tools/build-server.mjs
+      - src/**
+      - package.json
+      - package-lock.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  config-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build merged Linux sidecar
+        run: npm run build:server
+      - name: Exercise real Linux configuration API
+        timeout-minutes: 2
+        run: node tools/archverse-config-e2e.mjs
