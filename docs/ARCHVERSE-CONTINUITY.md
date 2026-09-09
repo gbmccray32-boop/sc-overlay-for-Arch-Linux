@@ -31,6 +31,40 @@ package has been approved or delivered. Remaining gates include complete shell/I
 checks, reputation OCR integration, the upstream age-band test exception, and downloadable packaging.
 Gabe authorized continued work through field-test readiness; no additional go-ahead is needed.
 
+### Alpha23 Candidate 1 field-test checkpoint — September 9, 2026
+
+Alpha23 Candidate 1 is automated and packaged verified. It remains unverified in game.
+
+| Item | Evidence |
+| --- | --- |
+| Branch | `agent/alpha23-upstream-fbe3fae-integration` |
+| Packaged source commit | `de1a1f1cd97d8a4e39a5616cb4544769032b7fb9` |
+| Upstream target | `fbe3faedb38c82d11650ef6424e4037a9806cf95` (`0.1.46`) |
+| Baseline | Candidate 8k artifact `10024814784`, SHA-256 verified |
+| Full integration audit | Run `34363998487`, all steps passed |
+| Candidate workflow | Run `34363998224`, all steps passed |
+| Artifact | `ArchVerse-Alpha23-Candidate1-field-test`, ID `10109267555` |
+| Artifact ZIP SHA-256 | `370574dbce02ffe666f1e70aebc1202680ac1437d4c7033ee52662c2791e4404` |
+| Native archive | `ArchVerse-Native-0.1.46-r31.alpha23.candidate1.tar.gz` |
+| Native archive SHA-256 | `49e142e86ca6d32d52557f78a73c0300a6037ce41a2f343bce94df08a787d15b` |
+
+Automated gates cover upstream source and widget suites, the built sidecar, canonical config API,
+Candidate 8k supervision, the 120-request Mining transport soak, all packaged renderer scripts and
+IPC registrations, first-F classification, forced region refresh, capture-module evaluation,
+packaged main startup, and full pairwise widget layouts. Independent download verification matched
+the GitHub artifact digest, native checksum, complete package manifest, embedded version, and the
+four protected Candidate 8k Mining file hashes.
+
+Candidate 1 ports Log, Verse Finder, the expanded Hauling renderer, the upstream 0.1.46 backend,
+and the newer canvas architecture. It retains Candidate 8k capture, result transport, Game.log
+vehicle authority, direct Gamescope PipeWire stream, sidecar supervision, and one-shot Location
+Sync. Reputation screen scanning is visibly disabled in this candidate because the upstream
+capture consumer has not yet been reconciled with Linux Mining's exclusive OCR scheduler.
+
+Next step: Gabe field-tests Candidate 1 using `FIELD-TEST.md` and supplies complete `electron.log`
+and `sidecar.log`. Candidate 8k remains the rollback build. Do not approve a release from this
+checkpoint; Candidate 1 is a quarantined field candidate.
+
 ### Resumed checkpoint
 
 Gabe authorized GitHub CI execution of the loopback regression. The dedicated workflow
