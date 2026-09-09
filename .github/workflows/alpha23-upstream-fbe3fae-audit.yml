@@ -82,6 +82,7 @@ jobs:
         working-directory: upstream
         run: |
           set -euo pipefail
+          cp ../archverse/tools/widget-dom-test.cjs tools/widget-dom-test.cjs
           node tools/check-suite-literals.cjs
           node --check tools/widget-dom-test.cjs
           node --check tools/test-widgets-sandbox.mjs
@@ -104,21 +105,8 @@ jobs:
             exit 1
           fi
 
-          set +e
           xvfb-run -a ./node_modules/.bin/electron --no-sandbox \
             tools/widget-dom-test.cjs --pairs 2>&1 | tee "$RUNNER_TEMP/upstream-widgets.log"
-          widget_status=${PIPESTATUS[0]}
-          set -e
-
-          # The frozen release fixture crossed its 100-day age boundary after publication. Accept
-          # only that exact upstream failure; any additional or different failure still blocks us.
-          if [[ "$widget_status" != 0 ]]; then
-            test "$(grep -c '^  FAIL ' "$RUNNER_TEMP/upstream-widgets.log")" = 1
-            grep -Fq 'FAIL the band really matches the age it prints' \
-              "$RUNNER_TEMP/upstream-widgets.log"
-            grep -Eq '53 suites .* 1390 assertions' "$RUNNER_TEMP/upstream-widgets.log"
-            grep -Fxq 'FAILED (1)' "$RUNNER_TEMP/upstream-widgets.log"
-          fi
 
       - name: Build exact upstream sidecar
         working-directory: upstream
@@ -226,6 +214,9 @@ jobs:
           node --check "$candidate/app/server/server.mjs"
           node --check "$candidate/app/server/overlay/canvas.js"
           node --check "$candidate/app/server/overlay/archverse-location-sync.js"
+          python3 packaging/common/alpha23-renderer-audit.py "$candidate"
+          node packaging/common/alpha23-linux-bridge-selftest.cjs "$candidate"
+          node packaging/common/alpha23-main-startup-selftest.cjs "$candidate/app/electron/main.cjs"
           node packaging/common/candidate8k-sidecar-supervision-selftest.mjs "$candidate"
           node packaging/common/candidate8j-mining-transport-selftest.mjs "$candidate"
           node tools/archverse-config-e2e.mjs "$candidate/app/server"

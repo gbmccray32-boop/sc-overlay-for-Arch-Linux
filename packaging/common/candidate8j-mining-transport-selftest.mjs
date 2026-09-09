@@ -151,6 +151,7 @@ const watchdog = createSidecarHealthWatchdog({
   // Alpha23 retains Candidate 8k startup grace. This test isolates the probe counter;
   // candidate8k-sidecar-supervision-selftest exercises grace, expiry, and recovery separately.
   startupGraceMs: 0,
+  minimumFailureDurationMs: 0,
   logger: { log() {}, warn() {} },
   requestImpl: async () => {
     healthAttempts += 1;

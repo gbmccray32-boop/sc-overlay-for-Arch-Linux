@@ -3726,10 +3726,14 @@ const VERSEFINDER = `(async () => {
     // days, so this accepts either rather than pretending to a precision it does not have.
     if (txt.trim() === "today") return "today";
     if (!m) return null;
+    // Month labels are truncated: 3mo represents 90 through 119 days and crosses the
+    // 100-day color boundary. The displayed text cannot distinguish those two bands.
+    if (m[2] === "mo" && Number(m[1]) === 3) return "stale-or-ancient";
     const d = m[2] === "mo" ? Number(m[1]) * 30 : Number(m[1]);
     return d <= 7 ? "fresh" : d <= 45 ? "recent" : d <= 100 ? "stale" : "ancient";
   };
-  const agrees = (want, got) => (want === "today" ? (got === "live" || got === "fresh") : want === got);
+  const agrees = (want, got) => (want === "today" ? (got === "live" || got === "fresh")
+    : want === "stale-or-ancient" ? (got === "stale" || got === "ancient") : want === got);
   // 🔴 RE-POINTED, flight onepill: the pill now carries the SOURCE WORD inside it, so its
   // textContent reads "8d UEX" and the anchored pattern above matched none of them. That drove
   // the checked list to zero and the assertion went red on its own non-empty guard, not on a
