@@ -75,7 +75,7 @@ for (const marker of [
 ]) {
   if (!server.includes(marker)) throw new Error(`built server lost required Linux/upstream contract: ${marker}`);
 }
-const missions = readFileSync(`${out}/overlay/missions.html`, "utf8");
+const missions = readFileSync(`${out}/overlay/missions.html`, "utf8") + readFileSync(`${out}/overlay/canvas.js`, "utf8");
 for (const marker of [
   "ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI_LOADER",
   "ARCHVERSE_LINUX_DYNAMIC_WIDGET_REGIONS",

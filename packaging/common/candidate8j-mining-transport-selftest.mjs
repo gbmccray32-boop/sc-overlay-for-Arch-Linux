@@ -23,7 +23,7 @@ const {
 const { createMiningVehiclePresenceClient } = require(path.join(root, "app/electron/mining-vehicle-presence.cjs"));
 const { createSidecarHealthWatchdog } = require(path.join(root, "app/electron/sidecar-health-watchdog.cjs"));
 
-must(pkg.version === "0.1.44-r31.alpha22.candidate8j", `wrong package version ${pkg.version}`);
+must(["0.1.44-r31.alpha22.candidate8j", "0.1.46-r31.alpha23.candidate1"].includes(pkg.version), `wrong package version ${pkg.version}`);
 for (const marker of [
   "ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_PERSISTENT_STREAM",
   "ARCHVERSE_LINUX_MINING_OCR_PRIORITY_LANES",
@@ -148,6 +148,9 @@ const watchdog = createSidecarHealthWatchdog({
   getChild: () => fakeChild,
   restartChild: () => { restarts += 1; },
   restartCooldownMs: 0,
+  // Alpha23 retains Candidate 8k startup grace. This test isolates the probe counter;
+  // candidate8k-sidecar-supervision-selftest exercises grace, expiry, and recovery separately.
+  startupGraceMs: 0,
   logger: { log() {}, warn() {} },
   requestImpl: async () => {
     healthAttempts += 1;

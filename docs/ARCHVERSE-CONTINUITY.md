@@ -14,6 +14,23 @@ Do not convert one label into another without new evidence.
 
 ## Overnight checkpoint — September 8, 2026 UTC
 
+### September 9 renderer and package reconstruction
+
+Recovered remote checkpoint `07477ec` after the workspace reverted to Candidate 8h. The interrupted
+uncommitted renderer changes were not present and have been reconstructed from frozen upstream.
+The canvas build now retains Linux OCR-region editing, dynamic interaction regions, the Candidate
+8k first-F DOM classifier, and forced region refresh. Log and Verse Finder lifecycle controls are
+ported at explicit Candidate 8k shell seams. The staging scripts preserve the checksum-pinned 8k
+Mining parser, vehicle authority, inline commit, and one-shot durable Location Sync alongside the
+new backend. Capture and its Mining/PipeWire/transport/watchdog helpers are hash-checked unchanged.
+
+Local evidence: production server build, TypeScript check, staging anchors, and Candidate 8k
+supervision regression pass. The workflow now tests the staged Alpha23 sidecar with the sustained
+Mining transport regression and canonical-config E2E. Those new CI results are pending. No field
+package has been approved or delivered. Remaining gates include complete shell/IPC/renderer runtime
+checks, reputation OCR integration, the upstream age-band test exception, and downloadable packaging.
+Gabe authorized continued work through field-test readiness; no additional go-ahead is needed.
+
 ### Resumed checkpoint
 
 Gabe authorized GitHub CI execution of the loopback regression. The dedicated workflow

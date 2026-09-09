@@ -163,7 +163,7 @@ jobs:
           grep -q 'linuxOcrRegions' build/server/server.mjs
           grep -q 'Shift+F6' build/server/server.mjs
           grep -q 'ARCHVERSE_LINUX_SETTINGS_CONTRACT' build/server/overlay/config.html
-          grep -q 'ARCHVERSE_LINUX_DYNAMIC_WIDGET_REGIONS' build/server/overlay/missions.html
+          grep -q 'ARCHVERSE_LINUX_DYNAMIC_WIDGET_REGIONS' build/server/overlay/canvas.js
           grep -q 'ARCHVERSE_RESOURCE_SCANNER_V1' build/server/overlay/mining.html
 
       - name: Verify pinned Candidate 8k provenance
@@ -213,6 +213,22 @@ jobs:
           grep -q 'ARCHVERSE_LINUX_SIDECAR_HEALTH_WATCHDOG_V2' "$root/app/electron/sidecar-health-watchdog.cjs"
           grep -q 'keyboard authority=evdev' "$root/app/electron/main.cjs"
           grep -q '__overlayClassifyPoint' "$root/app/electron/main.cjs"
+
+      - name: Stage Alpha23 and exercise packaged regressions
+        working-directory: archverse
+        run: |
+          set -euo pipefail
+          base="$RUNNER_TEMP/candidate8k/ArchVerse-Native-0.1.44-r31.alpha22.candidate8k"
+          candidate="$RUNNER_TEMP/alpha23/ArchVerse-Native-0.1.46-r31.alpha23.candidate1"
+          node packaging/common/stage-alpha23.mjs "$base" "$candidate"
+          node --check "$candidate/app/electron/main.cjs"
+          node --check "$candidate/app/electron/preload.cjs"
+          node --check "$candidate/app/server/server.mjs"
+          node --check "$candidate/app/server/overlay/canvas.js"
+          node --check "$candidate/app/server/overlay/archverse-location-sync.js"
+          node packaging/common/candidate8k-sidecar-supervision-selftest.mjs "$candidate"
+          node packaging/common/candidate8j-mining-transport-selftest.mjs "$candidate"
+          node tools/archverse-config-e2e.mjs "$candidate/app/server"
 
       - name: Record runtime overlap inventory
         run: |

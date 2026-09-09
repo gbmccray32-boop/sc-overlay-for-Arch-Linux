@@ -92,6 +92,31 @@
     }
     return String(group || "").split("#")[0];
   }
+  /**
+   * 🔴 THE HOLD IS ZONED BY DROP-OFF STOP — not by mission, and not by commodity.
+   *
+   * Sub, 2026-08-18, holding three missions across two destinations: "people are going to waste a
+   * lot of time doing Tetris with two different commodities that it really doesn't matter…
+   * all I really need is two areas of the cargo grid."
+   *
+   * The physical reason is decisive: when you land, EVERYTHING for that stop comes off, whichever
+   * contract it belongs to. Two of his missions (Silicon, Tin) drop at Riker and one (Scrap) at
+   * Samson's — so the hold has two meaningful regions, not three. Colouring by mission split
+   * Riker's load into two hues and silently invited him to keep them apart for no reason.
+   *
+   * ⚠️ The LOAD STEPS stay grouped by MISSION, and that is not an inconsistency: the freight
+   * elevator lifts per mission, so that is the unit you match at the kiosk. Loading and unloading
+   * have different natural units, and the widget now says so rather than forcing one on both.
+   */
+  function zoneOf(plan, group) {
+    for (const c of (plan && plan.contracts) || []) {
+      for (const l of c.legs || []) {
+        if (l.group === group) return l.toLocation || l.destination || c.missionId;
+      }
+    }
+    return String(group || "").split("#")[0];
+  }
+
   /** A leg's index within its own contract. */
   function depthOf(plan, group) {
     for (const c of (plan && plan.contracts) || []) {
@@ -140,6 +165,28 @@
     const legByGroup = new Map();
     for (const c of (plan && plan.contracts) || []) {
       for (const l of c.legs || []) legByGroup.set(l.group, { c: c, leg: l });
+    }
+    /* 🔴 A BOUGHT COMMODITY IS A LIFT LIKE ANY OTHER, and this map is what names it. Without an
+       entry here `signatureOf` falls back to the word "Cargo", so 48 SCU of Processed Food came up
+       the elevator as "Cargo 6x 8 SCU" — the exact riddle this file exists to prevent, since the
+       signature's whole job is telling you WHICH lift is which at a terminal that names no mission.
+       🔑 Adapted to the {c, leg} shape the rest of this function already reads, so nothing below
+       needs a second branch. The synthetic contract carries the terminal as its title, because that
+       is what a player would call this load. */
+    for (const b of (plan && plan.buys) || []) {
+      if (!b.group) continue;
+      legByGroup.set(b.group, {
+        c: { missionId: b.group, title: b.commodity + " to " + b.to.terminal, contractKey: null, source: "log" },
+        leg: {
+          group: b.group, commodity: b.commodity, scu: b.scu,
+          destination: b.to.terminal || null, toLocation: b.to.locationId || null,
+          // ⚠️ NO `boxes` and NO `boxCount`. The step builder prefers a contract's own manifest over
+          // what got placed, which is right for a contract (the elevator shows the whole mission
+          // even when it spills into a second trip) — but a buy's manifest is already exactly what
+          // was placed, and stating it twice risks the two drifting.
+          boxes: [], boxCount: 0,
+        },
+      });
     }
 
     const raw = (plan && plan.pack && plan.pack.placements) || [];
@@ -543,6 +590,7 @@
     iso: iso,
     shade: shade,
     missionOf: missionOf,
+    zoneOf: zoneOf,
     depthOf: depthOf,
     hashHue: hashHue,
     signatureOf: signatureOf,

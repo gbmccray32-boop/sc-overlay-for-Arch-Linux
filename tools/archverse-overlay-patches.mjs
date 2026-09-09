@@ -5,6 +5,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { patchFirstFCanvas } from "./archverse-first-f-canvas.mjs";
 
 function must(cond, msg) {
   if (!cond) throw new Error(`ArchVerse overlay patch: ${msg}`);
@@ -48,7 +49,6 @@ function patchLinuxOcrRegions(html) {
     'if (c && (c.linuxOcrRegions?.resourceSignature || c.scanRegion)) { scanRegion = c.linuxOcrRegions?.resourceSignature || c.scanRegion; drawScanBox(); }',
     'Resource Scanner ROI restore',
   );
-  s = appendScript(s, '/linux-ocr-region-manager.js', 'ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI_LOADER');
   must(s.includes('window.__archverseOcrDisplay?.()'), 'Resource Scanner ROI is not tied to captured-game geometry');
   must(s.includes('linuxOcrRegions: { resourceSignature: f }'), 'Resource Scanner ROI is not mirrored into Linux region config');
   return s;
@@ -129,11 +129,11 @@ function patchLinuxSettings(html) {
 
 export function applyArchVerseOverlayPatches(outDir) {
   const overlay = join(outDir, "overlay");
+  rewrite(join(overlay, "canvas.js"), (source) => patchFirstFCanvas(patchMissionInteractionRegions(patchLinuxOcrRegions(source))));
 
   rewrite(join(overlay, "missions.html"), (html) => {
     let next = html.replaceAll("Mining Scanner", "Resource Scanner");
-    next = patchLinuxOcrRegions(next);
-    next = patchMissionInteractionRegions(next);
+    next = appendScript(next, "/linux-ocr-region-manager.js", "ARCHVERSE_LINUX_PER_WIDGET_OCR_REGION_UI_LOADER");
     next = appendScript(next, "/archverse-widget-appearance.js", "ARCHVERSE_WIDGET_APPEARANCE_V1");
     return next;
   });
