@@ -14,7 +14,7 @@ const main = await readFile(path.join(root, "app/electron/main.cjs"), "utf8");
 const watchdogSource = await readFile(path.join(root, "app/electron/sidecar-health-watchdog.cjs"), "utf8");
 const { createSidecarHealthWatchdog } = require(path.join(root, "app/electron/sidecar-health-watchdog.cjs"));
 
-must(["0.1.44-r31.alpha22.candidate8k", "0.1.46-r31.alpha23.candidate1"].includes(pkg.version), `wrong package version ${pkg.version}`);
+must(["0.1.44-r31.alpha22.candidate8k", "0.1.46-r31.alpha23.candidate1", "0.1.46-r31.alpha23.candidate2"].includes(pkg.version), `wrong package version ${pkg.version}`);
 must(pkg.description.includes("field-safe sidecar supervision"), "package description does not identify the repair");
 for (const marker of [
   "ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_PERSISTENT_STREAM",

@@ -1,0 +1,80 @@
+name: Alpha23 Candidate 2 Default Capture and Mining Latency
+on:
+  push:
+    branches: [agent/alpha23-candidate2-default-capture-latency]
+    paths-ignore:
+      - docs/ARCHVERSE-CONTINUITY.md
+      - ARCHVERSE-HANDOFF.generated.md
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: alpha23-candidate2-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build:server
+      - uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-0.1.44-Alpha22-Candidate8k
+          path: baseline-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 34138147146
+      - name: Verify baseline and stage Candidate 2
+        run: |
+          set -euo pipefail
+          archive=baseline-artifact/ArchVerse-Native-0.1.44-r31.alpha22.candidate8k.tar.gz
+          test "$(sha256sum "$archive" | cut -d ' ' -f1)" = 56f57fa9ce688f0488b461882741d3c4bac5ac7beaba4034706ea67488302f17
+          mkdir baseline
+          tar --no-same-owner -xzf "$archive" -C baseline
+          node packaging/common/stage-alpha23-candidate2.mjs baseline/ArchVerse-Native-0.1.44-r31.alpha22.candidate8k "$RUNNER_TEMP/field/ArchVerse-Native-0.1.46-r31.alpha23.candidate2"
+      - name: Run packaged gates
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/field/ArchVerse-Native-0.1.46-r31.alpha23.candidate2"
+          find "$candidate/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          python3 packaging/common/alpha23-renderer-audit.py "$candidate"
+          node packaging/common/alpha23-linux-bridge-selftest.cjs "$candidate"
+          node packaging/common/alpha23-main-startup-selftest.cjs "$candidate/app/electron/main.cjs"
+          node packaging/common/candidate8k-sidecar-supervision-selftest.mjs "$candidate"
+          node packaging/common/candidate8j-mining-transport-selftest.mjs "$candidate"
+          node packaging/common/alpha23-candidate2-capture-selftest.mjs "$candidate"
+          node tools/archverse-config-e2e.mjs "$candidate/app/server"
+      - name: Run staged widget integration
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/field/ArchVerse-Native-0.1.46-r31.alpha23.candidate2"
+          mkdir -p "$RUNNER_TEMP/alpha23-widget-config"
+          printf '%s\n' '{"syncEnabled":false,"shareLogs":false,"setupComplete":true}' > "$RUNNER_TEMP/alpha23-widget-config/config.json"
+          SC_TRACKER_CONFIG_DIR="$RUNNER_TEMP/alpha23-widget-config" PORT=18778 node "$candidate/app/server/server.mjs" > "$RUNNER_TEMP/alpha23-widget-server.log" 2>&1 &
+          sidecar=$!
+          trap 'kill "$sidecar" 2>/dev/null || true' EXIT
+          for _ in {1..30}; do curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null
+          OVERLAY_PORT=18778 xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox tools/widget-dom-test.cjs --pairs
+      - name: Package quarantined field candidate
+        run: |
+          set -euo pipefail
+          name=ArchVerse-Native-0.1.46-r31.alpha23.candidate2
+          root="$RUNNER_TEMP/field/$name"
+          mkdir -p field-artifact
+          cp "$root/FIELD-TEST.md" "$root/README.md"
+          (cd "$root" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && sha256sum -c SHA256SUMS >/dev/null)
+          tar -czf "field-artifact/$name.tar.gz" -C "$RUNNER_TEMP/field" "$name"
+          (cd field-artifact && sha256sum "$name.tar.gz" > SHA256SUMS)
+          cp "$root/FIELD-TEST.md" field-artifact/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha23-Candidate2-field-test
+          path: field-artifact/
+          if-no-files-found: error
+          retention-days: 90

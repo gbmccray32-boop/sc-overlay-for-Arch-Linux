@@ -23,7 +23,7 @@ const {
 const { createMiningVehiclePresenceClient } = require(path.join(root, "app/electron/mining-vehicle-presence.cjs"));
 const { createSidecarHealthWatchdog } = require(path.join(root, "app/electron/sidecar-health-watchdog.cjs"));
 
-must(["0.1.44-r31.alpha22.candidate8j", "0.1.46-r31.alpha23.candidate1"].includes(pkg.version), `wrong package version ${pkg.version}`);
+must(["0.1.44-r31.alpha22.candidate8j", "0.1.46-r31.alpha23.candidate1", "0.1.46-r31.alpha23.candidate2"].includes(pkg.version), `wrong package version ${pkg.version}`);
 for (const marker of [
   "ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_PERSISTENT_STREAM",
   "ARCHVERSE_LINUX_MINING_OCR_PRIORITY_LANES",
@@ -44,7 +44,7 @@ must(!serverSource.includes("vehiclePresenceClients"), "sidecar still retains ve
 must(!capture.includes('signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),\n          });\n          const rr3 = await r3.json();'),
   "Mining still waits for the sidecar inside its OCR tick");
 must(capture.includes('const commitState = "queued";'), "Mining does not report queued asynchronous commit state");
-must(capture.includes("? (Date.now() < fastUntil ? FAST_MS : MINING_VEHICLE_IDLE_MS)"), "exact 900/1200 cadence selector missing");
+must(capture.includes("? (Date.now() < fastUntil ? FAST_MS : MINING_VEHICLE_IDLE_MS)"), "two-rate Linux Mining cadence selector missing");
 
 function linesFor(texts) {
   const values = Array.isArray(texts) ? texts : [texts];
