@@ -19,7 +19,10 @@ EOF
 }
 
 script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(git -C "$script_dir" rev-parse --show-toplevel)"
+# Git exports GIT_DIR/GIT_WORK_TREE while running hooks. In a linked worktree those variables can
+# make a nested `git -C tools` resolve tools/ itself as the worktree. Hooks pass the root they
+# already resolved; ordinary/manual calls retain the independent discovery path.
+repo_root="${ARCHVERSE_REPO_ROOT:-$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$script_dir" rev-parse --show-toplevel)}"
 output_path="$repo_root/ARCHVERSE-HANDOFF.generated.md"
 install_hooks=false
 print_handoff=false
@@ -109,7 +112,7 @@ if [[ -z "$working_status" ]]; then
 fi
 
 latest_workflow="$(
-  find "$repo_root/.github/workflows" -maxdepth 1 -type f -name 'alpha22-candidate*.yml' -print \
+  find "$repo_root/.github/workflows" -maxdepth 1 -type f \( -name 'alpha22-candidate*.yml' -o -name 'alpha23-candidate*.yml' \) -print \
     | sort -V \
     | tail -n 1
 )"
@@ -133,6 +136,11 @@ if [[ -n "$latest_workflow" ]]; then
   workflow_relative="${latest_workflow#"$repo_root/"}"
   app_version="$(read_workflow_env APP_VERSION "$latest_workflow")"
   base_version="$(read_workflow_env BASE_VERSION "$latest_workflow")"
+  if [[ -z "$app_version" ]]; then
+    app_version="$(sed -nE 's#.*ArchVerse-Native-([0-9][A-Za-z0-9.-]+).*#\1#p' "$latest_workflow" | tail -n 1)"
+  fi
+  app_version="${app_version:-not found}"
+  base_version="${base_version:-not declared}"
 else
   workflow_relative='not found'
   app_version='not found'

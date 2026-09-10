@@ -31,6 +31,49 @@ package has been approved or delivered. Remaining gates include complete shell/I
 checks, reputation OCR integration, the upstream age-band test exception, and downloadable packaging.
 Gabe authorized continued work through field-test readiness; no additional go-ahead is needed.
 
+### Alpha23 Candidate 2 field-test checkpoint — September 10, 2026
+
+Candidate 1 received an in-game diagnostic session. Its integrated Mining parser, exact catalog,
+Game.log vehicle authority, and asynchronous commit path worked: the supplied logs contain accepted
+signatures from `2,000` through `17,200`. The regular non-Gamescope session exposed a capture
+regression, however. It cached `spectacle-wayland`; each frame took about three seconds, Mining
+opportunities stretched beyond the configured rate, and seven one-shot Location Sync reads failed.
+After Star Citizen restarted under Gamescope, direct `gamescope-pipewire` capture recovered and two
+Location Sync reads resolved Crusader successfully. Candidate 1 is therefore field-tested but not
+approved as a release.
+
+Candidate 2 repairs only that failure group. On KDE Wayland the capture order is now direct
+Gamescope PipeWire, exact Star Citizen window, Electron monitor, then Spectacle. A cached Spectacle
+fallback periodically probes for a faster source so a game surface that appears after launch can be
+adopted without restarting ArchVerse. An exact non-Gamescope Star Citizen window is treated as the
+complete game canvas instead of receiving a panoramic Gamescope crop. Mining targets 600ms while
+locked and 800ms during in-vehicle acquisition; the latest-frame scheduler remains single-flight.
+
+| Item | Evidence |
+| --- | --- |
+| Branch | `agent/alpha23-candidate2-default-capture-latency` |
+| Remote packaged source commit | `fc988a7d30e3dc87b4c408f761d585bd203fb410` |
+| Equivalent local commit | `c494da0559b5029a6b6e582057f3849f86b4b2bd` |
+| Matching source tree | `9bde588e0cae51d937955e75acf68f0dd11d77ca` |
+| Candidate workflow | Run `34435600250`, all steps passed |
+| Artifact | `ArchVerse-Alpha23-Candidate2-field-test`, ID `10136153055` |
+| Artifact ZIP SHA-256 | `abcfb29abecd949571309b763a57ab24b0877a951361755720af08794ee8d6c9` |
+| Native archive | `ArchVerse-Native-0.1.46-r31.alpha23.candidate2.tar.gz` |
+| Native archive SHA-256 | `23a6a5723db22f35004f75aff357a8abdb836518fd06c596a123edec4afe4f17` |
+| Field status | Unverified; Gabe must test default and Gamescope sessions |
+
+Automated and packaged verification passed staging, complete Electron syntax checks, Alpha23
+renderer and bridge audits, packaged main startup, Candidate 8k supervision, the Candidate 8j
+120-request real-sidecar soak, Candidate 2 capture/cadence assertions, canonical config E2E, all
+pairwise widget layouts, the outer artifact digest, the inner archive checksum, and the complete
+package manifest.
+
+Next step: test Candidate 2 in a normal non-Gamescope launch first. Record the selected capture
+method, verify r_DisplayInfo Location Sync and RS recognition without F/Alt-Tab/config focus, and
+measure `capture`, OCR, and heartbeat timings. Then repeat under Gamescope and confirm
+`gamescope-pipewire` remains authoritative. Candidate 8k remains the rollback build. Candidate 2 is
+a quarantined field candidate, not a release.
+
 ### Alpha23 Candidate 1 field-test checkpoint — September 9, 2026
 
 Alpha23 Candidate 1 is automated and packaged verified. It remains unverified in game.
@@ -397,7 +440,7 @@ The planned Candidate 8j field gate was:
     accepted or announced as an RS value.
 11. Confirm location sync remains responsive during the Mining test.
 12. Run longer than the prior five-minute SSE failure interval. Confirm `[mining-heartbeat]` remains
-    present in `electron.log`, the 900/1200 cadence stays stable, and no repeated `[mining-ipc]`
+    present in `electron.log`, Candidate 2's 600/800 cadence stays stable, and no repeated `[mining-ipc]`
     timeout run appears.
 13. If the sidecar becomes unresponsive, confirm three failed independent health probes precede one
     owned-sidecar restart and the newest Mining result is acknowledged after recovery.
@@ -458,8 +501,9 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest verified packaged deliverable is the Candidate 8k native artifact recorded above.
-It passed CI and independent artifact verification; Gabe reported Mining and base operation working.
+The latest automated and packaged verified deliverable is Alpha23 Candidate 2. It has not yet been
+field-tested. Candidate 8k remains the latest rollback whose Mining and base operation Gabe reported
+working.
 The last documented Arch, Fedora, and Debian package set belongs to the older Alpha 21 line. Do not
 describe Candidate 8k or Alpha23 as a completed three-distribution release until fresh packages pass their own
 checks and field tests.
