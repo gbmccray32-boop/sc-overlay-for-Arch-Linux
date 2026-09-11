@@ -43,12 +43,18 @@ margin cannot admit a nearby target distance as a signature.
 | Baseline artifact | Candidate 2 ID `10136153055`, native SHA-256 `23a6a5723db22f35004f75aff357a8abdb836518fd06c596a123edec4afe4f17` |
 | Local automated checks | Syntax for all packaged Electron JS; Alpha23 renderer and Linux bridge audits; packaged main startup; Candidate 8k supervision; Candidate 8j 120-request real-sidecar soak; Candidate 3 focus/capture/parser regression |
 | Local config E2E | Blocked by the workspace runtime: `os.networkInterfaces()` returned `uv_interface_addresses` error; unchanged server code, to be rerun in GitHub CI |
-| CI/package status | Unverified until branch push and Candidate 3 workflow complete |
+| Remote packaged source | `8ddeadc9c602c8db0cd82e535f564e9288aa15f8` |
+| CI | Run `34556433971`, all steps passed |
+| Artifact | `ArchVerse-Alpha23-Candidate3-field-test`, ID `10182826990` |
+| Artifact ZIP SHA-256 | `d77fc5d54c793c15d2b22b54866f9f4b26e28a0135d53e7db96a54bef58ae233` |
+| Native archive | `ArchVerse-Native-0.1.46-r31.alpha23.candidate3.tar.gz` |
+| Native archive SHA-256 | `1df91bcf116816f7fcff43d25dd317b87ffee0bec7c590742659d8cbb870de3f` |
 | Field status | Unverified |
 
-Next step: commit and push Candidate 3, require every GitHub package gate to pass, download and
-checksum-verify `ArchVerse-Alpha23-Candidate3-field-test`, then give Gabe the archive for normal and
-Gamescope field testing. Candidate 8k remains the rollback build.
+Candidate 3 is automated and packaged verified. The downloaded artifact matched GitHub's digest,
+the inner archive checksum passed, the embedded package and provenance versions matched, and the
+complete package manifest verified. Next step: Gabe field-tests the supplied archive in normal and
+Gamescope sessions. Candidate 8k remains the rollback build.
 
 ## Overnight checkpoint — September 8, 2026 UTC
 
@@ -98,7 +104,7 @@ locked and 800ms during in-vehicle acquisition; the latest-frame scheduler remai
 | Artifact ZIP SHA-256 | `abcfb29abecd949571309b763a57ab24b0877a951361755720af08794ee8d6c9` |
 | Native archive | `ArchVerse-Native-0.1.46-r31.alpha23.candidate2.tar.gz` |
 | Native archive SHA-256 | `23a6a5723db22f35004f75aff357a8abdb836518fd06c596a123edec4afe4f17` |
-| Field status | Unverified; Gabe must test default and Gamescope sessions |
+| Field status | Field tested; Mining generally worked, but focus trapping and intermittent 8-second normal-session capture stalls failed the candidate |
 
 Automated and packaged verification passed staging, complete Electron syntax checks, Alpha23
 renderer and bridge audits, packaged main startup, Candidate 8k supervision, the Candidate 8j
@@ -539,9 +545,9 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest automated and packaged verified deliverable is Alpha23 Candidate 2. It has not yet been
-field-tested. Candidate 8k remains the latest rollback whose Mining and base operation Gabe reported
-working.
+The latest automated and packaged verified deliverable is Alpha23 Candidate 3. It has not yet been
+field-tested. Candidate 2 was field tested but failed focus and normal-session capture-latency gates.
+Candidate 8k remains the latest rollback whose Mining and base operation Gabe reported working.
 The last documented Arch, Fedora, and Debian package set belongs to the older Alpha 21 line. Do not
 describe Candidate 8k or Alpha23 as a completed three-distribution release until fresh packages pass their own
 checks and field tests.
