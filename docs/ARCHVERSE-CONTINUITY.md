@@ -12,6 +12,44 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 3 implementation checkpoint — September 11, 2026
+
+Candidate 2 is now field tested. Mining recognized valid signatures and the narrow configured
+Resource Signature region was intentional. The supplied Electron log also showed two defects:
+
+- An F-created interaction latch survived after Hub/Settings use because the shell retained stale
+  modal ownership. Empty-canvas clicks were ignored, and F, Shift+F6, and Alt-Tab did not reliably
+  return click-through until another external window won focus.
+- In a normal non-Gamescope KDE Wayland session, exact Star Citizen window capture intermittently
+  consumed 8.1–8.6 seconds even though Mining OCR normally needed only tens to hundreds of
+  milliseconds. Fast operation returning after focus transitions was correlation, not an OCR wake
+  requirement. Direct Gamescope PipeWire did not show this failure.
+
+Candidate 3 is implemented locally from the checksum-pinned Candidate 2 artifact. An empty-canvas
+mouse-down now clears stale shell modal ownership and releases an F latch when no real drag, edit,
+or arrange mode owns input. Global arrange and Mining-only interaction explicitly supersede an F
+latch. A non-Gamescope Star Citizen window request is single-flight and deadline-bounded at 500 ms;
+after a timeout, a five-second circuit breaker lets Electron monitor capture proceed. A true
+Gamescope session and direct persistent Gamescope PipeWire retain their prior behavior.
+
+Mining acquisition adds a 48x24-pixel margin at 3840x2160 around the saved region to tolerate HUD
+drift between ship and planet-side layouts. A locked signature remains clamped inside the exact
+saved region. Complete metre and kilometre tokens are removed before RS catalog matching so the
+margin cannot admit a nearby target distance as a signature.
+
+| Item | Evidence |
+| --- | --- |
+| Branch | `agent/alpha23-candidate3-focus-capture-hardening` |
+| Baseline artifact | Candidate 2 ID `10136153055`, native SHA-256 `23a6a5723db22f35004f75aff357a8abdb836518fd06c596a123edec4afe4f17` |
+| Local automated checks | Syntax for all packaged Electron JS; Alpha23 renderer and Linux bridge audits; packaged main startup; Candidate 8k supervision; Candidate 8j 120-request real-sidecar soak; Candidate 3 focus/capture/parser regression |
+| Local config E2E | Blocked by the workspace runtime: `os.networkInterfaces()` returned `uv_interface_addresses` error; unchanged server code, to be rerun in GitHub CI |
+| CI/package status | Unverified until branch push and Candidate 3 workflow complete |
+| Field status | Unverified |
+
+Next step: commit and push Candidate 3, require every GitHub package gate to pass, download and
+checksum-verify `ArchVerse-Alpha23-Candidate3-field-test`, then give Gabe the archive for normal and
+Gamescope field testing. Candidate 8k remains the rollback build.
+
 ## Overnight checkpoint — September 8, 2026 UTC
 
 ### September 9 renderer and package reconstruction
