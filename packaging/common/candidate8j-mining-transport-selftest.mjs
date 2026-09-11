@@ -23,7 +23,7 @@ const {
 const { createMiningVehiclePresenceClient } = require(path.join(root, "app/electron/mining-vehicle-presence.cjs"));
 const { createSidecarHealthWatchdog } = require(path.join(root, "app/electron/sidecar-health-watchdog.cjs"));
 
-must(["0.1.44-r31.alpha22.candidate8j", "0.1.46-r31.alpha23.candidate1", "0.1.46-r31.alpha23.candidate2"].includes(pkg.version), `wrong package version ${pkg.version}`);
+must(["0.1.44-r31.alpha22.candidate8j", "0.1.46-r31.alpha23.candidate1", "0.1.46-r31.alpha23.candidate2", "0.1.46-r31.alpha23.candidate3"].includes(pkg.version), `wrong package version ${pkg.version}`);
 for (const marker of [
   "ARCHVERSE_LINUX_GAMESCOPE_PIPEWIRE_PERSISTENT_STREAM",
   "ARCHVERSE_LINUX_MINING_OCR_PRIORITY_LANES",
