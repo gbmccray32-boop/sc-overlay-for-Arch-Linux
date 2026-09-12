@@ -35,15 +35,25 @@ cannot consume the latency-critical Resource Signature worker or alter Mining ca
 | Baseline artifact | Candidate 4 ID `10290507069`, native SHA-256 `c8b11e378016e123ae0c59252b33ebb3f19781cb8a756caff7ebbdf87e82e82d` |
 | Local source tests | **Automated verified** — TypeScript; REP-page and REP re-baseline suites; exact upstream file hashes |
 | Local packaged tests | **Automated verified** — full Electron/server syntax; renderer/IPC audit; Linux bridge; packaged main startup; Candidate 5 contract and bar-reader test; real-sidecar REP-route and Mining-parser test |
-| Local config E2E | Blocked only by this workspace's restricted `os.networkInterfaces()` call; no failure in the staged app logic, scheduled again in GitHub CI |
-| CI and artifact | **Unverified** — pending commit and push |
+| Remote packaged source | `0745c087d27efc656e2318d6ddb578d8fc650385` |
+| Equivalent local checkpoint | `0d3862d24e2a7b3413893057677b975b951157ea` |
+| Matching source tree | `ce9d7af278e44630b7ecd07ff6a80a978592e8dc` — exact local/remote match |
+| CI | **Automated verified** — run `34712283860`, all steps passed |
+| Artifact | `ArchVerse-Alpha23-Candidate5-field-test`, ID `10303164663` |
+| Artifact ZIP SHA-256 | `ca3a99ac83528e5eee3853a47faee389b4b2b40e90e330adcb9bd01612822960` |
+| Native archive | `ArchVerse-Native-0.1.47-r31.alpha23.candidate5.tar.gz` |
+| Native archive SHA-256 | `aa14e095aae1b864cd6f18c72837db800c7955802cdfd1a1d6266743d8b5c380` |
+| Artifact integrity | **Packaged verified** — GitHub digest, ZIP integrity, inner checksum, all 1,629 manifest entries, embedded version/provenance, Candidate 5 contract, REP routes, and Mining parser verified after download |
 | Field status | **Unverified** — Candidate 5 must be tested with Star Citizen after CI packaging |
 
 Candidate 4's `250/350/500 ms` distinct-frame Mining cadence, exact RS catalog, persistent
 Wine/XWayland stream, direct Gamescope PipeWire path, Game.log session authority, held-F input,
 Shift+F6 arrange mode, hard click-through, focus ownership, and one-cursor behavior are protected by
-source markers and Candidate 4 hashes. The next step is to commit and push Candidate 5, verify every
-GitHub gate and checksum, then provide Gabe the quarantined field-test archive.
+source markers and Candidate 4 hashes. Workflow run `34712129232` failed only because its test
+harness launched the bundled Electron binary without `--no-sandbox`; all earlier gates passed. The
+replacement wrapper added that test-only switch without changing the candidate, and final run
+`34712283860` passed every gate. Next: Gabe field-tests Candidate 5 in a normal non-Gamescope
+session and then Gamescope, verifies Mining first, then tests the opt-in REP-page scan while on foot.
 
 ## Alpha23 Candidate 4 field-test checkpoint — September 12, 2026
 
