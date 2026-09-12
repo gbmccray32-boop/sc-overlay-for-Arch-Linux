@@ -35,7 +35,7 @@ jobs:
           test "$(sha256sum "$archive" | cut -d ' ' -f1)" = 1df91bcf116816f7fcff43d25dd317b87ffee0bec7c590742659d8cbb870de3f
           mkdir candidate3
           tar --no-same-owner -xzf "$archive" -C candidate3
-          baseline=candidate3/ArchVerse-Native-0.1.46-r31.alpha23.candidate3
+          baseline="$(realpath candidate3/ArchVerse-Native-0.1.46-r31.alpha23.candidate3)"
           node packaging/common/alpha23-candidate3-selftest.mjs "$baseline"
           node packaging/common/candidate8k-sidecar-supervision-selftest.mjs "$baseline"
           node packaging/common/candidate8j-mining-transport-selftest.mjs "$baseline"
