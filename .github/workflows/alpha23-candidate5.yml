@@ -59,7 +59,9 @@ jobs:
           node packaging/common/alpha23-candidate5-sidecar-selftest.mjs "$candidate"
           node tools/archverse-config-e2e.mjs "$candidate/app/server"
           mkdir -p node_modules/electron/dist
-          ln -sf "$candidate/runtime/electron/electron" node_modules/electron/dist/electron.exe
+          printf '#!/bin/sh\nexec "%s" --no-sandbox "$@"\n' \
+            "$candidate/runtime/electron/electron" > node_modules/electron/dist/electron.exe
+          chmod +x node_modules/electron/dist/electron.exe
           xvfb-run -a npm run control:ageband
       - name: Run staged widget integration
         run: |
