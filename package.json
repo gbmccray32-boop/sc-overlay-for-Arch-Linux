@@ -1,7 +1,7 @@
 {
   "name": "sc-log-watcher",
-  "version": "0.1.46",
-  "description": "SubliminalsTV SC Overlay 0.1.46 with ArchVerse Linux runtime policies.",
+  "version": "0.1.47",
+  "description": "SubliminalsTV SC Overlay 0.1.47 with ArchVerse Linux runtime policies.",
   "type": "module",
   "main": "electron/main.cjs",
   "author": "SubliminalsTV",
@@ -99,6 +99,7 @@
     "test:staterecovery": "tsx src/state-recovery.test.ts",
     "control:orisonfix": "node tools/control-orisonfix.mjs",
     "control:repname": "node tools/control-repname.mjs",
+    "control:ageband": "node tools/control-ageband.mjs",
     "test:archverse": "node tools/archverse-alpha20-smoke-test.mjs"
   },
   "dependencies": {

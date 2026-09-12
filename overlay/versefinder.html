@@ -1093,6 +1093,9 @@
           const a = document.createElement("span");
           a.className = "age " + ageBand(shownAt);
           a.textContent = cf ? receiptAge(shownAt) : ageOf(shownAt);
+          // Preserve the full timestamp used to compute the age band. The rendered month label
+          // rounds away the precision needed at the 100-day stale/ancient boundary.
+          a.dataset.at = String(shownAt);
           // The source word rides INSIDE the pill, as a child so it can be subordinated
           // typographically without taking a colour of its own — see `.age .src`.
           const src = document.createElement("span");

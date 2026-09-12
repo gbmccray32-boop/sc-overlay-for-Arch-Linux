@@ -12,6 +12,39 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 5 implementation checkpoint — September 12, 2026
+
+Candidate 5 advances the packaged Candidate 4 Linux runtime to the developer's latest tagged
+release, `v0.1.47` at `e482c1ce3d461b390079486115293535be9b2ab7`. The release's exact
+changelog, package version, full-precision Verse Finder age timestamp, strengthened age-band widget
+assertions, and five negative controls are now present. This closes the previously documented
+clock-dependent age fixture exception.
+
+The developer's REP-page synchronization was already present in the Alpha23 server and data but
+had remained visibly disabled because its capture consumer had not been reconciled with Linux.
+Candidate 5 enables it as an opt-in feature. Linux REP scanning uses its own adjustable crop and the
+existing isolated auxiliary OCR worker. It sends crop-local text to `/api/rep-read`, reads the REP
+progress bars from the same crop's pixels, and returns those results through `/api/rep-scan`.
+Game.log vehicle authority still defers every auxiliary OCR lane while Mining is active, so REP
+cannot consume the latency-critical Resource Signature worker or alter Mining cadence.
+
+| Item | Evidence |
+| --- | --- |
+| Branch | `agent/alpha23-candidate5-upstream-0147` |
+| Upstream target | Developer tag `v0.1.47`, commit `e482c1ce3d461b390079486115293535be9b2ab7` |
+| Baseline artifact | Candidate 4 ID `10290507069`, native SHA-256 `c8b11e378016e123ae0c59252b33ebb3f19781cb8a756caff7ebbdf87e82e82d` |
+| Local source tests | **Automated verified** — TypeScript; REP-page and REP re-baseline suites; exact upstream file hashes |
+| Local packaged tests | **Automated verified** — full Electron/server syntax; renderer/IPC audit; Linux bridge; packaged main startup; Candidate 5 contract and bar-reader test; real-sidecar REP-route and Mining-parser test |
+| Local config E2E | Blocked only by this workspace's restricted `os.networkInterfaces()` call; no failure in the staged app logic, scheduled again in GitHub CI |
+| CI and artifact | **Unverified** — pending commit and push |
+| Field status | **Unverified** — Candidate 5 must be tested with Star Citizen after CI packaging |
+
+Candidate 4's `250/350/500 ms` distinct-frame Mining cadence, exact RS catalog, persistent
+Wine/XWayland stream, direct Gamescope PipeWire path, Game.log session authority, held-F input,
+Shift+F6 arrange mode, hard click-through, focus ownership, and one-cursor behavior are protected by
+source markers and Candidate 4 hashes. The next step is to commit and push Candidate 5, verify every
+GitHub gate and checksum, then provide Gabe the quarantined field-test archive.
+
 ## Alpha23 Candidate 4 field-test checkpoint — September 12, 2026
 
 Candidate 3 was field-tested in a normal Lug-Helper Wine/XWayland launch without Gamescope. Mining
@@ -542,18 +575,19 @@ If a case fails, preserve the log and create one candidate that addresses only t
 
 ## Upstream target and porting order
 
-On September 8, 2026, Gabe approved resuming upstream integration after Candidate 8k Mining and base
-operation worked well. The new frozen target is:
+On September 12, 2026, Gabe approved advancing the current candidate to the developer's most recent
+release while preserving every Linux contract. The frozen release target is now:
 
 - Repository: `https://github.com/SubliminalsTV-Projects/sc-overlay`
-- Commit: `fbe3faedb38c82d11650ef6424e4037a9806cf95`
-- Commit date: September 6, 2026
-- Upstream package version: `0.1.46`
-- Subject: `Merge: test-widgets-sandbox forwards suite args and --port`
+- Tag: `v0.1.47`
+- Commit: `e482c1ce3d461b390079486115293535be9b2ab7`
+- Commit date: September 8, 2026
+- Upstream package version: `0.1.47`
+- Subject: `Merge: tool ageband — negative controls for every age-band assertion`
 
-Candidate 8k is still based on the `0.1.44` integration line. Compare the complete delta by behavior
-group, port one group at a time, and keep the target frozen until every group is reconciled and
-tested. The audit and port order are recorded in `docs/UPSTREAM-FBE3FAE-INTEGRATION.md`.
+Candidate 5 stages from the checksum-verified Candidate 4 package rather than rebuilding Linux
+runtime work from source. Keep this target frozen until Candidate 5 is field tested. Candidate 8k
+remains the known field-tested rollback build.
 
 ## Binding Linux decisions
 
