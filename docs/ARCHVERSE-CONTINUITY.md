@@ -12,6 +12,55 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 4 field-test checkpoint — September 12, 2026
+
+Candidate 3 was field-tested in a normal Lug-Helper Wine/XWayland launch without Gamescope. Mining
+worked for several signatures, focus-latch recovery held, and OCR itself remained fast: 399 Mining
+reads had a 26 ms median and 55 ms p95. The complete Electron log nevertheless showed two defects:
+
+- Repeated `desktopCapturer.getSources()` calls intermittently blocked Electron's main process for
+  7–10 seconds. The Candidate 3 JavaScript deadline could not fire because the compositor call
+  blocked the same event loop that owned the timer.
+- OCR text `DISABLED IN ATMOSPHERE | 60 30 100 | A | 87 | 188` was joined across plain whitespace
+  into a false `30100` signature and announced.
+
+Candidate 4 starts from the exact checksum-verified Candidate 3 artifact. A separate Electron
+helper now discovers the exact `Star Citizen` Wine/XWayland source and retains one MediaStream.
+Source discovery, PNG encoding, stale-frame detection, and stream restart run outside the ArchVerse
+main process. The main process waits at most 700 ms for a requested frame. On KDE Wayland, a warming
+or unhealthy stream falls back to the asynchronous Spectacle path before trying main-process
+Electron monitor capture. A healthy helper is reprobed every second and promoted without an app
+restart. The helper disables hardware acceleration and is bound to the exact game PID plus `/proc`
+start ticks. Direct Gamescope PipeWire and its existing fallback order are unchanged.
+
+Mining acquisition now targets 500 ms. A first exact-catalog result narrows the crop and schedules
+a 250 ms confirmation pass. The same value must appear near the same screen location on a distinct
+source frame before `commitMining` becomes true. Confirmed tracking targets 350 ms. Plain whitespace
+cannot group digits inside one OCR line; comma, dot, apostrophe, colon, compact digits, and an exact
+adjacent `1–3 digits + 3 digits` OCR-box split remain supported. Capture method and elapsed capture
+time are now included in each Mining heartbeat.
+
+| Item | Evidence |
+| --- | --- |
+| Branch | `agent/alpha23-candidate4-persistent-window-mining` |
+| Baseline artifact | Candidate 3 ID `10182826990`, native SHA-256 `1df91bcf116816f7fcff43d25dd317b87ffee0bec7c590742659d8cbb870de3f` |
+| Remote packaged source | `e8c7946bb04c828dbb29f615087728d571f5690b` |
+| Equivalent local checkpoint | `b25ce1545910dc06497d9cc8643c5590d27f6752` |
+| Matching source tree | `0cba444edc627b657da9cd6de0fc9eaa212bf766` |
+| CI | **Automated verified** — run `34670191831`, all steps passed |
+| Artifact | `ArchVerse-Alpha23-Candidate4-field-test`, ID `10290507069` |
+| Artifact ZIP SHA-256 | `2f3aaa8f2352e0ff2e74e1a67bf23ad98b6dcf4914956f0ed0d4e34bc9d4839c` |
+| Native archive | `ArchVerse-Native-0.1.46-r31.alpha23.candidate4.tar.gz` |
+| Native archive SHA-256 | `c8b11e378016e123ae0c59252b33ebb3f19781cb8a756caff7ebbdf87e82e82d` |
+| Artifact integrity | **Packaged verified** — GitHub digest, inner checksum, full manifest, embedded version/provenance, parser, confirmation, capture-contract, and real-sidecar tests passed |
+| Field status | **Unverified** — persistent Wine/XWayland MediaStream behavior requires Gabe's in-game test |
+
+Next step: field-test Candidate 4 first in the same normal non-Gamescope Lug-Helper session used for
+Candidate 3. Confirm `[window-stream] ready`, capture promotion to
+`electron-star-citizen-window-stream`, 250/350/500 ms Mining cadence, and
+`pending-distinct-frame` before the first commit of each new value. Then test Gamescope and confirm
+`gamescope-pipewire` remains authoritative. Candidate 8k remains the rollback build.
+
 ## Alpha23 Candidate 3 implementation checkpoint — September 11, 2026
 
 Candidate 2 is now field tested. Mining recognized valid signatures and the narrow configured
@@ -49,12 +98,12 @@ margin cannot admit a nearby target distance as a signature.
 | Artifact ZIP SHA-256 | `d77fc5d54c793c15d2b22b54866f9f4b26e28a0135d53e7db96a54bef58ae233` |
 | Native archive | `ArchVerse-Native-0.1.46-r31.alpha23.candidate3.tar.gz` |
 | Native archive SHA-256 | `1df91bcf116816f7fcff43d25dd317b87ffee0bec7c590742659d8cbb870de3f` |
-| Field status | Unverified |
+| Field status | **Field tested; candidate failed overall** — normal Wine/XWayland capture repeatedly stalled for 7–10 seconds and one whitespace-joined false `30100` was announced |
 
-Candidate 3 is automated and packaged verified. The downloaded artifact matched GitHub's digest,
+Candidate 3 is automated, packaged, and field tested, but it did not pass the field gate. The downloaded artifact matched GitHub's digest,
 the inner archive checksum passed, the embedded package and provenance versions matched, and the
-complete package manifest verified. Next step: Gabe field-tests the supplied archive in normal and
-Gamescope sessions. Candidate 8k remains the rollback build.
+complete package manifest verified. Candidate 4 supersedes it for the next field test. Candidate
+8k remains the rollback build.
 
 ## Overnight checkpoint — September 8, 2026 UTC
 
