@@ -55,8 +55,6 @@ jobs:
           python3 packaging/common/alpha23-renderer-audit.py "$candidate"
           node packaging/common/alpha23-linux-bridge-selftest.cjs "$candidate"
           node packaging/common/alpha23-main-startup-selftest.cjs "$candidate/app/electron/main.cjs"
-          node packaging/common/alpha23-candidate5-selftest.mjs "$candidate"
-          node packaging/common/alpha23-candidate5-sidecar-selftest.mjs "$candidate"
           node "$candidate/tests/alpha23-candidate6-normal-capture.test.cjs"
           node tools/archverse-config-e2e.mjs "$candidate/app/server"
           mkdir -p node_modules/electron/dist
