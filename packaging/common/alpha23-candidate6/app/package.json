@@ -1,0 +1,13 @@
+{
+  "name": "archverse-overlay",
+  "version": "0.1.47-r31.alpha23.candidate6",
+  "description": "ArchVerse Alpha23 Candidate 6: upstream v0.1.47 with frame-aware Linux Mining confirmation",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "dependencies": {
+    "@gutenye/ocr-node": "^1.4.8",
+    "electron-updater": "^6.3.9",
+    "uiohook-napi": "^1.5.5",
+    "koffi": "^3.1.4"
+  }
+}
