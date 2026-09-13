@@ -12,6 +12,43 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 6 implementation checkpoint — September 13, 2026
+
+Candidate 5 field evidence separated the capture paths. Direct Gamescope PipeWire recognized,
+committed, displayed, and announced Mining signatures at the intended fast rate. In a regular
+Wine/XWayland launch, Electron recognized 40 valid signatures but every result remained
+`pending-distinct-frame`: the fixed 1,600 ms confirmation window expired before Spectacle could
+produce a distinct second frame. The sidecar, widget, and announcer were healthy.
+
+Candidate 6 retains the mandatory distinct-frame false-positive guard and gives each observation
+its own bounded deadline. Direct `gamescope-pipewire` and the isolated persistent window stream
+remain at 1,600 ms. Screenshot fallbacks derive their window from measured capture time, capped at
+15 seconds; the regression reproduces the observed 10.7-second gap and confirms only a matching
+value at the same location on a distinct frame. The regular Wine/XWayland helper now binds to the
+active game's exact X11 window ID, reports bounded source inventory and exit details, and retries
+every 10 seconds. Non-Gamescope Spectacle no longer invokes main-process Electron source discovery
+as a periodic upgrade probe. The direct Gamescope PipeWire implementation is byte-identical to
+Candidate 5.
+
+| Item | Evidence |
+| --- | --- |
+| Branch | `agent/alpha23-candidate6-normal-capture-confirmation` |
+| Baseline artifact | Candidate 5 ID `10303164663`, native SHA-256 `aa14e095aae1b864cd6f18c72837db800c7955802cdfd1a1d6266743d8b5c380` |
+| Application source commit | `881ef37b4317df4d47e8f9d20d2cd1c647e2982b` |
+| Workflow-triggering commit | `15777ea63604ea3df21c73603d2dfb8af1e34269` |
+| CI | **Automated verified** — run `34739798304`, every step passed |
+| Artifact | `ArchVerse-Alpha23-Candidate6-field-test`, ID `10311759668` |
+| Artifact ZIP SHA-256 | `ccb6ccfc224d1b0b141eab5cbb393299983fc8935d6723cfc29728844f6ecd55` |
+| Native archive | `ArchVerse-Native-0.1.47-r31.alpha23.candidate6.tar.gz` |
+| Native archive SHA-256 | `119ad9d52f7fd4054918c0b664bfbfe28f8456adeb037ec7725d24c575200056` |
+| Artifact integrity | **Packaged verified** — GitHub digest, ZIP checksum, inner checksum, complete manifest, embedded version/provenance, and Candidate 6 regression passed after download |
+| Field status | **Unverified** — Candidate 6 requires a regular non-Gamescope Mining test, then a Gamescope regression test |
+
+Workflow run `34739715484` failed only because the Candidate 5 self-test correctly rejected the
+new Candidate 6 version after staging. Candidate 5's version-specific gate now runs against the
+Candidate 5 baseline before staging; run `34739798304` passed the corrected workflow. Candidate 6
+is a quarantined field candidate, not a release.
+
 ## Alpha23 Candidate 5 implementation checkpoint — September 12, 2026
 
 Candidate 5 advances the packaged Candidate 4 Linux runtime to the developer's latest tagged
@@ -44,7 +81,7 @@ cannot consume the latency-critical Resource Signature worker or alter Mining ca
 | Native archive | `ArchVerse-Native-0.1.47-r31.alpha23.candidate5.tar.gz` |
 | Native archive SHA-256 | `aa14e095aae1b864cd6f18c72837db800c7955802cdfd1a1d6266743d8b5c380` |
 | Artifact integrity | **Packaged verified** — GitHub digest, ZIP integrity, inner checksum, all 1,629 manifest entries, embedded version/provenance, Candidate 5 contract, REP routes, and Mining parser verified after download |
-| Field status | **Unverified** — Candidate 5 must be tested with Star Citizen after CI packaging |
+| Field status | **Field tested; candidate failed normal-session Mining gate** — Gamescope was fast and complete; regular Wine/XWayland recognized signatures but never committed them |
 
 Candidate 4's `250/350/500 ms` distinct-frame Mining cadence, exact RS catalog, persistent
 Wine/XWayland stream, direct Gamescope PipeWire path, Game.log session authority, held-F input,
@@ -638,9 +675,10 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest automated and packaged verified deliverable is Alpha23 Candidate 3. It has not yet been
-field-tested. Candidate 2 was field tested but failed focus and normal-session capture-latency gates.
-Candidate 8k remains the latest rollback whose Mining and base operation Gabe reported working.
+The latest automated and packaged verified deliverable is Alpha23 Candidate 6. It has not yet been
+field-tested. Candidate 5 was field tested: Gamescope Mining passed, but regular Wine/XWayland
+recognition did not reach the widget or announcer. Candidate 8k remains the latest rollback whose
+Mining and base operation Gabe reported working.
 The last documented Arch, Fedora, and Debian package set belongs to the older Alpha 21 line. Do not
 describe Candidate 8k or Alpha23 as a completed three-distribution release until fresh packages pass their own
 checks and field tests.
