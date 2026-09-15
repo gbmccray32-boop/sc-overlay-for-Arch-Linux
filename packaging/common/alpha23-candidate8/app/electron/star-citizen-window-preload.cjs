@@ -33,7 +33,8 @@ ipcRenderer.on("archverse-window-stream:init", async (_event, config) => {
     // WINDOW enumeration uses the XDG ScreenCast portal and returns a PipeWire MediaStream.
     const stream = await navigator.mediaDevices.getDisplayMedia({
       audio: false,
-      video: { frameRate: { ideal: 8, min: 4, max: 12 } },
+      // Screen-capture requests reject min/exact constraints before source selection.
+      video: { frameRate: { ideal: 8, max: 12 } },
     });
     const track = stream.getVideoTracks()[0];
     if (!track) throw new Error("portal PipeWire capture returned no video track");

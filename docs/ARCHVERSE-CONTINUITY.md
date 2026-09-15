@@ -26,10 +26,12 @@ per frame; confirmed normal-session signatures arrived about 10.7 seconds apart.
 58–65 ms steady capture and correct signature announcements. No KDE reinstall is supported by this
 evidence. The supplied electron and sidecar logs have SHA-256
 `4dad6e1f6ad2b32afcb187d589a207561c4e720277614acdfee8b8c2b94e5876` and
-`1483bba409eaaf5e27432c2c934d97ab37d5c39b48861d3a9308e3d2525b72`, respectively.
+`1483bba409eaaf5e27432c2c934d97ab37d5c5f39b48861d3a9308e3d2525b72`, respectively.
 
 Candidate 8 loads a trusted local file document without disabling web security. Its preload checks
-the secure context and display-media capability before requesting capture. A real packaged Electron
+the secure context and display-media capability before requesting capture. It also removes the
+minimum frame-rate constraint, which the real Chromium test proved was rejected before selection.
+A real packaged Electron
 test reproduces the Candidate 7 failure as a negative control and requires Candidate 8 to reach the
 display-media request handler. KDE's single user-approved PipeWire source is accepted even when its
 name is generic; X11 continues to match the exact Star Citizen window.
