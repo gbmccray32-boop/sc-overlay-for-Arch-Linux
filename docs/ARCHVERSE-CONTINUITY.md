@@ -12,6 +12,56 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 7 field-test checkpoint — September 15, 2026
+
+Candidate 6 field evidence confirmed that the remaining problem was capture transport, not Mining
+OCR, the exact Resource Signature catalog, widget delivery, or announcements. In the normal
+Wine/XWayland session, Spectacle capture had a 2,557 ms median and Mining signature confirmation
+had a 2,682 ms median. The persistent Electron window helper failed 270 times with exit code 3, so
+the normal session never acquired its intended low-latency stream. Under Gamescope, direct
+PipeWire capture had a 61 ms median and signature confirmation had a 262 ms median. The supplied
+screenshots also showed `r_DisplayInfo` at the far right of the full Star Citizen window; the
+previous center-display crop removed it before Hauling Location Sync OCR could inspect it.
+
+Candidate 7 adds a separate native-Wayland capture helper. Electron 42.7.1 obtains a Star Citizen
+window stream through the XDG ScreenCast portal and PipeWire, retaining Chromium's permitted
+session state in a stable ArchVerse profile. The helper requests window sources only and runs
+outside the overlay's main process. A denied or unavailable portal is attempted once per Star
+Citizen process rather than generating repeated prompts or retries. On XWayland, an exact-XID
+GStreamer `ximagesrc` one-frame capture is the next fallback. Normal Wayland capture therefore
+prefers portal PipeWire, then exact XID, then Spectacle, then Electron monitor capture. Normal X11
+prefers the persistent Electron X11 stream, exact XID, Electron monitor capture, then Spectacle.
+
+Normal-session frames now have an explicit canvas model. A panoramic 6,270-by-2,160 stream maps
+Mining to the calibrated 3,840-by-2,160 center display, while a single-display 3,840-by-2,160 game
+window remains uncropped. Hauling Location Sync always receives the full Star Citizen window so
+the top-right `r_DisplayInfo` text is preserved. The field-proven direct Gamescope PipeWire source,
+fallback order, Mining cadence, exact catalog, distinct-frame guard, Game.log vehicle authority,
+held-F interaction, Shift+F6 arrange mode, and hard click-through contracts remain unchanged.
+
+| Item | Evidence |
+| --- | --- |
+| Branch | `agent/alpha23-candidate7-portal-window-capture` |
+| Baseline artifact | Candidate 6 ID `10311759668`, native SHA-256 `119ad9d52f7fd4054918c0b664bfbfe28f8456adeb037ec7725d24c575200056` |
+| Remote implementation commit | `eab42392488a25f43df2549d587e6ca9aa8a15d9` |
+| Equivalent local implementation commit | `19b35bc3fb9e44fc33b8fc0c830da93c70840cd8` |
+| Matching implementation tree | `5d94b88cab8b276171db7b5cf32feabd2c5b8249` — exact local/remote match |
+| CI | **Automated verified** — run `34923404338`, every step passed |
+| Artifact | `ArchVerse-Alpha23-Candidate7-field-test`, ID `10379013592` |
+| Artifact ZIP SHA-256 | `c01b4f1c687afa0c8bcba1c65c42d8e19e222892dbeba882212c519c60198cce` |
+| Native archive | `ArchVerse-Native-0.1.47-r31.alpha23.candidate7.tar.gz` |
+| Native archive SHA-256 | `b3fc023c2f10cff8c1f66136b0240ea1e8cb11c937ce272a60c3e0a898aea67a` |
+| Artifact integrity | **Packaged verified** — GitHub digest, ZIP integrity, inner checksum, complete package manifest, embedded version, and downloaded Candidate 7 regression all passed |
+| Field status | **Unverified** — test normal Wine/XWayland first, then verify Gamescope remains regression-free |
+
+Candidate 7 is a quarantined field candidate, not a release. In a normal KDE Wayland session, the
+portal prompt must be limited to the Star Citizen window. Success reports
+`portal-pipewire-window`; systems without portal capture may report `x11-window`. Mining should
+recognize, commit, display, and announce signatures inside the requested 100–900 ms field target,
+and Hauling Location Sync should read the far-right `r_DisplayInfo` text. The follow-up Gamescope
+test must continue to report `gamescope-pipewire`. If both paths pass, the next checkpoint is
+Debian- and Fedora-family packaging followed by the release gate.
+
 ## Alpha23 Candidate 6 implementation checkpoint — September 13, 2026
 
 Candidate 5 field evidence separated the capture paths. Direct Gamescope PipeWire recognized,
