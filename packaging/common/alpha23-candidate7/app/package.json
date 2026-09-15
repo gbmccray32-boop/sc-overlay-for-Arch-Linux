@@ -1,0 +1,13 @@
+{
+  "name": "archverse-overlay",
+  "version": "0.1.47-r31.alpha23.candidate7",
+  "description": "ArchVerse Alpha23 Candidate 7: portal PipeWire capture for normal Linux launches",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "dependencies": {
+    "@gutenye/ocr-node": "^1.4.8",
+    "electron-updater": "^6.3.9",
+    "uiohook-napi": "^1.5.5",
+    "koffi": "^3.1.4"
+  }
+}

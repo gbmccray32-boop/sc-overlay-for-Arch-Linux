@@ -47,12 +47,27 @@ The following are ArchVerse platform contracts:
   `gamescope` PipeWire node must be treated as an unavailable optional fast path, not as a fatal OCR
   error. The PipeWire backend must reject that case immediately, before expensive PipeWire discovery
   or frame capture, and the same capture request must continue through the normal fallback chain.
-- On Linux Wayland the normal capture order is
-  `pipewire -> gamescope -> spectacle -> electron`.
-- On Linux X11 the normal capture order is
-  `pipewire -> electron -> gamescope -> spectacle`.
-  The later entries are fallbacks when the direct Gamescope PipeWire source is unavailable; an
-  upstream rebase may not promote them ahead of direct Gamescope PipeWire when that source exists.
+- On a normal KDE Wayland launch, the isolated Star Citizen window helper connects to native
+  Wayland and requests only a WINDOW source through Electron's XDG ScreenCast portal path. A
+  successful stream is reported as `portal-pipewire-window`. It remains separate from the overlay's
+  X11/XWayland input process and may not replace the direct Gamescope PipeWire implementation.
+- Normal-launch capture keeps the complete Star Citizen canvas for r_DisplayInfo and other
+  full-canvas consumers. Mining receives only the bound display segment in its established
+  coordinate space. Do not crop the panorama to one monitor before Location Sync selects the
+  canvas's top-right region.
+- A failed or cancelled portal initialization must report its cause and remain disabled for that
+  Star Citizen process. It may not repeatedly open a selector or restart a failed helper. A new
+  Star Citizen process starts one new attempt.
+- Exact-XID GStreamer `ximagesrc` capture is the first normal-launch fallback after the persistent
+  window stream. Spectacle and Electron monitor capture remain emergency fallbacks.
+- For a bound Gamescope session, the capture order is
+  `gamescope-pipewire -> gamescope-window -> electron-monitor -> spectacle`.
+- For a normal KDE Wayland Wine/XWayland session, the capture order is
+  `portal-pipewire-window -> x11-window -> spectacle -> electron-monitor`.
+- For a normal X11 session, the capture order is
+  `electron-x11-window-stream -> x11-window -> electron-monitor -> spectacle`.
+  No normal-launch backend may be promoted ahead of direct Gamescope PipeWire when the bound Star
+  Citizen process has a Gamescope ancestor.
 - Linux capture backends/fallbacks remain available after the PipeWire-first path. Users who launch
   Star Citizen with default/non-Gamescope settings must retain functional OCR and Mining Scanner
   operation through those fallbacks, although the direct Gamescope PipeWire path remains the
@@ -202,8 +217,12 @@ Re-run the still-applicable proven Alpha 17 tests against the new candidate, inc
 - its source identity remains `Gamescope PipeWire node <id>`;
 - the packaged helper still uses direct `pipewiresrc` and binds the node to the active Gamescope
   process rather than accepting an ambiguous desktop source;
-- PipeWire remains first in both Linux backend-order vectors, with Gamescope-window, Spectacle and
-  Electron capture retained as fallbacks;
+- direct Gamescope PipeWire remains first for Gamescope sessions; portal PipeWire remains first for
+  normal KDE Wayland sessions; exact-XID X11, Spectacle, and Electron monitor fallbacks remain;
+- normal panoramic Location Sync crops the full Star Citizen window's top-right region, while
+  Mining maps the same full window into the bound display's established coordinate space;
+- a portal initialization error is logged before helper exit and cannot create repeated prompts or
+  restart attempts during the same Star Citizen process;
 - a simulated active Star Citizen session with **no Gamescope PID** rejects the direct PipeWire path
   immediately and successfully continues to the next backend rather than disabling OCR;
 - a real default/non-Gamescope Star Citizen launch is part of the pre-release field-test matrix in
