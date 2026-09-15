@@ -58,6 +58,11 @@ The following are ArchVerse platform contracts:
 - A failed or cancelled portal initialization must report its cause and remain disabled for that
   Star Citizen process. It may not repeatedly open a selector or restart a failed helper. A new
   Star Citizen process starts one new attempt.
+- The normal-window renderer must use a trusted local origin with web security enabled. A packaged
+  Electron regression must check mediaDevices capability and actual display-media handler entry,
+  with the insecure data-origin failure retained as a negative control.
+- Exact-XID fallback must retry without MIT-SHM after a shared-memory failure, bound both attempts,
+  and back off after a failed episode. Mining and Location Sync may not overlap that capture lane.
 - Exact-XID GStreamer `ximagesrc` capture is the first normal-launch fallback after the persistent
   window stream. Spectacle and Electron monitor capture remain emergency fallbacks.
 - For a bound Gamescope session, the capture order is

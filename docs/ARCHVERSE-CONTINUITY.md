@@ -12,6 +12,41 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 8 repair checkpoint — September 15, 2026
+
+Branch: `agent/alpha23-candidate8-renderer-x11-repair`. Upstream remains v0.1.47 at
+`e482c1ce3d461b390079486115293535be9b2ab7`. Baseline is checksum-verified Candidate 7 artifact
+`10379013592`, native archive SHA-256
+`b3fc023c2f10cff8c1f66136b0240ea1e8cb11c937ce272a60c3e0a898aea67a`.
+
+Candidate 7 **failed the normal-launch field gate**. Its renderer attempted getDisplayMedia from
+an insecure data: document, so navigator.mediaDevices was undefined before any KDE portal request.
+The exact-XID fallback also failed with MIT-SHM BadMatch. Spectacle remained around 2.5 seconds
+per frame; confirmed normal-session signatures arrived about 10.7 seconds apart. Gamescope retained
+58–65 ms steady capture and correct signature announcements. No KDE reinstall is supported by this
+evidence. The supplied electron and sidecar logs have SHA-256
+`4dad6e1f6ad2b32afcb187d589a207561c4e720277614acdfee8b8c2b94e5876` and
+`1483bba409eaaf5e27432c2c934d97ab37d5c39b48861d3a9308e3d2525b72`, respectively.
+
+Candidate 8 loads a trusted local file document without disabling web security. Its preload checks
+the secure context and display-media capability before requesting capture. A real packaged Electron
+test reproduces the Candidate 7 failure as a negative control and requires Candidate 8 to reach the
+display-media request handler. KDE's single user-approved PipeWire source is accepted even when its
+name is generic; X11 continues to match the exact Star Citizen window.
+
+Exact-XID capture retries once with ximagesrc remote=true after shared-memory failure. Each attempt
+has a 750 ms deadline and SIGKILL timeout cleanup. The non-shared-memory mode is retained after
+recovery; a failed episode backs off for 60 seconds and resets only for a new exact session binding.
+Mining and Hauling share one single-flight capture lane. All protected Candidate 7 files other than
+capture.cjs and the two normal-window helper files remain hash-identical, including direct Gamescope
+PipeWire, Mining admission/confirmation/transport, main interaction, sidecar, and configuration.
+
+Local recovery, source-contract, syntax, renderer/IPC, Linux bridge, startup, and Candidate 6
+regressions are the implementation gates. Full packaged Electron and upstream gates run in GitHub
+CI. Package and field evidence remain **unverified** until those separate gates complete. Next:
+obtain a CI-green Candidate 8 package, test normal Wine/XWayland first, then Gamescope; only after
+both pass may Debian/Fedora packaging and release work resume.
+
 ## Alpha23 Candidate 7 field-test checkpoint — September 15, 2026
 
 Candidate 6 field evidence confirmed that the remaining problem was capture transport, not Mining
