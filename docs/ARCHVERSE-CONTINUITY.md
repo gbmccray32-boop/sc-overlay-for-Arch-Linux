@@ -44,10 +44,28 @@ capture.cjs and the two normal-window helper files remain hash-identical, includ
 PipeWire, Mining admission/confirmation/transport, main interaction, sidecar, and configuration.
 
 Local recovery, source-contract, syntax, renderer/IPC, Linux bridge, startup, and Candidate 6
-regressions are the implementation gates. Full packaged Electron and upstream gates run in GitHub
-CI. Package and field evidence remain **unverified** until those separate gates complete. Next:
-obtain a CI-green Candidate 8 package, test normal Wine/XWayland first, then Gamescope; only after
-both pass may Debian/Fedora packaging and release work resume.
+regressions passed. Full packaged Electron, upstream, configuration, age-band negative controls,
+and staged widget integration passed in CI. The actual Chromium test caught and corrected the
+invalid minimum frame-rate constraint; it now reproduces Candidate 7's failure and requires the
+repaired renderer to reach the display-media handler. This does not prove KDE approval or live
+PipeWire video delivery: those remain field gates.
+
+| Item | Evidence |
+| --- | --- |
+| Remote implementation commit | `275abd7e32bf596c555480c655b75661866ea381` |
+| Equivalent local implementation commit | `3218928` |
+| Matching implementation tree | `d1b9de0a7d5530fac67e093756678ce060d4206b` |
+| CI | **Automated verified** — run `35007279134`, all steps passed |
+| Artifact | `ArchVerse-Alpha23-Candidate8-field-test`, ID `10412447176` |
+| ZIP SHA-256 | `5ece8d5f56e68bbdd145a69c32b23a9a4006f4db254aca845471a0f38832d99b` |
+| Native archive SHA-256 | `8919ba757eee1be95e8adf2f7dfde7c658ec7060081842b75604a186ae94807f` |
+| Artifact integrity | **Packaged verified** — GitHub digest, ZIP integrity, inner checksum, complete archive manifest, embedded version, protected files, and Electron binary verified |
+| Field status | **Unverified** — normal Wine/XWayland first, then Gamescope |
+
+This is a quarantined field candidate, not a release. Next: Gabe tests normal Wine/XWayland
+Mining recognition, widget delivery, announcements, and full-window Hauling display-info capture;
+then confirms Gamescope remains regression-free. Supply complete electron.log and sidecar.log
+from both sessions. Only after both pass may Debian/Fedora packaging and release work resume.
 
 ## Alpha23 Candidate 7 field-test checkpoint — September 15, 2026
 
