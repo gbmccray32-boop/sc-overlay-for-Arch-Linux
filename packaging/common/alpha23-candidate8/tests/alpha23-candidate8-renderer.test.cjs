@@ -18,11 +18,10 @@ function launch(helper) {
     { env, timeout: 20000, killSignal: "SIGKILL", encoding: "utf8", maxBuffer: 1024 * 1024 });
 }
 const negative = launch(path.join(path.resolve(baseline), "app/electron/star-citizen-window-helper.cjs"));
-assert.match(negative.stdout || "", /getDisplayMedia/);
+assert.match(negative.stdout || "", /getDisplayMedia/, JSON.stringify(negative));
 assert.notEqual(negative.status, 0, "the actual Candidate 7 data-origin failure must reproduce");
 const positive = launch(path.join(root, "app/electron/star-citizen-window-helper.cjs"));
 assert.equal(positive.status, 0, JSON.stringify(positive));
 assert.match(positive.stderr, /secure=true origin=file: displayMedia=true/);
 assert.match(positive.stdout, /"type":"selftest","passed":true/);
 console.log("Actual packaged Electron: Candidate 7 negative control reproduced; Candidate 8 secure renderer reached display-media handler");
-
