@@ -14,7 +14,7 @@ function launch(helper) {
   delete env.WAYLAND_DISPLAY;
   delete env.SC_TRACKER_HOST_WAYLAND_DISPLAY;
   return spawnSync(path.join(root, "runtime/electron/electron"),
-    ["--no-sandbox", helper, dir, "1234"],
+    [helper, dir, "1234", "--no-sandbox"],
     { env, timeout: 20000, killSignal: "SIGKILL", encoding: "utf8", maxBuffer: 1024 * 1024 });
 }
 const negative = launch(path.join(path.resolve(baseline), "app/electron/star-citizen-window-helper.cjs"));

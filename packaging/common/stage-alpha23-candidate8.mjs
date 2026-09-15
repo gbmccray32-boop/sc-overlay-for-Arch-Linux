@@ -9,6 +9,8 @@ const base = path.resolve(baseArg), out = path.resolve(outArg);
 if (out === base || base.startsWith(out + path.sep)) throw new Error("output cannot overwrite baseline");
 if (fs.existsSync(out)) throw new Error("output must be a new candidate directory");
 const hash = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+const runtimeHash = "634e08894a81dda930b997f46ea1959a721ae756ed4882adbd8ae8747a7cda5a";
+if (hash(path.join(base, "runtime/electron/electron")) !== runtimeHash) throw new Error("Candidate 7 Electron runtime checksum mismatch");
 const provenance = JSON.parse(fs.readFileSync(path.join(base, "ALPHA23-PROVENANCE.json")));
 if (JSON.parse(fs.readFileSync(path.join(base, "app/package.json"))).version !== "0.1.47-r31.alpha23.candidate7") throw new Error("Candidate 7 baseline required");
 for (const [file, wanted] of Object.entries(provenance.protectedFiles)) {
@@ -35,4 +37,3 @@ provenance.candidate7ArchiveSha256 = "b3fc023c2f10cff8c1f66136b0240ea1e8cb11c937
 provenance.fieldVerified = false;
 fs.writeFileSync(path.join(out, "ALPHA23-PROVENANCE.json"), JSON.stringify(provenance, null, 2) + "\n");
 console.log("Staged Candidate 8 with all unchanged protected files verified");
-
