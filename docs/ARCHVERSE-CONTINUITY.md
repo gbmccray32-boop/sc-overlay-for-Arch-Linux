@@ -44,11 +44,27 @@ follow-up regression/evidence changes are recorded by the generated handoff's cu
 Gabe explicitly approved pushing Candidate 9 on September 16, 2026 and renewed standing permission
 for future ArchVerse pushes to `gbmccray32-boop/sc-overlay-for-Arch-Linux`. This resolves the earlier
 automatic-review authorization block. Candidate, field-test and release gates still apply.
-Packaged gates and artifact are **pending**; upload the exact local source tree, run CI, then verify
-and deliver the quarantined field-test artifact.
-Gamescope direct PipeWire, capture.cjs, Mining admission/cadence, main input, sidecar and config must
-remain hash-identical to Candidate 8 during staging. This is a quarantined field candidate, not a
-release. Next: packaged CI gates, then normal Wine/XWayland field testing followed by Gamescope.
+Remote implementation: `11cbca49ca9a92f17927463b544b0d0cf37b06de`; equivalent local source:
+`b87e21580b84fceb8fca307320241f3f256ce79c`; matching tree:
+`9603c3f30cbee4c028c1991ab03face24191e11e`. CI run `35043449672` passed upstream source,
+protected-file staging, renderer/IPC, Linux bridge, startup, Candidate 6/8 regressions, Candidate 9
+lifecycle and actual-preload regressions, real Electron secure-renderer checks, the retained
+Candidate 7 insecure-origin negative control, config E2E and all five age-band negative controls.
+CI run `35043449672` is **Automated verified**: every step passed, including the final complete widget
+DOM suite with pair merges. Artifact `ArchVerse-Alpha23-Candidate9-field-test`, ID `10425834446`, is
+**Packaged verified**. Downloaded ZIP SHA-256:
+`d893bb744f3f8c7e0f1e116b76c92f240e16b764e71e4d4da9e949afe2942d49`.
+Native archive SHA-256:
+`fff229eac04f64de84fa51f8ffacd9f296131b13fbfbfa391a6f80398afb83b9`.
+Independent verification checked ZIP integrity, native checksum, every one of the 1,639 regular-file
+manifest entries, all 20 protected-file hashes, embedded version/provenance, exact Candidate 9 source
+bytes and the executable x86_64 Electron binary. The downloaded app also matches every unchanged
+Candidate 8 app file and symlink. Field status remains **Unverified**.
+Gamescope direct PipeWire, capture.cjs, Mining admission/cadence, main input, sidecar and config
+remain hash-identical to Candidate 8. A complete local app comparison also verified that only the
+three intended capture files and two package-version manifests changed; all other app bytes and
+symlinks are identical. This is a quarantined field candidate, not a
+release. Next: normal Wine/XWayland field testing followed by Gamescope.
 Live PipeWire delivery speed and exact-XID BadMatch remain unverified until fresh field evidence.
 
 Gabe requested an advance conversation handoff notice at approximately 75% capacity. Give a best-effort
@@ -823,13 +839,15 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest automated and packaged verified deliverable is Alpha23 Candidate 6. It has not yet been
-field-tested. Candidate 5 was field tested: Gamescope Mining passed, but regular Wine/XWayland
-recognition did not reach the widget or announcer. Candidate 8k remains the latest rollback whose
-Mining and base operation Gabe reported working.
-The last documented Arch, Fedora, and Debian package set belongs to the older Alpha 21 line. Do not
-describe Candidate 8k or Alpha23 as a completed three-distribution release until fresh packages pass their own
-checks and field tests.
+The latest automated and packaged verified deliverable is Alpha23 Candidate 9, a quarantined native
+field-test archive. It has not been field-tested. Candidate 8 failed the normal-session capture gate:
+KDE repeatedly reopened its chooser, while OBS worked. Candidate 7's Gamescope capture was fast and
+complete, and the corresponding Gamescope/runtime contracts remain byte-identical through Candidate 9.
+Candidate 8k remains the rollback whose Mining and base operation Gabe reported working.
+
+The last documented Arch, Fedora and Debian package set belongs to the older Alpha 21 line. Do not
+publish a Candidate 9 release or claim a current three-distribution package set until both normal
+Wine/XWayland and Gamescope field gates pass, then fresh distribution packages pass their own checks.
 
 ## Continuity maintenance
 

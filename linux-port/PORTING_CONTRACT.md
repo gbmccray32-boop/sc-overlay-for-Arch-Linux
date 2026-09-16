@@ -58,6 +58,11 @@ The following are ArchVerse platform contracts:
 - A failed or cancelled portal initialization must report its cause and remain disabled for that
   Star Citizen process. It may not repeatedly open a selector or restart a failed helper. A new
   Star Citizen process starts one new attempt.
+- An approved normal-window stream is bound to the exact Star Citizen PID and process start ticks,
+  not a rediscovered XID. Frame deadlines, repeated media time, and temporary frame errors are not
+  permission or stream-termination events and must retain the approved session. Bound outstanding
+  frame work separately from the caller's fallback deadline. An ended track or failed helper remains
+  disabled for that process, and a new PID/start identity permits one new approval attempt.
 - The normal-window renderer must use a trusted local origin with web security enabled. A packaged
   Electron regression must check mediaDevices capability and actual display-media handler entry,
   with the insecure data-origin failure retained as a negative control.
