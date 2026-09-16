@@ -798,15 +798,17 @@ async function captureLocationSyncCrop(finalPath, winRect) {
       } catch (error) { errors.push(`spectacle: ${error?.message || error}`); }
     }
   }
-  // A normal panoramic Wine/XWayland window can place r_DisplayInfo on the far-right monitor.
-  // Preserve the complete game canvas for Location Sync; the Mining path still crops its display.
-  try { return await captureLocationWithPortalWindow(finalPath); }
-  catch (error) { errors.push(`portal-window: ${error?.message || error}`); }
-  try { return await captureLocationWithX11Window(finalPath); }
-  catch (error) { errors.push(`x11-window: ${error?.message || error}`); }
-  if (HOST_IS_WAYLAND) {
-    try { return await captureLocationWithSpectacleFullDesktop(finalPath); }
-    catch (error) { errors.push(`spectacle: ${error?.message || error}`); }
+  if (!session?.gamescopePid) {
+    // A normal panoramic Wine/XWayland window can place r_DisplayInfo on the far-right monitor.
+    // Preserve the complete game canvas for Location Sync; the Mining path still crops its display.
+    try { return await captureLocationWithPortalWindow(finalPath); }
+    catch (error) { errors.push(`portal-window: ${error?.message || error}`); }
+    try { return await captureLocationWithX11Window(finalPath); }
+    catch (error) { errors.push(`x11-window: ${error?.message || error}`); }
+    if (HOST_IS_WAYLAND) {
+      try { return await captureLocationWithSpectacleFullDesktop(finalPath); }
+      catch (error) { errors.push(`spectacle: ${error?.message || error}`); }
+    }
   }
   try {
     const cap = await captureGame(winRect);

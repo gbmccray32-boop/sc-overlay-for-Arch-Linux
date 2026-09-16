@@ -88,5 +88,25 @@ const source = fs.readFileSync(path.join(__dirname, "../app/electron/capture.cjs
   session = { gamePid: 4, gameStartTicks: "401", gamescopePid: 0 };
   assert.equal((await captureContext.captureGame()).method, "window");
   assert.deepEqual(calls, ["window"], "PID reuse and Gamescope-to-normal transitions clear direct backend state");
+  const locationCalls = [];
+  const locationContext = vm.createContext({
+    scSession: { current: () => session }, process: { platform: "linux" }, HOST_IS_WAYLAND: true,
+    captureLocationWithPipeWire: async () => { locationCalls.push("pipewire"); throw new Error("unavailable"); },
+    captureLocationWithSpectacleFullDesktop: async () => { locationCalls.push("spectacle"); throw new Error("unavailable"); },
+    captureLocationWithPortalWindow: async () => { locationCalls.push("portal"); return { method: "portal" }; },
+    captureLocationWithX11Window: async () => { locationCalls.push("x11"); return { method: "x11" }; },
+    captureGame: async () => { locationCalls.push("game"); return { method: "game", image: {} }; },
+    saveLocationCropFromImage: () => ({}), console: { warn() {} },
+  });
+  const locationStart = source.indexOf("async function captureLocationSyncCrop(");
+  const locationEnd = source.indexOf("// The kiosk's item render", locationStart);
+  vm.runInContext(source.slice(locationStart, locationEnd), locationContext);
+  session = { gamePid: 5, gameStartTicks: "500", gamescopePid: 6 };
+  assert.equal((await locationContext.captureLocationSyncCrop("/unused")).method, "game");
+  assert.deepEqual(locationCalls, ["pipewire", "spectacle", "game"], "Gamescope Location Sync cannot enter normal portal/XID routes after failures");
+  locationCalls.length = 0;
+  session = { gamePid: 7, gameStartTicks: "700", gamescopePid: 0 };
+  assert.equal((await locationContext.captureLocationSyncCrop("/unused")).method, "portal");
+  assert.deepEqual(locationCalls, ["portal"], "normal Location Sync cannot enter direct Gamescope capture");
   console.log("Candidate 10: stalled catalogue isolation, single refresh, retry cooldown, stale-cache retention and both capture-mode transitions passed");
 })().catch(error => { console.error(error); process.exitCode = 1; });

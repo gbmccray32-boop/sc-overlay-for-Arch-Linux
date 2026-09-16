@@ -33,7 +33,9 @@ messages only. The current LIVE/Game.log is needed to explain missing authority 
 startup already replays live vehicle-control and ship-channel events. Never substitute radar
 pixels or signature vocabulary for Game.log authority.
 
-Candidate 7→8 changed normal exact-XID capture to bounded MIT-SHM retry/cooldown. Candidate 8→9
+Candidate 7→8 changed normal exact-XID capture to bounded MIT-SHM retry/cooldown, fixed the
+portal renderer to use a trusted local file origin, and accepted the one user-approved Wayland
+window source. Candidate 8→9
 changed only the normal portal parent/helper/preload: stable PID/start binding, approved-session
 retention and frame diagnostics. The direct Gamescope helper remained byte-identical throughout.
 The eight-second remote Fabricator have-list await existed in Candidate 7 too; failed requests
@@ -45,11 +47,12 @@ Candidate 10 repairs this capture/cadence behavior group:
   drain, single-flight, and retried after 30 seconds on failure. Last confirmed catalogue survives.
 - Exact game PID/start/Gamescope identity resets capture backend, coordinate size and probe state.
   Late probes from older sessions are discarded. Gamescope fallback upgrades try direct PipeWire
-  first; normal portal/XID sources stay outside the Gamescope ordering.
+  first; normal portal/XID sources stay outside Gamescope Mining and Location Sync routes.
 - Only normal-window preload encoding changes: canvas RGBA readback goes through the existing
   packaged sharp library in the isolated portal helper, lossless PNG compression level 0, one
   native worker, disabled native cache, 16-million-pixel budget and three rotating private files.
-  Full canvas/coordinates, approved stream retention and distinct video-time tokens remain.
+  Full canvas/coordinates, approved stream retention and distinct video-time tokens remain. Frame
+  age starts at canvas readback rather than after encoding.
 
 **Automated verified locally:** stalled remote refresh/single-flight/cooldown/cache tests; actual
 capture function exercised across both mode transitions, PID reuse, Gamescope fallbacks and direct

@@ -125,6 +125,7 @@ ipcRenderer.on("archverse-window-stream:capture", async (_event, request) => {
     }
     stage = "draw";
     const drawAt = performance.now();
+    const capturedAt = Date.now();
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     stages.draw = performance.now() - drawAt;
     stage = "pixel-read";
@@ -155,7 +156,7 @@ ipcRenderer.on("archverse-window-stream:capture", async (_event, request) => {
       transport,
       sequence,
       videoTime: currentVideoTime,
-      capturedAt: Date.now(),
+      capturedAt,
       stages,
     });
   } catch (error) {
