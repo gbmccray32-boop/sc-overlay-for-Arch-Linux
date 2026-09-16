@@ -12,6 +12,59 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 10 capture cadence — September 16, 2026
+
+Branch: `agent/alpha23-candidate10-capture-cadence`. Upstream remains v0.1.47,
+`e482c1ce3d461b390079486115293535be9b2ab7`. Start from packaged-verified Candidate 9,
+source `11cbca49ca9a92f17927463b544b0d0cf37b06de`, artifact `10425834446`,
+archive SHA-256 `fff229eac04f64de84fa51f8ffacd9f296131b13fbfbfa391a6f80398afb83b9`.
+Candidate 9 source/handoff checkpoint is `2a62056e5141d7b034f9e3f7387ee803744a88c2`.
+
+**Candidate 9 field gate failed.** Gabe supplied normal and Gamescope Electron logs and the
+fresh Gamescope sidecar log. Normal KDE approval remains latched; the approved 3840x1642 live
+track spends about 1087 ms in canvas PNG encoding, repeatedly missing the 700 ms frame deadline.
+Normal capture consequently uses slow Spectacle, although Mining can confirm signatures there.
+Gamescope direct PipeWire is alive: node 219, 6270x2160 canvas, display crop 3786x2160, roughly
+58–64 ms capture. In the mixed-mode log, complete scanner ticks take roughly 8.1–8.45 seconds,
+so the existing distinct-frame fast confirmation expires before each matching read. After the wait
+clears, matching frames 218 ms apart confirm. The separate fresh Gamescope log has inactive
+vehicle authority (`source=none`) and no numeric OCR. Its sidecar log contains watcher/seed
+messages only. The current LIVE/Game.log is needed to explain missing authority while aboard;
+startup already replays live vehicle-control and ship-channel events. Never substitute radar
+pixels or signature vocabulary for Game.log authority.
+
+Candidate 7→8 changed normal exact-XID capture to bounded MIT-SHM retry/cooldown. Candidate 8→9
+changed only the normal portal parent/helper/preload: stable PID/start binding, approved-session
+retention and frame diagnostics. The direct Gamescope helper remained byte-identical throughout.
+The eight-second remote Fabricator have-list await existed in Candidate 7 too; failed requests
+left the retry timestamp stale, exposing the same wait on every scanner tick when Fabricator is
+armed. Capture backend/coordinate state also leaked between normal and Gamescope game sessions.
+
+Candidate 10 repairs this capture/cadence behavior group:
+- Remote Fabricator catalogue refresh is asynchronous to the capture tick, shared with the upload
+  drain, single-flight, and retried after 30 seconds on failure. Last confirmed catalogue survives.
+- Exact game PID/start/Gamescope identity resets capture backend, coordinate size and probe state.
+  Late probes from older sessions are discarded. Gamescope fallback upgrades try direct PipeWire
+  first; normal portal/XID sources stay outside the Gamescope ordering.
+- Only normal-window preload encoding changes: canvas RGBA readback goes through the existing
+  packaged sharp library in the isolated portal helper, lossless PNG compression level 0, one
+  native worker, disabled native cache, 16-million-pixel budget and three rotating private files.
+  Full canvas/coordinates, approved stream retention and distinct video-time tokens remain.
+
+**Automated verified locally:** stalled remote refresh/single-flight/cooldown/cache tests; actual
+capture function exercised across both mode transitions, PID reuse, Gamescope fallbacks and direct
+upgrade; actual preload busy/repeated-frame/full-canvas/encoding error/track-ended tests; native
+PNG exact pixel round trips at 3840x1642 and 6270x2160 plus allocation budget rejection; inherited
+Candidate 6 distinct-frame confirmation and Candidate 9 session quarantine tests. Native encoding
+of synthetic opaque random textures measured 38 ms and 217 ms respectively on this host. These
+are encoder measurements, not field capture timings. Packaged CI and Candidate 10 field test
+remain pending at this checkpoint. Distro publication stays disabled.
+
+Next step: complete the pinned Candidate 10 packaged CI, provide the native field archive, then
+Gabe tests Gamescope and normal capture separately and supplies current LIVE/Game.log if vehicle
+presence stays inactive aboard. Standing push authorization and best-effort advance context-capacity
+notice remain in effect; no exact chat capacity meter is exposed.
+
 ## Alpha23 Candidate 9 lifecycle repair — September 16, 2026
 
 Branch: `agent/alpha23-candidate9-portal-session-repair`. Upstream stays frozen at v0.1.47,
