@@ -58,6 +58,7 @@ jobs:
           node "$candidate/tests/alpha23-candidate8-capture.test.cjs"
           node "$candidate/tests/alpha23-candidate9-session.test.cjs" "$GITHUB_WORKSPACE/candidate8/ArchVerse-Native-0.1.47-r31.alpha23.candidate8"
           node "$candidate/tests/alpha23-candidate9-preload.test.cjs"
+          xvfb-run -a node "$candidate/tests/alpha23-candidate8-renderer.test.cjs" "$GITHUB_WORKSPACE/packaging/common/alpha23-candidate7"
           xvfb-run -a node "$candidate/tests/alpha23-candidate9-renderer.test.cjs" "$GITHUB_WORKSPACE/candidate8/ArchVerse-Native-0.1.47-r31.alpha23.candidate8"
           node tools/archverse-config-e2e.mjs "$candidate/app/server"
           mkdir -p node_modules/electron/dist
