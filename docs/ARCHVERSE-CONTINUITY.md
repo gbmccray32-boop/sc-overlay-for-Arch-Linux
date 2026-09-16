@@ -29,9 +29,15 @@ Gamescope direct PipeWire is alive: node 219, 6270x2160 canvas, display crop 378
 so the existing distinct-frame fast confirmation expires before each matching read. After the wait
 clears, matching frames 218 ms apart confirm. The separate fresh Gamescope log has inactive
 vehicle authority (`source=none`) and no numeric OCR. Its sidecar log contains watcher/seed
-messages only. The current LIVE/Game.log is needed to explain missing authority while aboard;
-startup already replays live vehicle-control and ship-channel events. Never substitute radar
-pixels or signature vocabulary for Game.log authority.
+messages only. Gabe subsequently supplied game(3).log, covering 01:56:55–02:02:17 UTC.
+The actual packaged parser recognizes exactly one vehicle event: local MISC_Hull_B control release
+at 01:59:03.158, with zero ship-channel joins or later control grants in this snapshot. The actual
+packaged sidecar replay, explicitly watching this uploaded path with sync/sharing disabled, returns
+active=false/source=none. This is consistent with the fresh gate; it does not prove physical on-foot
+status, and the snapshot ends before the fresh Gamescope app begins at 02:02:43. A Janus maximum
+publishers error is present, but its role in missing channel joins is unproven. Startup already
+replays live vehicle-control and ship-channel events. Never substitute radar pixels or signature
+vocabulary for Game.log authority.
 
 Candidate 7→8 changed normal exact-XID capture to bounded MIT-SHM retry/cooldown, fixed the
 portal renderer to use a trusted local file origin, and accepted the one user-approved Wayland
@@ -60,12 +66,36 @@ upgrade; actual preload busy/repeated-frame/full-canvas/encoding error/track-end
 PNG exact pixel round trips at 3840x1642 and 6270x2160 plus allocation budget rejection; inherited
 Candidate 6 distinct-frame confirmation and Candidate 9 session quarantine tests. Native encoding
 of synthetic opaque random textures measured 38 ms and 217 ms respectively on this host. These
-are encoder measurements, not field capture timings. Packaged CI and Candidate 10 field test
-remain pending at this checkpoint. Distro publication stays disabled.
+are encoder measurements, not field capture timings.
 
-Next step: complete the pinned Candidate 10 packaged CI, provide the native field archive, then
-Gabe tests Gamescope and normal capture separately and supplies current LIVE/Game.log if vehicle
-presence stays inactive aboard. Standing push authorization and best-effort advance context-capacity
+**Automated verified in packaged CI:** run `35047545531` completed successfully against source
+`82829e36de78519079858662d00d9ebb9885ad10`, tree `90aeb950df68c9515543f9d97b4cbf2b7551baeb`.
+Upstream typecheck/reppage/repscan/repname gates; native syntax and renderer IPC audit; Linux bridge
+and main startup; inherited Candidate 6 confirmation, Candidate 8 XID/Gamescope, and Candidate 9
+session gates; Candidate 10 cadence/mode/Location Sync, preload and native encoder gates; actual
+packaged Electron retained insecure-origin negative plus secure-renderer positives; canonical
+config E2E; five ageband controls; complete staged widget DOM suite including pair merges passed.
+The inherited Candidate 9 preload test ran against pinned Candidate 9, while Candidate 10's preload
+test exercises the new encoder transport. CI native random-texture encoding measured 13 ms and
+15 ms respectively. The local canonical-config test was blocked by this host's restricted network
+interface introspection; unchanged packaged config E2E passed in CI. No application workaround
+was introduced for that host restriction.
+
+**Packaged verified:** artifact `10427872184`, `ArchVerse-Alpha23-Candidate10-field-test`.
+ZIP SHA-256 `64e4a7974525822c64122a0a01f621d4a8f20181497315b91cdb38ce4f31ccd5`.
+Native `ArchVerse-Native-0.1.47-r31.alpha23.candidate10.tar.gz` SHA-256
+`0983ef18d0b56a0e5a1ebe8e92f641055af7cc072b962d9cd1d1f38ee2b4a8fc`.
+Independent archive verification checked 1644 regular files, the complete internal hash manifest,
+20 protected file entries, all five unchanged symlinks, executable ELF runtime, exact new source
+and test bytes, and every unchanged baseline file/mode. App changes versus Candidate 9 are only
+capture.cjs, normal-window preload, the added encoder, and package version metadata. No runtime,
+sidecar, OCR worker, Gamescope helper, input, widget or configuration bytes changed.
+
+**Candidate 10 field verification remains pending.** Distro publication stays disabled.
+
+Next step: Gabe tests Gamescope and normal capture separately, including fresh Game.log vehicle authority
+after seat/ship entry, and supplies complete logs captured after the field test if authority remains
+inactive aboard. Standing push authorization and best-effort advance context-capacity
 notice remain in effect; no exact chat capacity meter is exposed.
 
 ## Alpha23 Candidate 9 lifecycle repair — September 16, 2026
