@@ -12,6 +12,49 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 9 lifecycle repair — September 16, 2026
+
+Branch: `agent/alpha23-candidate9-portal-session-repair`. Upstream stays frozen at v0.1.47,
+`e482c1ce3d461b390079486115293535be9b2ab7`. Baseline is packaged-verified Candidate 8,
+remote implementation `275abd7e32bf596c555480c655b75661866ea381`, artifact `10412447176`,
+native archive SHA-256 `8919ba757eee1be95e8adf2f7dfde7c658ec7060081842b75604a186ae94807f`.
+
+Candidate 8 **failed the normal-launch field gate**. Gabe reported repeated KDE chooser openings
+without persistent capture while OBS recorded correctly; Gamescope remained working. The log showed
+portal readiness followed by 14 frame deadlines. The parent destroyed the approved stream after two
+700 ms frame timeouts, and its session key also included an XID that changed during discovery.
+The exact-XID fallback still reported BadMatch, so Candidate 8's MIT-SHM repair is not field verified.
+
+Candidate 9 changes only the isolated normal-window parent, helper and preload. Capture approval
+is bound to exact StarCitizen.exe PID plus process start ticks. Slow or repeated video frames and
+XID rediscovery retain the approved session. The 700 ms caller deadline remains, but the outstanding
+wire request stays occupied until its reply arrives; a recent late response can be consumed by the
+next probe. Denial, initialization failure, helper death and track termination disable capture for
+that game process. A new PID/start identity permits one new attempt. Bounded diagnostics distinguish
+video readiness, draw, PNG encoding, blob reading and file writing, including a stalled async stage.
+Repeated media time retains an identical frame token so Mining's distinct-frame guard remains.
+
+Local lifecycle and actual-preload regression suites passed. Negative controls against the inherited
+Candidate 7/8 parent reproduce both two-deadline destruction and XID-based helper recreation. The
+actual preload test also identifies a stalled PNG callback and checks diagnostic-timer cleanup.
+All six new CJS files and the staging script passed syntax checks; workflow YAML parsed and Git
+whitespace checks passed. Implementation checkpoint: `b76b8bbd07d317523bebdfb6645746be5152bd4f`;
+follow-up regression/evidence changes are recorded by the generated handoff's current commit.
+
+Gabe explicitly approved pushing Candidate 9 on September 16, 2026 and renewed standing permission
+for future ArchVerse pushes to `gbmccray32-boop/sc-overlay-for-Arch-Linux`. This resolves the earlier
+automatic-review authorization block. Candidate, field-test and release gates still apply.
+Packaged gates and artifact are **pending**; upload the exact local source tree, run CI, then verify
+and deliver the quarantined field-test artifact.
+Gamescope direct PipeWire, capture.cjs, Mining admission/cadence, main input, sidecar and config must
+remain hash-identical to Candidate 8 during staging. This is a quarantined field candidate, not a
+release. Next: packaged CI gates, then normal Wine/XWayland field testing followed by Gamescope.
+Live PipeWire delivery speed and exact-XID BadMatch remain unverified until fresh field evidence.
+
+Gabe requested an advance conversation handoff notice at approximately 75% capacity. Give a best-effort
+notice as the conversation grows and prepare an updated handoff before continuing a long phase.
+No exact chat-capacity meter is available; do not promise an exact threshold or guaranteed timing.
+
 ## Alpha23 Candidate 8 repair checkpoint — September 15, 2026
 
 Branch: `agent/alpha23-candidate8-renderer-x11-repair`. Upstream remains v0.1.47 at
