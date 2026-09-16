@@ -140,7 +140,7 @@ function createPersistentStarCitizenWindowCapture({
       }
     });
     proc.stderr?.setEncoding("utf8");
-    proc.stderr?.on("data", (chunk) => { stderrTail = (stderrTail + String(chunk || "")).slice(-1000); });
+    proc.stderr?.on("data", (chunk) => { if (child === proc) stderrTail = (stderrTail + String(chunk || "")).slice(-1000); });
     proc.once("error", (error) => {
       if (child !== proc) return;
       child = null;
@@ -152,9 +152,9 @@ function createPersistentStarCitizenWindowCapture({
       if (child !== proc) return;
       child = null;
       ready = null;
-      if (disabledSessionKey !== sessionKey) disableSession(`helper exited code=${code} signal=${signal || "none"}`);
       const detail = stderrTail.trim().slice(-300);
       const message = `Star Citizen window capture helper exited${signal ? ` on ${signal}` : ` with code ${code}`}${detail ? `: ${detail}` : ""}`;
+      if (disabledSessionKey !== sessionKey) disableSession(message);
       settlePending(new Error(message));
       if (!proc.expectedExit && !closed && !initializationError) logger.warn?.(`[window-stream] ${message}; monitor fallback remains active`);
     });
