@@ -52,12 +52,28 @@ selection handling, and mirrored local/sidecar Mining cargo admission:
   Gamescope direct PipeWire helper, overlay input, OCR workers, widgets, and configuration are
   protected unchanged.
 
-**Automated verified locally:** focused Candidate 11 chooser/stall/mode, cargo parity, encoder
-channel-order/budget and preload suites; inherited Candidate 10 cadence and Candidate 8/9
-capture/session suites; renderer/IPC audit, Linux bridge, main startup, syntax and staging
-protected-file hashes. Real packaged Electron encoding, complete CI, archive verification, and
-in-game normal/Gamescope testing remain pending. Publication remains disabled. Next step is the
-Candidate 11 CI artifact and independent archive verification, followed by separate field tests.
+**Automated verified:** local chooser/stall/mode, cargo parity, encoder channel-order/budget,
+preload, inherited cadence and capture/session suites. The full Candidate 11 CI run
+`35173315499` passed upstream checks, pinned Candidate 10 verification, packaged regressions,
+real Electron encoder and renderer checks, configuration and age-band controls, and widget
+integration. Source commit `02959227ce5bd96daf6efad1bd0666f6f0f5c2c7` has exact tree
+`d589ddcf886052a7271692c80fb415893270cc6d`.
+
+**Packaged verified:** artifact `10477397738`, `ArchVerse-Alpha23-Candidate11-field-test`.
+Artifact ZIP SHA-256 `e7cf113edb401c721f1b766677a0e3f1f67c9b1405c7794c79173721e80cf8e5`.
+Native `ArchVerse-Native-0.1.47-r31.alpha23.candidate11.tar.gz` SHA-256
+`60406e891af0bf881b8c041de455c087192e23608a499fc49439d0cff652bf47`.
+Independent archive verification passed the full 1647-entry internal hash manifest and all
+20 protected-file hashes. Only the intended capture, Mining admission, sidecar parser,
+version/provenance and test files differ from Candidate 10. The direct Gamescope helper,
+Electron runtime, OCR workers and input files match Candidate 10. This workspace initially
+truncated the large Electron executable during extraction; direct archive streaming matched
+its expected SHA-256, and re-extraction of that file made the full manifest pass. Provide
+smaller download parts with a reconstruction checksum to address the earlier corrupt-file warning.
+
+In-game normal KDE and Gamescope tests are still pending. Publication remains disabled. Gabe
+tests Gamescope first and normal Wine/XWayland second, and supplies fresh Electron and sidecar
+logs plus Game.log if vehicle authority is inactive while aboard.
 
 ## Alpha23 Candidate 10 capture cadence — September 16, 2026
 
@@ -974,9 +990,9 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest packaged-verified deliverable is Alpha23 Candidate 10, a quarantined native field-test
-archive whose normal-capture field gate failed. Candidate 11 is being tested against that exact
-package. Candidate 7's Gamescope capture was fast and complete; the direct Gamescope helper remains
+The latest packaged-verified deliverable is Alpha23 Candidate 11, a quarantined native field-test
+archive awaiting both launch-mode field gates. Candidate 10's normal-capture field gate failed.
+Candidate 7's Gamescope capture was fast and complete; the direct Gamescope helper remains
 unchanged through Candidate 11. Candidate 8k remains the rollback whose Mining and base operation
 Gabe reported working.
 
