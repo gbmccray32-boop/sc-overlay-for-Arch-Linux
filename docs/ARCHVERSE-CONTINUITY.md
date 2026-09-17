@@ -158,7 +158,7 @@ sidecar, OCR worker, Gamescope helper, input, widget or configuration bytes chan
 two logs, encoder crash, competing selector, slow fallback and cargo false positive. Its Gamescope
 field gate remains unverified. Distro publication stays disabled.
 
-Next step: stage and test Candidate 11, then Gabe tests Gamescope and normal capture separately,
+Next step: Gabe tests packaged Candidate 11 in Gamescope and normal capture separately,
 including fresh Game.log vehicle authority after seat/ship entry if authority remains inactive
 aboard. Standing push authorization and best-effort advance context-capacity
 notice remain in effect; no exact chat capacity meter is exposed.
