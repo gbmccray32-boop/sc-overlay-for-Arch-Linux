@@ -12,6 +12,53 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 11 portal and cargo repair — September 17, 2026
+
+Branch: `agent/alpha23-candidate11-portal-and-cargo`, based on packaged-verified Candidate 10
+commit `282e7ca3b07d691309a3b231f50aafd38d2ae4b5`, artifact `10427872184`, native SHA-256
+`0983ef18d0b56a0e5a1ebe8e92f641055af7cc072b962d9cd1d1f38ee2b4a8fc`. Upstream stays
+frozen at v0.1.47 `e482c1ce3d461b390079486115293535be9b2ab7`.
+
+**Candidate 10 normal-capture field gate failed.** Gabe supplied two complete Electron logs and
+one short sidecar log with SHA-256 `2eb6b00322a64cd06e759d0f718955fdc1e1e515b01f05d690dcc97f2e6aba68`,
+`d38ad876492a3968598ad3df2c09fc42a015002647854047653fc0b8c1b48ab7`, and
+`f352a0380ec2ffba5d8d083464dfaf6bc11d69c648c40c87f3674172c4428979` respectively.
+KDE portal reported a ready 3840x1322 window in both runs. Concurrent Spectacle fallback could
+open a competing chooser before the portal approval finished. The first portal frame emitted a
+sharp/libvips C++ assertion inside the Electron renderer; each log then recorded one 700ms frame
+deadline and an outstanding frame request for the remainder of the run (184 and 314 fallback
+messages). Spectacle remained functional at median 2466/2557ms capture, yielding median full
+scanner ticks of 2803/2907ms; OCR medians were 162/168ms. Mining acknowledged 9 and 2 signatures
+respectively with no Mining IPC failures. No direct `gamescope-pipewire` frame is in these two logs,
+so Gamescope is not field-verified at Candidate 10. The second run also admitted cargo text
+`EXODUS | Volume:6066000uScU | X 16,000` twice as RS 16000 while Game.log vehicle authority was
+active. The exact catalog and distinct-frame guard alone cannot reject a repeated item quantity.
+
+Candidate 11 changes only the isolated normal-window helper/parent/preload encoder, normal capture
+selection handling, and mirrored local/sidecar Mining cargo admission:
+- A pending KDE WINDOW selection pauses normal capture and Location Sync fallbacks. Spectacle
+  cannot obscure the chooser. Failure/denial retains the existing one-attempt-per-game rule.
+- The helper uses Electron `nativeImage` to encode the full RGBA canvas as PNG, converting BGRA
+  explicitly without sharp/libvips in the renderer. A real packaged Electron preload test must
+  run this encoder; Node-only testing was inadequate in Candidate 10.
+- A crashed renderer reports a terminal error. A frame that never replies is quarantined after an
+  eight-second hard deadline. Slow frames within the deadline still retain approved sessions and
+  late-frame reuse; no automatic re-prompt occurs for that Star Citizen PID/start identity.
+- OCR crops containing `Volume:` or SCU units cannot authorize RS values, even if the value is
+  split onto another OCR line. Both local admission and the sidecar parser reject the exact field
+  text. Genuine 21350 and 2000 scan examples remain admitted, with exact catalog and Game.log
+  authority unchanged.
+- The normal portal's successful frame uses the stream's 1600ms distinct-frame window. The
+  Gamescope direct PipeWire helper, overlay input, OCR workers, widgets, and configuration are
+  protected unchanged.
+
+**Automated verified locally:** focused Candidate 11 chooser/stall/mode, cargo parity, encoder
+channel-order/budget and preload suites; inherited Candidate 10 cadence and Candidate 8/9
+capture/session suites; renderer/IPC audit, Linux bridge, main startup, syntax and staging
+protected-file hashes. Real packaged Electron encoding, complete CI, archive verification, and
+in-game normal/Gamescope testing remain pending. Publication remains disabled. Next step is the
+Candidate 11 CI artifact and independent archive verification, followed by separate field tests.
+
 ## Alpha23 Candidate 10 capture cadence — September 16, 2026
 
 Branch: `agent/alpha23-candidate10-capture-cadence`. Upstream remains v0.1.47,
@@ -91,11 +138,13 @@ and test bytes, and every unchanged baseline file/mode. App changes versus Candi
 capture.cjs, normal-window preload, the added encoder, and package version metadata. No runtime,
 sidecar, OCR worker, Gamescope helper, input, widget or configuration bytes changed.
 
-**Candidate 10 field verification remains pending.** Distro publication stays disabled.
+**Candidate 10 normal-capture field gate failed on September 17.** See Candidate 11 above for the
+two logs, encoder crash, competing selector, slow fallback and cargo false positive. Its Gamescope
+field gate remains unverified. Distro publication stays disabled.
 
-Next step: Gabe tests Gamescope and normal capture separately, including fresh Game.log vehicle authority
-after seat/ship entry, and supplies complete logs captured after the field test if authority remains
-inactive aboard. Standing push authorization and best-effort advance context-capacity
+Next step: stage and test Candidate 11, then Gabe tests Gamescope and normal capture separately,
+including fresh Game.log vehicle authority after seat/ship entry if authority remains inactive
+aboard. Standing push authorization and best-effort advance context-capacity
 notice remain in effect; no exact chat capacity meter is exposed.
 
 ## Alpha23 Candidate 9 lifecycle repair — September 16, 2026
@@ -925,14 +974,14 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest automated and packaged verified deliverable is Alpha23 Candidate 9, a quarantined native
-field-test archive. It has not been field-tested. Candidate 8 failed the normal-session capture gate:
-KDE repeatedly reopened its chooser, while OBS worked. Candidate 7's Gamescope capture was fast and
-complete, and the corresponding Gamescope/runtime contracts remain byte-identical through Candidate 9.
-Candidate 8k remains the rollback whose Mining and base operation Gabe reported working.
+The latest packaged-verified deliverable is Alpha23 Candidate 10, a quarantined native field-test
+archive whose normal-capture field gate failed. Candidate 11 is being tested against that exact
+package. Candidate 7's Gamescope capture was fast and complete; the direct Gamescope helper remains
+unchanged through Candidate 11. Candidate 8k remains the rollback whose Mining and base operation
+Gabe reported working.
 
 The last documented Arch, Fedora and Debian package set belongs to the older Alpha 21 line. Do not
-publish a Candidate 9 release or claim a current three-distribution package set until both normal
+publish a Candidate 11 release or claim a current three-distribution package set until both normal
 Wine/XWayland and Gamescope field gates pass, then fresh distribution packages pass their own checks.
 
 ## Continuity maintenance

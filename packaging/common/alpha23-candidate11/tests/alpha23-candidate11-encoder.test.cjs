@@ -1,0 +1,23 @@
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+const source = fs.readFileSync(path.join(__dirname, "../app/electron/window-frame-encoder.cjs"), "utf8");
+const moduleStub = { exports: {} };
+vm.runInNewContext(source, { require: name => name === "electron" ? { nativeImage: {} } : require(name), Buffer, module: moduleStub });
+const { encodeWindowFrame } = moduleStub.exports;
+const pixels = new Uint8ClampedArray([12, 34, 56, 255, 90, 80, 70, 128]);
+let bitmap;
+const imageApi = { createFromBitmap(bytes, size) {
+  bitmap = Buffer.from(bytes);
+  assert.equal(size.width, 2);
+  assert.equal(size.height, 1);
+  return { isEmpty: () => false, toPNG: () => Buffer.from([137, 80, 78, 71]) };
+} };
+assert.equal(encodeWindowFrame(pixels, 2, 1, imageApi).length, 4);
+assert.deepEqual([...bitmap], [56, 34, 12, 255, 70, 80, 90, 128]);
+assert.deepEqual([...pixels], [12, 34, 56, 255, 90, 80, 70, 128], "ImageData remains unmodified");
+assert.throws(() => encodeWindowFrame(new Uint8Array(4), 8000, 8000, imageApi), /budget/);
+assert.throws(() => encodeWindowFrame(new Uint8Array(3), 1, 1, imageApi), /invalid/);
+console.log("Candidate 11 nativeImage input preserves RGBA pixels, channel order and allocation budget");
