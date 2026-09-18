@@ -12,6 +12,42 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 12 normal portal latency — September 18, 2026
+
+Branch: `agent/alpha23-candidate12-lossless-portal`, pinned to packaged Candidate 11 artifact
+`10477397738` and native archive SHA-256 `60406e891af0bf881b8c041de455c087192e23608a499fc49439d0cff652bf47`.
+Upstream target stays frozen at v0.1.47 `e482c1ce3d461b390079486115293535be9b2ab7`.
+
+**Candidate 11 normal capture field gate failed.** Gabe supplied a long mixed-launch Electron
+log and sidecar log with SHA-256 `126b6d04df8ad6fc5499ef695a1a774c74deda9098b24c674f46804d496571da`
+and `1429f3b439174884e864844ec94497e93cf569ce7febf7d125ad6480b17b95a4`.
+The Gamescope session bound PID 27064 to Gamescope PID 26566 and retained direct
+`gamescope-pipewire`: 371 heartbeat samples have median capture 63ms and median tick average
+370ms. The sidecar logged 21 confirmed signature events across the run, including repeated values.
+Normal launches bound
+PIDs 215757 and 220359 separately; KDE approved one portal stream for each, with chooser waits
+around 25s and 40s. There is no evidence of repeated chooser requests for the same PID or a
+competing Spectacle request before each approval. The first stream ended immediately before that
+game session was released. The second remained approved but its detailed-scene nativeImage PNG encode had median
+862ms (393 summaries) against a 700ms caller deadline. 326 deadlines sent capture to slow
+Spectacle; 255 Spectacle heartbeat samples had median capture 2524ms and median tick average
+3067ms. The portal captured usable frames with live tracks in between. XID capture returned
+MIT-SHM BadMatch and cooled down. The sidecar confirmed signatures during normal capture, while
+an unrelated rotated Game.log upload repeatedly returned `bad_size` at 4194316 bytes.
+
+Candidate 12 changes only the isolated normal portal encoder and its caller deadline. Encode the
+complete RGBA canvas in a standards-compliant lossless PNG with filter None and stored DEFLATE
+blocks; no scene-dependent nativeImage PNG compression or libvips inside the renderer. Use a
+1400ms soft deadline to retain occasional slower approved frames; keep the eight-second hard
+stall quarantine and PID/start-time session binding. No Gamescope helper, input, OCR crop,
+Mining catalog, sidecar, configuration or release behavior changes. Both launch modes still
+require separate field tests; Candidate 12 remains quarantined until packaged and field verified.
+
+**Automated verified locally:** full Candidate 11 archive SHA and 1647-file manifest, protected
+file hashes, staged Candidate 12, exact PNG RGBA/CRC and a 900ms delayed frame that now reaches
+the caller, inherited chooser/session regression, renderer/IPC audit, Linux bridge and main
+startup. Real Electron decoding, full CI and in-game speed remain unverified.
+
 ## Alpha23 Candidate 11 portal and cargo repair — September 17, 2026
 
 Branch: `agent/alpha23-candidate11-portal-and-cargo`, based on packaged-verified Candidate 10
@@ -71,9 +107,8 @@ truncated the large Electron executable during extraction; direct archive stream
 its expected SHA-256, and re-extraction of that file made the full manifest pass. Provide
 smaller download parts with a reconstruction checksum to address the earlier corrupt-file warning.
 
-In-game normal KDE and Gamescope tests are still pending. Publication remains disabled. Gabe
-tests Gamescope first and normal Wine/XWayland second, and supplies fresh Electron and sidecar
-logs plus Game.log if vehicle authority is inactive while aboard.
+Candidate 11 in-game logs arrived September 18. Gamescope direct capture and Mining confirmation
+worked; normal KDE capture remains too slow. See Candidate 12 above. Publication remains disabled.
 
 ## Alpha23 Candidate 10 capture cadence — September 16, 2026
 
