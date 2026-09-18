@@ -41,12 +41,29 @@ blocks; no scene-dependent nativeImage PNG compression or libvips inside the ren
 1400ms soft deadline to retain occasional slower approved frames; keep the eight-second hard
 stall quarantine and PID/start-time session binding. No Gamescope helper, input, OCR crop,
 Mining catalog, sidecar, configuration or release behavior changes. Both launch modes still
-require separate field tests; Candidate 12 remains quarantined until packaged and field verified.
+require separate field tests; Candidate 12 remains quarantined pending field verification.
 
-**Automated verified locally:** full Candidate 11 archive SHA and 1647-file manifest, protected
+**Automated verified:** full Candidate 11 archive SHA and 1647-file manifest, protected
 file hashes, staged Candidate 12, exact PNG RGBA/CRC and a 900ms delayed frame that now reaches
 the caller, inherited chooser/session regression, renderer/IPC audit, Linux bridge and main
-startup. Real Electron decoding, full CI and in-game speed remain unverified.
+startup. CI run `35308592319` passed upstream checks, pinned baseline and protected-file gates,
+packaged regressions, real Electron pixel decoding, configuration controls and widget integration.
+Remote source commit `42e73c9f83a44a70e8efa9ee2324eb9f85d090c2` has tree
+`dad5d252d1c95ed48c55fa56aacac6ca7eacbe68` (a documentation-only follow-up may advance
+the branch without changing this tested source tree).
+
+**Packaged verified:** artifact `10532024821`, `ArchVerse-Alpha23-Candidate12-field-test`.
+ZIP SHA-256 `7b7c3c010ed33ba753aa35cb94d755b497368f0a3df42f93e438610f41578eba`.
+Native `ArchVerse-Native-0.1.47-r31.alpha23.candidate12.tar.gz` SHA-256
+`c7d83050f1b28299f20880f182c5acba8a3ac93993d34eb6ed28ed78f7c54d46`.
+The 1648-entry internal manifest passed. Independent Candidate 11 comparison found only the
+normal portal encoder and caller, package version/provenance, release text, checksum manifest,
+and regression tests changed. A temporary Electron extraction file in the baseline comparison
+directory was not a packaged file. Gamescope capture, Mining sidecar and overlay input match
+Candidate 11. The first local tar extraction truncated Electron; streaming that single file
+from the original tar recovered the expected manifest hash. In-game chooser appearance and actual
+normal-capture cadence remain unverified; capture and signature timing must be measured in both
+launch modes independently before release.
 
 ## Alpha23 Candidate 11 portal and cargo repair — September 17, 2026
 
@@ -1025,14 +1042,14 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest packaged-verified deliverable is Alpha23 Candidate 11, a quarantined native field-test
-archive awaiting both launch-mode field gates. Candidate 10's normal-capture field gate failed.
+The latest packaged-verified deliverable is Alpha23 Candidate 12, a quarantined native field-test
+archive awaiting both launch-mode field gates. Candidates 10 and 11 failed normal-capture field gates.
 Candidate 7's Gamescope capture was fast and complete; the direct Gamescope helper remains
-unchanged through Candidate 11. Candidate 8k remains the rollback whose Mining and base operation
+unchanged through Candidate 12. Candidate 8k remains the rollback whose Mining and base operation
 Gabe reported working.
 
 The last documented Arch, Fedora and Debian package set belongs to the older Alpha 21 line. Do not
-publish a Candidate 11 release or claim a current three-distribution package set until both normal
+publish a Candidate 12 release or claim a current three-distribution package set until both normal
 Wine/XWayland and Gamescope field gates pass, then fresh distribution packages pass their own checks.
 
 ## Continuity maintenance
