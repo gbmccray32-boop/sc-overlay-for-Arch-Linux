@@ -51,6 +51,24 @@ source regression, including the specification-required string lookup, content v
 diagnostics, and Gamescope hash guards. This workspace lacks `pkg-config` and native development
 headers, so strict C compilation and the executable self-test are delegated to the pinned CI job.
 
+**Automated verified in packaged CI:** run `35468978412` passed against source commit
+`8144ae7dc8df92b093f18fed9cfc1738ae351824`, exact tree
+`31a9b48cd727851f0832e2a1d4349c6c4903205f`. The strict native C build and executable portal
+reply self-test passed first, followed by the pinned Candidate 13 archive and manifest gate,
+upstream checks, all inherited capture/session/cadence regressions, real Electron raw-frame tests,
+renderer/IPC audits, Linux bridge and main startup, configuration and age-band controls, and the
+complete staged widget/sidecar integration.
+
+**Packaged verified:** artifact `10592371411`, `ArchVerse-Alpha23-Candidate14-field-test`.
+Artifact ZIP SHA-256 `d4632d56cf375b2e6c1b4bf7e2e0e5b2834f5a6ed9d634a00fb2bd5e93b9808b`.
+Native `ArchVerse-Native-0.1.47-r31.alpha23.candidate14.tar.gz` SHA-256
+`4b822d196d9769d67e2d67bd872732f9ca52cb59367a285eb040765fe7a6b367`.
+Independent streaming verification passed all 1654 internal manifest entries, 23 protected hashes,
+and five symlinks without relying on the host's unreliable large-file extraction. Comparison with
+Candidate 13 found only the native helper/source, Candidate 14 regression, version/provenance,
+checksums, and field guide changed. Both Gamescope implementations match their protected hashes.
+Normal KDE chooser appearance and native capture cadence remain **unverified in game**.
+
 ## Alpha23 Candidate 13 native normal portal capture — September 19, 2026
 
 Branch: `agent/alpha23-candidate13-native-portal-pipewire`, based on packaged-verified Candidate 12
