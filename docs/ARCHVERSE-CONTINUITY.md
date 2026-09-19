@@ -12,6 +12,37 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 13 native normal portal capture — September 19, 2026
+
+Branch: `agent/alpha23-candidate13-native-portal-pipewire`, based on packaged-verified Candidate 12
+artifact `10532024821` and native archive SHA-256
+`c7d83050f1b28299f20880f182c5acba8a3ac93993d34eb6ed28ed78f7c54d46`. Upstream remains
+frozen at v0.1.47 `e482c1ce3d461b390079486115293535be9b2ab7`.
+
+Gabe chose not to field-test Candidate 12's remaining Electron canvas/PNG path and authorized the
+recommended native normal-capture replacement. Candidate 13 keeps Gamescope byte-for-byte separate.
+For a normal KDE Wayland session, a small native helper requests one WINDOW through the XDG
+ScreenCast portal, opens only the returned restricted PipeWire remote file descriptor, and consumes
+the selected node through GStreamer `pipewiresrc`. The helper retains the approved session, stores
+the portal's rotating restore token in the canonical config directory, and emits bounded raw BGRA
+snapshots. A display request is cropped before raw transfer when the source geometry is known;
+Location Sync still requests the complete canvas before its top-right crop. The Electron canvas,
+PNG encoder, XComposite, and Spectacle do not participate in the normal steady-state path. True X11
+retains its isolated Electron/X11 stream as a separate fallback.
+
+The method remains `portal-pipewire-window`, exact Star Citizen PID/start-time binding remains, a
+failed/cancelled/ended helper is still quarantined for that game process, and one live KDE chooser
+still pauses screenshot fallbacks. The direct Gamescope helper, input, OCR workers, Mining catalog,
+sidecar, configuration API, and widgets are unchanged.
+
+**Automated verified locally:** Candidate 12 archive ZIP and internal manifest; JavaScript syntax;
+native-helper selection and arguments; exact raw BGRA byte/size validation; pre-transfer display
+crop request; XID churn retention; PID/start rebind; Candidate 12 slow-frame regression; Candidate
+11 chooser/session regression; Candidate 10 mode/cadence regression; Candidate 9 session regression;
+renderer/IPC audit; Linux bridge; and Electron main startup. The workspace cannot install native
+development packages, so strict C compilation, linked-helper self-test, packaged Electron BGRA
+round-trip, full CI, archive verification, and both in-game launch modes remain unverified.
+
 ## Alpha23 Candidate 12 normal portal latency — September 18, 2026
 
 Branch: `agent/alpha23-candidate12-lossless-portal`, pinned to packaged Candidate 11 artifact

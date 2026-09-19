@@ -47,14 +47,17 @@ The following are ArchVerse platform contracts:
   `gamescope` PipeWire node must be treated as an unavailable optional fast path, not as a fatal OCR
   error. The PipeWire backend must reject that case immediately, before expensive PipeWire discovery
   or frame capture, and the same capture request must continue through the normal fallback chain.
-- On a normal KDE Wayland launch, the isolated Star Citizen window helper connects to native
-  Wayland and requests only a WINDOW source through Electron's XDG ScreenCast portal path. A
-  successful stream is reported as `portal-pipewire-window`. It remains separate from the overlay's
-  X11/XWayland input process and may not replace the direct Gamescope PipeWire implementation.
-- Normal-launch capture keeps the complete Star Citizen canvas for r_DisplayInfo and other
-  full-canvas consumers. Mining receives only the bound display segment in its established
-  coordinate space. Do not crop the panorama to one monitor before Location Sync selects the
-  canvas's top-right region.
+- On a normal KDE Wayland launch, the isolated native Star Citizen window helper requests only a
+  WINDOW source through the XDG ScreenCast portal, opens the portal's restricted PipeWire remote,
+  and consumes raw frames through GStreamer. A successful stream is reported as
+  `portal-pipewire-window`. It remains separate from the overlay's X11/XWayland input process and
+  may not replace the direct Gamescope PipeWire implementation. The steady-state KDE path may not
+  pass full frames through Chromium canvas, PNG compression, XComposite, or Spectacle.
+- Normal-launch capture keeps the complete Star Citizen canvas available for r_DisplayInfo and
+  other full-canvas consumers. A display capture request may crop the raw PipeWire frame inside the
+  native helper before file/IPC transfer. Mining receives only that bound display segment in its
+  established coordinate space. Location Sync must request the complete canvas before selecting
+  its top-right region.
 - A failed or cancelled portal initialization must report its cause and remain disabled for that
   Star Citizen process. It may not repeatedly open a selector or restart a failed helper. A new
   Star Citizen process starts one new attempt.
@@ -63,9 +66,10 @@ The following are ArchVerse platform contracts:
   permission or stream-termination events and must retain the approved session. Bound outstanding
   frame work separately from the caller's fallback deadline. An ended track or failed helper remains
   disabled for that process, and a new PID/start identity permits one new approval attempt.
-- The normal-window renderer must use a trusted local origin with web security enabled. A packaged
-  Electron regression must check mediaDevices capability and actual display-media handler entry,
-  with the insecure data-origin failure retained as a negative control.
+- The true-X11 Electron window-stream fallback must use a trusted local origin with web security
+  enabled. A packaged Electron regression must check mediaDevices capability and actual
+  display-media handler entry, with the insecure data-origin failure retained as a negative
+  control. This renderer is not the KDE Wayland steady-state portal consumer.
 - Exact-XID fallback must retry without MIT-SHM after a shared-memory failure, bound both attempts,
   and back off after a failed episode. Mining and Location Sync may not overlap that capture lane.
 - Exact-XID GStreamer `ximagesrc` capture is the first normal-launch fallback after the persistent
@@ -229,6 +233,9 @@ Re-run the still-applicable proven Alpha 17 tests against the new candidate, inc
   process rather than accepting an ambiguous desktop source;
 - direct Gamescope PipeWire remains first for Gamescope sessions; portal PipeWire remains first for
   normal KDE Wayland sessions; exact-XID X11, Spectacle, and Electron monitor fallbacks remain;
+- the normal KDE portal helper requests WINDOW only, receives its restricted PipeWire remote by
+  file descriptor, uses direct `pipewiresrc`, and transfers raw BGRA without Chromium/PNG in the
+  steady-state path;
 - normal panoramic Location Sync crops the full Star Citizen window's top-right region, while
   Mining maps the same full window into the bound display's established coordinate space;
 - a portal initialization error is logged before helper exit and cannot create repeated prompts or
