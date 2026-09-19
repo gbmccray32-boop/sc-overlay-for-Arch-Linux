@@ -35,13 +35,23 @@ failed/cancelled/ended helper is still quarantined for that game process, and on
 still pauses screenshot fallbacks. The direct Gamescope helper, input, OCR workers, Mining catalog,
 sidecar, configuration API, and widgets are unchanged.
 
-**Automated verified locally:** Candidate 12 archive ZIP and internal manifest; JavaScript syntax;
-native-helper selection and arguments; exact raw BGRA byte/size validation; pre-transfer display
-crop request; XID churn retention; PID/start rebind; Candidate 12 slow-frame regression; Candidate
-11 chooser/session regression; Candidate 10 mode/cadence regression; Candidate 9 session regression;
-renderer/IPC audit; Linux bridge; and Electron main startup. The workspace cannot install native
-development packages, so strict C compilation, linked-helper self-test, packaged Electron BGRA
-round-trip, full CI, archive verification, and both in-game launch modes remain unverified.
+**Automated verified:** Candidate 12 archive ZIP and internal manifest; strict `-Werror` native C
+compilation; linked GStreamer element self-test; JavaScript syntax; native-helper selection and
+arguments; exact raw BGRA byte/size validation; real Electron BGRA bitmap decoding; pre-transfer
+display crop request; XID churn retention; PID/start rebind; all inherited capture/session/cadence
+regressions; renderer/IPC audit; Linux bridge; Electron main startup; configuration controls; and
+widget/sidecar integration. CI run `35459389538` passed. Tested source commit
+`aa32610932c358e6730da618410210a969756320` has tree
+`a61f236ef61bb318a092d3e071170f6833358266`.
+
+**Packaged verified:** artifact `10588907705`, `ArchVerse-Alpha23-Candidate13-field-test`.
+ZIP SHA-256 `de44dd018c9b322d372d908428edb0c1b61c3ca256ab01a757398d383eac7e88`.
+Native `ArchVerse-Native-0.1.47-r31.alpha23.candidate13.tar.gz` SHA-256
+`64c5a5752e7d4a70790ddb7e967a570a153f03c77982dcec8406fe0dd6f49093`.
+All 1653 internal manifest entries and 23 protected hashes passed. Independent Candidate 12
+comparison found only the intended capture files, native helper/source, raw decoder, tests,
+version/provenance, checksums, and field guide. Both Gamescope helpers are byte-identical to
+Candidate 12. Normal KDE Wayland and Gamescope remain separately **unverified in game**.
 
 ## Alpha23 Candidate 12 normal portal latency — September 18, 2026
 
