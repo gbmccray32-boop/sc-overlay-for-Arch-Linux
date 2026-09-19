@@ -12,6 +12,45 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 14 KDE session-handle repair — September 19, 2026
+
+Branch: `agent/alpha23-candidate14-kde-session-handle`, pinned to packaged-verified Candidate 13
+artifact `10588907705` and native archive SHA-256
+`64c5a5752e7d4a70790ddb7e967a570a153f03c77982dcec8406fe0dd6f49093`. Upstream remains
+frozen at v0.1.47 `e482c1ce3d461b390079486115293535be9b2ab7`.
+
+**Candidate 13 normal KDE field gate failed before window selection.** Gabe supplied separate
+normal and Gamescope Electron/sidecar logs. Their SHA-256 values are normal Electron
+`2851bafb42d896da7e01856ff25bc3e91bb31b9db861a87f159f2a1d86f849d5`, Gamescope Electron
+`0db2a19ef34e8e256adfd7bfc789ba075c8afef5b8029c1212b61d2acf97f493`, normal sidecar
+`9475c48f9f9f778c2b3d3c88e2d54f83c02f0cbc881190ede09f5a76aedfa0e4`, and Gamescope sidecar
+`37fd6f257ffdead92632572b0e9e9b0a5552be13009da302f266d9f0e465e84b`.
+The normal helper bound Star Citizen PID 51528, called `CreateSession`, and exited 119ms later with
+`CreateSession returned no session_handle`; it never reached portal `Start`, so KDE had no reason
+to show its chooser. The fallback then hit the known X11 MIT-SHM BadMatch and used Spectacle at a
+2571ms median capture time across 46 heartbeat samples. Mining still committed four signatures.
+
+The failure is an exact D-Bus type mismatch. XDG ScreenCast specifies `session_handle` as type `s`
+for historical compatibility, although its contents are an object path. Candidate 13 requested
+only type `o` from GLib, so a valid KDE string reply looked absent. Candidate 14 accepts the
+required string representation, defensively accepts an object-path-typed representation, and
+validates the contents with GLib's object-path validator. Missing, incorrectly typed, and malformed
+portal replies now report the actual D-Bus type where available. A compiled helper self-test covers
+the specification string, object-path compatibility, wrong type, malformed path, and missing value.
+Real cancellation, stream termination, and one-attempt-per-game quarantine remain unchanged.
+
+**Candidate 13 Gamescope field capture passed:** the direct Gamescope PipeWire path captured at a
+61ms median across 56 heartbeat samples and committed 27 Mining signatures. Candidate 14 does not
+modify either Gamescope helper, the capture router, OCR workers, input, sidecar, widgets, or
+configuration. The static Candidate 14 gate retains exact hashes for both Gamescope implementations.
+Normal KDE chooser appearance and native capture cadence remain **unverified in game** until Gabe
+tests the packaged Candidate 14 archive. Distro publication remains disabled.
+
+**Automated verified locally:** JavaScript syntax for the staging script and the Candidate 14
+source regression, including the specification-required string lookup, content validation,
+diagnostics, and Gamescope hash guards. This workspace lacks `pkg-config` and native development
+headers, so strict C compilation and the executable self-test are delegated to the pinned CI job.
+
 ## Alpha23 Candidate 13 native normal portal capture — September 19, 2026
 
 Branch: `agent/alpha23-candidate13-native-portal-pipewire`, based on packaged-verified Candidate 12
@@ -51,7 +90,7 @@ Native `ArchVerse-Native-0.1.47-r31.alpha23.candidate13.tar.gz` SHA-256
 All 1653 internal manifest entries and 23 protected hashes passed. Independent Candidate 12
 comparison found only the intended capture files, native helper/source, raw decoder, tests,
 version/provenance, checksums, and field guide. Both Gamescope helpers are byte-identical to
-Candidate 12. Normal KDE Wayland and Gamescope remain separately **unverified in game**.
+Candidate 12. The later Candidate 13 field result and Candidate 14 repair are recorded above.
 
 ## Alpha23 Candidate 12 normal portal latency — September 18, 2026
 
