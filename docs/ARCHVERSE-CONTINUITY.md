@@ -38,6 +38,14 @@ line to the right. The crop also trims `LEVSKI` to `KI`; Candidate 15 rejects th
 two-letter station instead of assigning a misleading location. The exact field OCR output is now a
 regression fixture and produces a 3403-second Lindinium job.
 
+Gabe also supplied a Candidate 14 Gamescope Electron log and sidecar log with SHA-256
+`77e4327ac4cbbfe6fb9bb2dc3b30bbf3150e92e462f4fdc098ff47140b60eb39` and
+`c65ad57a481756a6b7b702da5badd16235fe474159c0dd67792db666bd26d831`. Direct Gamescope
+PipeWire capture remained healthy at 58–72ms. The refinery lane completed repeatedly every about
+18 seconds in 2493–3176ms but never produced a job. This independently locates the Gamescope
+failure after capture in the same shared refinery classifier. Candidate 15 therefore keeps the
+protected Gamescope helper unchanged and applies the parser repair to both launch modes.
+
 The existing parser required nearly exact `Refinement Center` and `Time Remaining` text, then
 required an h/m/s duration on the same row, to the right, and within 560 pixels. It did not accept
 days, `HH:MM:SS`, a timer merged into the label line, or a timer below the label. After 00:27:49Z,
@@ -63,10 +71,23 @@ isolated RapidOCR client:
 refinery API and rejection diagnostics, active-authority scheduling markers, RapidOCR worker
 recycling and next-frame recovery, Candidate 11 cargo rejection, Candidate 13 native portal, and
 Candidate 14 portal-reply/Gamescope-isolation regressions. JavaScript syntax, workflow YAML, and Git
-whitespace checks pass. The verified archive remains intact, but this scratch filesystem truncates
-the extracted 218MB Electron executable when it is read; complete baseline-manifest staging and
-the full packaged Electron/widget matrix remain delegated to CI. Candidate 15 packaging and both
-in-game launch-mode gates are **unverified**.
+whitespace checks pass.
+
+**Automated verified in packaged CI:** run `35485882713` passed against source commit
+`294c05da3277722e680d722de52011ee922defb2`, exact tree
+`8b761958bc98a6c7a98a712bc62eff665bde99c6`. The verified Candidate 14 archive gate, upstream
+checks, inherited capture/session/cadence regressions, real Electron checks, renderer/IPC audits,
+Linux bridge and main startup, configuration and age-band controls, Candidate 15 regressions, and
+the complete staged widget/sidecar integration all passed.
+
+**Packaged verified:** artifact `10596449945`, `ArchVerse-Alpha23-Candidate15-field-test`.
+Artifact ZIP SHA-256 `ce68d3ef8a5cda7b03b590ece4fa805882e200875987a61b3c39c10b537376d3`.
+Native `ArchVerse-Native-0.1.47-r31.alpha23.candidate15.tar.gz` SHA-256
+`5d2e130648131faa03f9688f850bf306b5c7e39ff925971233fc735f2965da61`.
+Independent streaming verification passed all 1656 internal file hashes. Comparison with Candidate
+14 found 1646 unchanged files and five unchanged symlinks; only the eight intended refinery/OCR,
+version, provenance, and field-guide files plus two Candidate 15 tests differ. Both in-game
+launch-mode gates remain **unverified**.
 
 ## Alpha23 Candidate 14 KDE session-handle repair — September 19, 2026
 
