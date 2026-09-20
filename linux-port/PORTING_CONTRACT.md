@@ -33,6 +33,10 @@ The following are ArchVerse platform contracts:
 - Physical mouse movement/button forwarding remains the source of truth during held-F interaction.
 - The one-native-cursor design remains; a synthetic second visible cursor must not return.
 - KDE/X11/Gamescope focus handoff and verified pointer handoff remain.
+- Nested pointer-coordinate scaling requires a bound, verified Gamescope PID. A normal
+  Wine/XWayland Star Citizen process exposes the host `DISPLAY`; ArchVerse must use its host pointer
+  coordinates unchanged and must clear any cached nested coordinate context when launch mode or
+  game-session identity changes.
 - Exact `StarCitizen.exe` session binding remains the privacy/foreground gate for capture.
 - **Direct Gamescope PipeWire capture is the mandatory first-choice Linux OCR capture backend when
   the active Star Citizen session has a Gamescope ancestor and matching PipeWire source.** The

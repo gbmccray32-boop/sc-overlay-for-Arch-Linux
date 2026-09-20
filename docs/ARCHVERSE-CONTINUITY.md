@@ -12,6 +12,35 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 16 pointer-mode isolation — September 20, 2026
+
+Branch: `agent/alpha23-candidate16-pointer-mode-isolation`, based on packaged-verified Candidate 15
+artifact `10596449945` and native archive SHA-256
+`5d2e130648131faa03f9688f850bf306b5c7e39ff925971233fc735f2965da61`. Upstream remains
+frozen at v0.1.47 `e482c1ce3d461b390079486115293535be9b2ab7`.
+
+**Candidate 15 repaired and field-confirmed the refinery timer, but its normal-launch pointer path
+failed.** Gabe supplied a complete Electron log and sidecar log with SHA-256
+`bd47d9c85aa5e3f6b73c772ae665a69a74c6f5b0bd064e321c0c3934ff082c86` and
+`fa2da1a835204df3d5c5447927c58df1bd37740eeb84e1829254ff3c63699532`. Normal native KDE
+capture restored its prior portal approval without another chooser, delivered frames in 29–35ms,
+and accepted one Lindinium refinery job four times. That confirms the portal restore token,
+selected Star Citizen stream, normal capture, and Candidate 15 refinery parser all worked.
+
+The same log proves a separate input-mode defect. The exact session binder reported a direct,
+non-Gamescope Star Citizen PID, but held `F` still queried `gamescope-display`. The controller read
+the normal Wine/XWayland host `DISPLAY` at 3840x2160 and scaled its point onto the 6360x2160 overlay.
+It classified `5722,2077` as a widget, focused ArchVerse, and pinned its compositor mouse stream,
+while the native click arrived at `3335,1288`. Because `F` is Star Citizen's ordinary interaction
+key, this false coordinate domain made Star Citizen and ArchVerse appear to fight over the cursor.
+
+Candidate 16 makes a verified Gamescope PID mandatory before reading or scaling a process display
+as a nested pointer source. Normal Wine/XWayland sessions fall through to the existing host uIOhook
+or X root pointer without scaling. Switching to a normal session clears cached Gamescope display
+state. The existing focus handoff, held-`F` widget ownership, physical button forwarding, and direct
+Gamescope behavior remain unchanged. A regression covers normal refusal, real Gamescope mapping,
+and Gamescope-to-normal cache disposal. Packaging and both field gates are **unverified**.
+
 ## Alpha23 Candidate 15 refinery reader repair — September 20, 2026
 
 Branch: `agent/alpha23-candidate15-refinery-reader`, based on packaged-verified Candidate 14
