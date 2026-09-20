@@ -12,6 +12,62 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 15 refinery reader repair — September 20, 2026
+
+Branch: `agent/alpha23-candidate15-refinery-reader`, based on packaged-verified Candidate 14
+artifact `10592371411` and native archive SHA-256
+`4b822d196d9769d67bd872732f9ca52cb59367a285eb040765fe7a6b367`. Upstream remains
+frozen at v0.1.47 `e482c1ce3d461b390079486115293535be9b2ab7`.
+
+**Candidate 14 normal KDE field capture passed, but the refinery reader failed.** Gabe supplied a
+complete normal X11/XWayland Electron log and sidecar log with SHA-256
+`2b5d1f166ca104ba946973610c1e82ade079609ae12a110ffb64f4706ee24615` and
+`2c04bd2fcdae0267b3ce363555754d02121cc41d30d8b8d8b6f2e80864e0bc5a`. The native KDE
+portal retained the selected 6270x2160 Star Citizen stream, normalized its 3786x2160 center game
+view to 3840x2160, and normally delivered frames in 28–37ms. Mining and Hauling worked in the same
+run. The refinery lane completed one logged slow read in 2912ms but produced no refinery result,
+job, state change, or widget event. A completed OCR request therefore reached the classifier, but
+the strict title/label/timer geometry did not create a job.
+
+Gabe then supplied the exact 2048x1180 refinery frame, SHA-256
+`788582f14018936d5622e1460c84b5735ca9c9d37fb937565c01bc12e022e0fa`. Candidate 14's
+RapidOCR reads the default refinery crop as `REFINEMENT CENTER CURRENTBALANCE: 10.O53,914 AUEC`
+and merges the countdown into `TIME REMAINING 56m 43s`. That proves the primary failure: the old
+classifier rejected a duration on the label's own OCR line because it searched only a different
+line to the right. The crop also trims `LEVSKI` to `KI`; Candidate 15 rejects that truncated
+two-letter station instead of assigning a misleading location. The exact field OCR output is now a
+regression fixture and produces a 3403-second Lindinium job.
+
+The existing parser required nearly exact `Refinement Center` and `Time Remaining` text, then
+required an h/m/s duration on the same row, to the right, and within 560 pixels. It did not accept
+days, `HH:MM:SS`, a timer merged into the label line, or a timer below the label. After 00:27:49Z,
+Game.log also retained active Prospector ship-channel authority, which suppressed every auxiliary
+OCR lane, including refinery, for the rest of the session. Separately, the Resource Signature
+worker returned 5001 RapidOCR native errors between 01:51:21Z and 02:38:42Z. Tesseract kept Mining
+functional, but the live worker was reused after each identical OpenCV function-signature error.
+
+Candidate 15 changes only the refinery/background OCR behavior, bundled sidecar classifier, and
+isolated RapidOCR client:
+
+- Refinery titles and Time Remaining labels tolerate common OCR substitutions.
+- Timers may be on the label line, beside it, or below it. Days and `HH:MM:SS` are accepted.
+- A stale active vehicle state permits one refinery-only probe every 15 seconds after 12 seconds
+  without a Resource Signature. An active signature lock still keeps Mining exclusive, and all
+  other auxiliary readers remain deferred.
+- Bounded `[ocr-refinery]` diagnostics report the engine, actual pixel region, line count, result,
+  job count, rejection reason, and a capped OCR sample.
+- A native RapidOCR request error discards the still-live worker. The next frame starts a clean
+  worker instead of repeating one poisoned native state indefinitely.
+
+**Automated verified locally:** TypeScript, source duration/refinery fixtures, packaged Candidate 15
+refinery API and rejection diagnostics, active-authority scheduling markers, RapidOCR worker
+recycling and next-frame recovery, Candidate 11 cargo rejection, Candidate 13 native portal, and
+Candidate 14 portal-reply/Gamescope-isolation regressions. JavaScript syntax, workflow YAML, and Git
+whitespace checks pass. The verified archive remains intact, but this scratch filesystem truncates
+the extracted 218MB Electron executable when it is read; complete baseline-manifest staging and
+the full packaged Electron/widget matrix remain delegated to CI. Candidate 15 packaging and both
+in-game launch-mode gates are **unverified**.
+
 ## Alpha23 Candidate 14 KDE session-handle repair — September 19, 2026
 
 Branch: `agent/alpha23-candidate14-kde-session-handle`, pinned to packaged-verified Candidate 13
@@ -1140,14 +1196,14 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest packaged-verified deliverable is Alpha23 Candidate 12, a quarantined native field-test
-archive awaiting both launch-mode field gates. Candidates 10 and 11 failed normal-capture field gates.
-Candidate 7's Gamescope capture was fast and complete; the direct Gamescope helper remains
-unchanged through Candidate 12. Candidate 8k remains the rollback whose Mining and base operation
+The latest packaged-verified deliverable is Alpha23 Candidate 14. Its normal KDE portal capture,
+Mining, and Hauling are field-working, but its refinery reader failed; Candidate 15 is the local
+unpackaged repair. Candidate 13's direct Gamescope capture passed its field test, and Candidate 14
+did not change that path. Candidate 8k remains the older rollback whose Mining and base operation
 Gabe reported working.
 
 The last documented Arch, Fedora and Debian package set belongs to the older Alpha 21 line. Do not
-publish a Candidate 12 release or claim a current three-distribution package set until both normal
+publish Candidate 15 or claim a current three-distribution package set until both normal
 Wine/XWayland and Gamescope field gates pass, then fresh distribution packages pass their own checks.
 
 ## Continuity maintenance

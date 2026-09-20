@@ -1,0 +1,114 @@
+name: Alpha23 Candidate 15 Refinery Reader
+on:
+  push:
+    branches: [agent/alpha23-candidate15-refinery-reader]
+    paths-ignore:
+      - docs/ARCHVERSE-CONTINUITY.md
+      - ARCHVERSE-HANDOFF.generated.md
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: alpha23-candidate15-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - name: Install native portal build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libglib2.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-pipewire gstreamer1.0-plugins-base
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify upstream v0.1.47 source gates
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm run test:reppage
+          npm run test:repscan
+          npm run control:repname
+          node --import tsx src/refinery-classify.test.ts
+          node --import tsx src/mineable.test.ts
+          npm run build:server
+      - uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Alpha23-Candidate14-field-test
+          path: candidate14-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35468978412
+      - name: Verify Candidate 14 and stage Candidate 15
+        run: |
+          set -euo pipefail
+          archive=candidate14-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate14.tar.gz
+          test "$(sha256sum "$archive" | cut -d ' ' -f1)" = 4b822d196d9769d67e2d67bd872732f9ca52cb59367a285eb040765fe7a6b367
+          mkdir candidate14
+          tar --no-same-owner -xzf "$archive" -C candidate14
+          baseline="$(realpath candidate14/ArchVerse-Native-0.1.47-r31.alpha23.candidate14)"
+          node "$baseline/tests/alpha23-candidate14-portal-reply.test.cjs"
+          node packaging/common/stage-alpha23-candidate15.mjs "$baseline" "$RUNNER_TEMP/field/ArchVerse-Native-0.1.47-r31.alpha23.candidate15"
+      - name: Run packaged gates
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/field/ArchVerse-Native-0.1.47-r31.alpha23.candidate15"
+          find "$candidate/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          node --check "$candidate/app/server/server.mjs"
+          python3 packaging/common/alpha23-renderer-audit.py "$candidate"
+          node packaging/common/alpha23-linux-bridge-selftest.cjs "$candidate"
+          node packaging/common/alpha23-main-startup-selftest.cjs "$candidate/app/electron/main.cjs"
+          node "$candidate/tests/alpha23-candidate6-normal-capture.test.cjs"
+          node "$candidate/tests/alpha23-candidate8-capture.test.cjs"
+          node "$candidate/tests/alpha23-candidate9-session.test.cjs"
+          node "$candidate/tests/alpha23-candidate10-cadence.test.cjs"
+          node "$candidate/tests/alpha23-candidate11-capture.test.cjs"
+          node "$candidate/tests/alpha23-candidate11-cargo.test.cjs"
+          node "$candidate/tests/alpha23-candidate12-encoder.test.cjs"
+          node "$candidate/tests/alpha23-candidate13-native-portal.test.cjs"
+          node "$candidate/tests/alpha23-candidate14-portal-reply.test.cjs"
+          node "$candidate/tests/alpha23-candidate15-refinery.test.cjs"
+          node "$candidate/tests/alpha23-candidate15-rapidocr-recycle.test.cjs"
+          node "$candidate/tests/alpha23-candidate11-preload.test.cjs"
+          xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox "$candidate/tests/alpha23-candidate12-electron-encoder.cjs"
+          xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox "$candidate/tests/alpha23-candidate13-electron-raw-frame.cjs"
+          xvfb-run -a node "$candidate/tests/alpha23-candidate8-renderer.test.cjs" "$GITHUB_WORKSPACE/packaging/common/alpha23-candidate7"
+          xvfb-run -a node "$candidate/tests/alpha23-candidate9-renderer.test.cjs" "$GITHUB_WORKSPACE/candidate14/ArchVerse-Native-0.1.47-r31.alpha23.candidate14"
+          node tools/archverse-config-e2e.mjs "$candidate/app/server"
+          mkdir -p node_modules/electron/dist
+          printf '#!/bin/sh\nexec "%s" --no-sandbox "$@"\n' \
+            "$candidate/runtime/electron/electron" > node_modules/electron/dist/electron.exe
+          chmod +x node_modules/electron/dist/electron.exe
+          xvfb-run -a npm run control:ageband
+      - name: Run staged widget integration
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/field/ArchVerse-Native-0.1.47-r31.alpha23.candidate15"
+          mkdir -p "$RUNNER_TEMP/alpha23-widget-config"
+          printf '%s\n' '{"syncEnabled":false,"shareLogs":false,"setupComplete":true}' > "$RUNNER_TEMP/alpha23-widget-config/config.json"
+          SC_TRACKER_CONFIG_DIR="$RUNNER_TEMP/alpha23-widget-config" PORT=18778 node "$candidate/app/server/server.mjs" > "$RUNNER_TEMP/alpha23-widget-server.log" 2>&1 &
+          sidecar=$!
+          trap 'kill "$sidecar" 2>/dev/null || true' EXIT
+          for _ in {1..30}; do curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null
+          OVERLAY_PORT=18778 xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox tools/widget-dom-test.cjs --pairs
+      - name: Package quarantined field candidate
+        run: |
+          set -euo pipefail
+          name=ArchVerse-Native-0.1.47-r31.alpha23.candidate15
+          root="$RUNNER_TEMP/field/$name"
+          mkdir -p field-artifact
+          cp "$root/FIELD-TEST.md" "$root/README.md"
+          (cd "$root" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && sha256sum -c SHA256SUMS >/dev/null)
+          tar -czf "field-artifact/$name.tar.gz" -C "$RUNNER_TEMP/field" "$name"
+          (cd field-artifact && sha256sum "$name.tar.gz" > SHA256SUMS)
+          cp "$root/FIELD-TEST.md" field-artifact/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha23-Candidate15-field-test
+          path: field-artifact/
+          if-no-files-found: error
+          retention-days: 90

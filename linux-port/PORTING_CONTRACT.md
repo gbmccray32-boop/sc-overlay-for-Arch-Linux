@@ -128,6 +128,13 @@ Other explicitly enabled features such as mission or fabricator OCR may perform 
 their results may not masquerade as a Mining signature. Repeated auxiliary OCR failures must use
 bounded backoff so they cannot continually consume the shared OCR fallback budget during Mining.
 
+The refinery timer is part of Mining Assistant but is not evidence of Mining authority. A stale
+Game.log ship channel may not suppress refinery timers indefinitely after the player leaves a ship.
+When vehicle authority remains active, Linux may run one low-priority refinery-only probe after at
+least 12 seconds without a Resource Signature and no more often than every 15 seconds. An active
+signature lock keeps the Mining OCR lane exclusive, and every other auxiliary reader remains
+deferred. The refinery result must still come from the bound Star Citizen frame.
+
 Mining diagnostics must remain bounded and persistent under the canonical Linux config directory.
 When diagnostics are explicitly enabled, the package must retain the exact OCR crop, wider context,
 authority state, accepted or rejected text, and timing needed to diagnose a false positive or false

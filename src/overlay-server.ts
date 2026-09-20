@@ -45,7 +45,7 @@ import { FabClaims } from "./fab-claim.js";
 import { SCENARIOS, replayLines, replayMissionId, HAUL_SCENARIOS, haulReplayLines } from "./dev-replay.js";
 import { SiteSync } from "./sync.js";
 import { assetDir } from "./paths.js";
-import { loadCatalog, ocrImage, ocrSelfTest, hasScanHud, classifyScreen, bestSignatureLine, glyphSearchBox, contractRegionOrDefault, DEFAULT_CONTRACT_REGION, type CatalogEntry, type OcrHealth, type OcrResult, type ScanRegion } from "./screen-read.js";
+import { loadCatalog, ocrImage, ocrSelfTest, hasScanHud, classifyScreen, refineryReadDiagnostic, bestSignatureLine, glyphSearchBox, contractRegionOrDefault, DEFAULT_CONTRACT_REGION, type CatalogEntry, type OcrHealth, type OcrResult, type ScanRegion } from "./screen-read.js";
 import { readRepPage, repReadPayload, repRankFromBars, type RepBarRead } from "./rep-page.js";
 import { parseContractList } from "./contract-list.js";
 import { ContractMatcher } from "./contract-match.js";
@@ -2888,6 +2888,12 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // Routing applies to BOTH sources. Mining reads feed its tracker (same process); the
     // mission/fabricator reads are routed by capture.cjs off the returned result.
     const rd = result as { kind?: string; signature?: number; name?: string; items?: string[] };
+    const refineryDiagnostic = body.ocrRegion === "refinery" && Array.isArray(body.lines)
+      ? (() => {
+          const diagnostic = refineryReadDiagnostic({ w: Number(body.w) || 0, h: Number(body.h) || 0, lines: body.lines });
+          return { ...diagnostic, reason: rd.kind === "refinery" ? "accepted" : diagnostic.reason };
+        })()
+      : null;
     // 🔑 DIAGNOSTIC RING — the only record of a read that found NOTHING. /api/mining/scan is the
     // detailed log, but the caller only posts there once a signature has parsed, so a frame that
     // yielded no number is invisible everywhere: nothing logged, nothing broadcast, no readout
@@ -2914,7 +2920,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: Serv
     // share the one captured image across all of them (the log/kiosk can't say which size).
     else if (rd.kind === "fabricator" && rd.name) rd.items = tracker.itemUuidsForName(rd.name);
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ...(result as object), scanHud, rep: repRead }));
+    res.end(JSON.stringify({ ...(result as object), scanHud, rep: repRead, refineryDiagnostic }));
     return;
   }
 

@@ -184,7 +184,7 @@ export function bestSignatureLine(lines: OcrLine[], centerX: number): { l: OcrLi
   return cands[0];
 }
 
-/** Parse an SC duration string ("41m 35s", "14h 53m", "1 h 5 m") to seconds, or null.
+/** Parse an SC duration string ("41m 35s", "14h 53m", "1d 2h", "14:53:20") to seconds, or null.
  *  Normalizes the digit/letter OCR slips FIRST — the hours digit right before "h" is
  *  routinely mangled into a look-alike letter (11h->"Ilh", 9h->"gh", 8h->"Bh"). Only h/m/s
  *  are valid letters in a duration, so mapping the rest back to their digit is safe.
@@ -193,11 +193,47 @@ export function parseDuration(text: string): number | null {
   const t = text
     .replace(/[Il|]/g, "1").replace(/[ODo]/g, "0").replace(/[Zz]/g, "2")
     .replace(/[gq]/g, "9").replace(/B/g, "8");
+  const clock = /(?:^|\D)(\d{1,3})\s*[:.]\s*(\d{1,2})\s*[:.]\s*(\d{1,2})(?!\d)/.exec(t);
+  if (clock) {
+    const hours = Number(clock[1]), minutes = Number(clock[2]), seconds = Number(clock[3]);
+    if (minutes < 60 && seconds < 60) return hours * 3600 + minutes * 60 + seconds;
+  }
+  const d = /(\d+)\s*d(?![a-z])/i.exec(t)?.[1];
   const h = /(\d+)\s*h/i.exec(t)?.[1];
   const m = /(\d+)\s*m(?![a-z])/i.exec(t)?.[1];
   const s = /(\d+)\s*s(?![a-z])/i.exec(t)?.[1];
-  if (h == null && m == null && s == null) return null;
-  return (Number(h ?? 0) * 3600) + (Number(m ?? 0) * 60) + Number(s ?? 0);
+  if (d == null && h == null && m == null && s == null) return null;
+  return (Number(d ?? 0) * 86400) + (Number(h ?? 0) * 3600) + (Number(m ?? 0) * 60) + Number(s ?? 0);
+}
+
+function compactOcrText(text: string): string {
+  return text.toUpperCase().replace(/[|1]/g, "I").replace(/0/g, "O").replace(/[^A-Z]/g, "");
+}
+
+function isRefineryTitle(text: string): boolean {
+  const compact = compactOcrText(text);
+  return compact.includes("REFINEMENTCENTER")
+    || /^REFIN[A-Z]{2,7}CENT[A-Z]{1,4}$/.test(compact)
+    || /REFIN.MENTCENT.RE/.test(compact);
+}
+
+function isTimeRemaining(text: string): boolean {
+  const compact = compactOcrText(text);
+  return compact.includes("TIMEREMAINING") || /TIM.REMA.N.NG/.test(compact);
+}
+
+export function refineryReadDiagnostic(ocr: OcrResult): {
+  titleFound: boolean; timeLabels: number; durationLines: number; reason: string;
+} {
+  const titleFound = ocr.lines.some((line) => isRefineryTitle(line.text))
+    || isRefineryTitle(ocr.lines.map((line) => line.text).join(" "));
+  const timeLabels = ocr.lines.filter((line) => isTimeRemaining(line.text)).length;
+  const durationLines = ocr.lines.filter((line) => parseDuration(line.text) != null).length;
+  const reason = !titleFound ? "title-not-found"
+    : timeLabels === 0 ? "time-remaining-not-found"
+      : durationLines === 0 ? "duration-not-found"
+        : "layout-not-matched";
+  return { titleFound, timeLabels, durationLines, reason };
 }
 
 // ---- Windows OCR bridge (WinRT via PowerShell) --------------------------------
@@ -794,22 +830,37 @@ export function classifyScreen(
   // job) — a SETUP order's "PROCESSING TIME" is an estimate, not a countdown, so it's
   // excluded. Station is the header line left of the title; material/yield are best-effort
   // labels from the same panel column.
-  if (/refinement\s+cent(?:er|re)/i.test(joined)) {
-    const anchor = lines.find((l) => /refinement\s+cent(?:er|re)/i.test(l.text));
-    const station = anchor
+  if (lines.some((l) => isRefineryTitle(l.text)) || isRefineryTitle(joined)) {
+    const anchor = lines.find((l) => isRefineryTitle(l.text));
+    const stationText = anchor
       ? lines.filter((l) => Math.abs(l.y - anchor.y) < 26 && l.x < anchor.x - 80).sort((a, b) => a.x - b.x).pop()?.text.trim() ?? null
       : null;
+    const station = stationText && /^[A-Z][A-Z0-9 '\u2019-]{3,24}$/i.test(stationText) ? stationText : null;
     const matchMaterial = (t: string) =>
       t.trim().toUpperCase().split(/[^A-Z]+/).find((w) => REFINERY_MATERIALS.has(w)) ?? null;
     const raw: (RefineryJobRead & { _x: number })[] = [];
-    for (const tr of lines.filter((l) => /time\s+remaining/i.test(l.text))) {
-      // The value is the leftmost same-row line to the right that actually PARSES as a
-      // duration (skips the other panel's "TIME REMAINING" label + noise), kept within
-      // this panel's width so a second job's timer can't be grabbed.
-      const valLine = lines
-        .filter((l) => Math.abs(l.y - tr.y) < 24 && l.x > tr.x && l.x - tr.x < 560 && parseDuration(l.text) != null)
-        .sort((a, b) => a.x - b.x)[0];
-      const sec = valLine ? parseDuration(valLine.text) : null;
+    for (const tr of lines.filter((l) => isTimeRemaining(l.text))) {
+      // RapidOCR can keep the label and timer together, split the timer to the right, or place
+      // it on the next line. Score nearby candidates instead of requiring one exact row layout.
+      const candidates = lines
+        .map((l) => {
+          const sec = parseDuration(l.text);
+          if (sec == null || sec <= 0) return null;
+          const rowTolerance = Math.max(36, tr.h * 2.5, l.h * 2.5);
+          const sameRow = Math.abs((l.y + l.h / 2) - (tr.y + tr.h / 2)) <= rowTolerance;
+          const right = sameRow && l.x >= tr.x - 20 && l.x - tr.x < 820;
+          const below = l.y >= tr.y - 10 && l.y - tr.y < 220
+            && Math.abs((l.x + l.w / 2) - (tr.x + tr.w / 2)) < 480;
+          if (l !== tr && !right && !below) return null;
+          const score = l === tr ? -1000 : right
+            ? Math.abs(l.y - tr.y) + Math.max(0, l.x - tr.x) * 0.05
+            : 500 + Math.max(0, l.y - tr.y) + Math.abs(l.x - tr.x) * 0.05;
+          return { line: l, sec, score };
+        })
+        .filter((v): v is { line: OcrLine; sec: number; score: number } => v != null)
+        .sort((a, b) => a.score - b.score);
+      const value = candidates[0];
+      const sec = value?.sec ?? null;
       if (sec == null || sec <= 0) continue;
       // Material = the topmost YIELDED material in this panel (its primary product), matched
       // by word so "PRESSURIZED ICE" -> Ice; a fixed vocabulary keeps a garbled column
@@ -822,14 +873,14 @@ export function classifyScreen(
       const yl = lines.find(
         (l) => /^\d{1,4}\.\d+$/.test(l.text.trim()) && Math.abs(l.x - tr.x) < 420 && l.y < tr.y && l.y > tr.y - 150,
       );
-      raw.push({ order: 0, remainingSec: sec, remainingRaw: valLine!.text.trim(), material, yieldScu: yl ? Number(yl.text) : null, _x: tr.x });
+      raw.push({ order: 0, remainingSec: sec, remainingRaw: value.line.text.trim(), material, yieldScu: yl ? Number(yl.text) : null, _x: tr.x });
     }
     // Number the jobs by left-to-right panel position (Work Order 1, 2, …) — a stable
     // identity per station, so a multi-material order's varying label can't split it into
     // duplicates. All active orders show side-by-side, so position == work-order slot.
     raw.sort((a, b) => a._x - b._x).forEach((j, i) => (j.order = i + 1));
     const jobs: RefineryJobRead[] = raw.map(({ _x, ...j }) => j);
-    if (jobs.length) return { kind: "refinery", station: station ?? null, jobs };
+    if (jobs.length) return { kind: "refinery", station, jobs };
   }
 
   // Mining scanner: a scanned mineable/debris shows a signature number floating just above

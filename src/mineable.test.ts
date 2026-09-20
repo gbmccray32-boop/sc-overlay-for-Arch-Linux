@@ -33,6 +33,8 @@ check("OCR '9h'->'gh 20m'", parseDuration("gh 20m"), 9 * 3600 + 20 * 60);
 check("OCR 'IOh 4m'", parseDuration("IOh 4m"), 10 * 3600 + 4 * 60);
 check("OCR '8h'->'Bh 58m' (8h not dropped, 58 kept)", parseDuration("Bh 58m"), 8 * 3600 + 58 * 60);
 check("real '53m 52s' unaffected", parseDuration("53m 52s"), 53 * 60 + 52);
+check("day form '1d 2h 3m'", parseDuration("1d 2h 3m"), 86400 + 2 * 3600 + 3 * 60);
+check("clock form '14:53:20'", parseDuration("14:53:20"), 14 * 3600 + 53 * 60 + 20);
 check("no duration", parseDuration("PROCESSING"), null);
 
 console.log(failed ? `\n${failed} FAILED` : "\nall passed");
