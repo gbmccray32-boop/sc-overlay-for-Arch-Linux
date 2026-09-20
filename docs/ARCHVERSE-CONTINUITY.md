@@ -39,7 +39,18 @@ as a nested pointer source. Normal Wine/XWayland sessions fall through to the ex
 or X root pointer without scaling. Switching to a normal session clears cached Gamescope display
 state. The existing focus handoff, held-`F` widget ownership, physical button forwarding, and direct
 Gamescope behavior remain unchanged. A regression covers normal refusal, real Gamescope mapping,
-and Gamescope-to-normal cache disposal. Packaging and both field gates are **unverified**.
+and Gamescope-to-normal cache disposal.
+
+Remote source commit `4f9f94c2907470fc095859ee659c465173e647e2` has exact tree
+`65b213b50c2ae138754806741789f0b20441b0f5`. Workflow run `35488559407` passed the complete
+source, packaged Electron, capture, pointer, refinery, RapidOCR, configuration, age-band, and widget
+integration gates. Artifact `10598690018` produced
+`ArchVerse-Native-0.1.47-r31.alpha23.candidate16.tar.gz`, SHA-256
+`244c4da008883a3bff8143078bda85c2a4f23450e11a459f2e5cc3c303483091`. Independent streaming
+verification passed all 1,657 internal manifest entries. The Candidate 15-to-16 comparison found
+only the intended pointer controller, package/provenance/field-guide changes, the updated inherited
+pointer test, and the new mode-isolation test; all other files and all five symlinks match. Packaging
+is **verified**. Both normal Wine/XWayland and Gamescope field gates remain **unverified**.
 
 ## Alpha23 Candidate 15 refinery reader repair — September 20, 2026
 
@@ -1246,13 +1257,15 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest packaged-verified deliverable is Alpha23 Candidate 15. Candidate 14's normal KDE portal
+The latest packaged-verified deliverable is Alpha23 Candidate 16. Candidate 14's normal KDE portal
 capture, Mining, and Hauling are field-working, while Candidate 13's direct Gamescope capture passed
-its field test. Candidate 15 repairs the shared refinery classifier without replacing either capture
-path. Candidate 8k remains the older rollback whose Mining and base operation Gabe reported working.
+its field test. Candidate 15 repaired the shared refinery classifier without replacing either capture
+path. Candidate 16 isolates normal host pointer coordinates from Gamescope's nested coordinate
+mapping. Candidate 8k remains the older rollback whose Mining and base operation Gabe reported
+working.
 
 The last documented Arch, Fedora and Debian package set belongs to the older Alpha 21 line. Do not
-publish Candidate 15 or claim a current three-distribution package set until both normal
+publish Candidate 16 or claim a current three-distribution package set until both normal
 Wine/XWayland and Gamescope field gates pass, then fresh distribution packages pass their own checks.
 
 ## Continuity maintenance
