@@ -1217,11 +1217,10 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest packaged-verified deliverable is Alpha23 Candidate 14. Its normal KDE portal capture,
-Mining, and Hauling are field-working, but its refinery reader failed; Candidate 15 is the local
-unpackaged repair. Candidate 13's direct Gamescope capture passed its field test, and Candidate 14
-did not change that path. Candidate 8k remains the older rollback whose Mining and base operation
-Gabe reported working.
+The latest packaged-verified deliverable is Alpha23 Candidate 15. Candidate 14's normal KDE portal
+capture, Mining, and Hauling are field-working, while Candidate 13's direct Gamescope capture passed
+its field test. Candidate 15 repairs the shared refinery classifier without replacing either capture
+path. Candidate 8k remains the older rollback whose Mining and base operation Gabe reported working.
 
 The last documented Arch, Fedora and Debian package set belongs to the older Alpha 21 line. Do not
 publish Candidate 15 or claim a current three-distribution package set until both normal
