@@ -48,6 +48,9 @@ The complete testable contract is in `linux-port/PORTING_CONTRACT.md`.
 - Do not move the upstream target during an active candidate unless Gabe explicitly changes it.
 - Keep full UI multilingual work separate from candidate stabilization. Upstream language-file
   parsing that is already in the baseline remains part of the baseline.
+- Widget UI and feature work is allowed. Preserve the stable Linux integration interfaces and use
+  `docs/LINUX-WIDGET-DEVELOPER-HANDOFF.md` to distinguish editable widget code from protected
+  capture, input, session, OCR, transport, and configuration code.
 - Do not put ArchVerse back into Gabe's Star Citizen launcher scripts unless he explicitly asks.
 
 ## End every development session

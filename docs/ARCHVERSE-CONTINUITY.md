@@ -12,7 +12,7 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
-## Alpha23 Candidate 16 pointer-mode isolation — September 20, 2026
+## Alpha23 Candidate 16 pointer-mode isolation — field verified September 22, 2026
 
 Branch: `agent/alpha23-candidate16-pointer-mode-isolation`, based on packaged-verified Candidate 15
 artifact `10596449945` and native archive SHA-256
@@ -50,7 +50,46 @@ integration gates. Artifact `10598690018` produced
 verification passed all 1,657 internal manifest entries. The Candidate 15-to-16 comparison found
 only the intended pointer controller, package/provenance/field-guide changes, the updated inherited
 pointer test, and the new mode-isolation test; all other files and all five symlinks match. Packaging
-is **verified**. Both normal Wine/XWayland and Gamescope field gates remain **unverified**.
+is **verified**.
+
+**Both launch-mode field gates are now verified.** Gabe first reported that Candidate 16's normal
+Wine/XWayland run worked without an observed issue. The supplied normal Electron and sidecar logs
+confirmed that the native KDE portal stream, refinery reader, widget interaction, and host-coordinate
+pointer path operated together without the Candidate 15 cursor fight.
+
+Gabe then completed a roughly 91-minute Gamescope run and reported no observed issue. The complete
+Gamescope Electron log, SHA-256
+`46a1a7857fc9a979c917254c01d4346658ccbba69377292a5ba879356f21f059`, and sidecar log,
+SHA-256 `a4227cafd7a4a831a7174af78313adaae4016c5fcf454a8229b51d3ba1016d58`, show:
+
+- exact Star Citizen PID binding to its Gamescope ancestor and direct `gamescope-pipewire` capture
+  from PipeWire node 143 throughout active play;
+- 353 capture heartbeat samples at 9 ms minimum, 62 ms median, 69 ms p95, and 79 ms maximum;
+- 1,066 Mining OCR observations at 23 ms minimum, 189 ms median, 315 ms p95, and 453 ms maximum;
+- 354 Mining heartbeats with zero pending or failed IPC, 265 signature detections, 159 commit
+  submissions, 154 acknowledgements, and no rejected commit;
+- 141 sidecar Mining signature events admitted by Game.log vehicle authority plus an exact Resource
+  Signature value;
+- four accepted refinery reads at LEVSKI with a decreasing timer;
+- successful held-`F` interaction with Mining, Hauling, Notepad, Battaglia, Twitch chat, and generic
+  widgets, followed by focus and click-through restoration; and
+- successful Gamescope Location Sync to Crusader.
+
+Non-blocking recovery evidence remains visible and must not be hidden: five bounded vehicle-gate
+GET timeouts retained the last confirmed state and recovered; one RapidOCR native error recycled the
+worker and used Tesseract fallback; and a final Mining commit timeout retained the newest result while
+the game was quitting. After the main Star Citizen PID exited, Wine briefly exposed a transient
+replacement PID outside the prior Gamescope ancestry. That exit-time race attempted one normal portal
+session, which was denied, and briefly captured a fallback desktop frame before the PID disappeared.
+It did not affect active gameplay, but session-shutdown cleanup is a future hardening item. The
+sidecar also received four `400 bad_size` responses while trying to share a rotated 4 MiB Game.log;
+local readers continued normally, so this is a separate cloud log-share defect.
+
+Candidate 16 is therefore the **field-verified Linux integration baseline** for normal KDE
+Wine/XWayland and Gamescope. It is not yet a current Arch KDE or Nobara KDE distribution release.
+Fresh distro packages must still pass dependency, installation, launch, portal, direct Gamescope,
+widget, and upgrade/rollback checks. Widget development may now continue from Candidate 16 under
+`docs/LINUX-WIDGET-DEVELOPER-HANDOFF.md` without freezing ordinary widget UI and feature work.
 
 ## Alpha23 Candidate 15 refinery reader repair — September 20, 2026
 
@@ -1257,16 +1296,17 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest packaged-verified deliverable is Alpha23 Candidate 16. Candidate 14's normal KDE portal
-capture, Mining, and Hauling are field-working, while Candidate 13's direct Gamescope capture passed
-its field test. Candidate 15 repaired the shared refinery classifier without replacing either capture
-path. Candidate 16 isolates normal host pointer coordinates from Gamescope's nested coordinate
-mapping. Candidate 8k remains the older rollback whose Mining and base operation Gabe reported
-working.
+The latest packaged-verified and launch-mode field-verified deliverable is Alpha23 Candidate 16.
+Its normal KDE Wine/XWayland and direct Gamescope paths both passed their in-game field gates.
+Candidate 14 established normal KDE portal capture, Mining, and Hauling; Candidate 15 repaired the
+shared refinery classifier; Candidate 16 isolated normal host pointer coordinates from Gamescope's
+nested coordinate mapping. Candidate 8k remains the older rollback whose Mining and base operation
+Gabe reported working.
 
 The last documented Arch, Fedora and Debian package set belongs to the older Alpha 21 line. Do not
-publish Candidate 16 or claim a current three-distribution package set until both normal
-Wine/XWayland and Gamescope field gates pass, then fresh distribution packages pass their own checks.
+claim a current Arch KDE or Nobara KDE release until fresh packages pass their own dependency,
+installation, launch, capture, widget, upgrade, and rollback checks. Candidate 16's launch-mode
+field gates satisfy the runtime prerequisite for that packaging work; they do not substitute for it.
 
 ## Continuity maintenance
 
