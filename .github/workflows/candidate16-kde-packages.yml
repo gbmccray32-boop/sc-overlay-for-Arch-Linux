@@ -44,7 +44,7 @@ jobs:
           set -euo pipefail
           payload=candidate16-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate16.tar.gz
           test "$(sha256sum "$payload" | cut -d ' ' -f1)" = 244c4da008883a3bff8143078bda85c2a4f23450e11a459f2e5cc3c303483091
-          sha256sum -c candidate16-artifact/SHA256SUMS
+          (cd candidate16-artifact && sha256sum -c SHA256SUMS)
           bash -n \
             packaging/common/archverse-overlay \
             packaging/debian/build-deb.sh \
