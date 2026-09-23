@@ -92,6 +92,7 @@ jobs:
               pacman -U --print --print-format "%n %v" /output/*.pkg.tar.zst
             '
           cp package-work/arch/output/archverse-overlay-0.1.47.r31.alpha23.candidate16-1-x86_64.pkg.tar.zst dist/arch/
+          sudo apt-get install -y --no-install-recommends libarchive-tools
           bsdtar -xOf dist/arch/*.pkg.tar.zst .PKGINFO | grep -E '^(pkgname|pkgver|depend) = '
 
       - name: Build Fedora and Nobara package
