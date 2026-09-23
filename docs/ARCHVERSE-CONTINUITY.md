@@ -42,6 +42,25 @@ passed the artifact ZIP digest, archive checksum, and all 1,658 internal manifes
 Packaging is **verified**. A live Nobara retest confirming that no new
 `xdotool getwindowclassname` coredump appears remains **unverified**.
 
+Gabe preserved the Nobara coredump report for PID `23113`, command
+`xdotool getwindowclassname 2097152`, boot ID
+`d62889cd920f4bc3be813ab1e83b475f`, and timestamp September 22 at 21:44:01 PDT
+(September 23 at 04:44:01 UTC). Repeated pasted sections are the same event: PID, boot ID, command,
+and timestamp all match. The crash predates the Candidate 17 repair commit at 04:56:50 UTC, so it
+is Candidate 16 evidence and does not test Candidate 17.
+
+The accompanying `sidecar(20260923-063728).log` is 11 lines, 1,102 bytes, SHA-256
+`1bb1ef74c2c1dace60872edcb0ffed79b186ec552b41e1ae75c9ee9bbeb14286`. It shows successful
+economy, Hauling, localization, rotated-log replay, and live `Game.log` watcher startup. The two
+optional emote providers returned HTTP 404; chat explicitly continued without those emotes. The
+log contains no capture, OCR, Mining, refinery, scanner, process, or fatal error and cannot confirm
+the window-class repair.
+
+Next field step: run the extracted Candidate 17 `./bin/sc-blueprint-tracker` with stdout and stderr
+redirected to `~/.config/sc-blueprint-tracker/electron-candidate17.log`. Record the start time, use
+normal X11/XWayland focus and held-`F` interaction, close ArchVerse, then run `coredumpctl` from that
+start time. The gate passes only if there is no new `xdotool getwindowclassname` event.
+
 ## Alpha23 Candidate 16 pointer-mode isolation — September 20, 2026
 
 Branch: `agent/alpha23-candidate16-pointer-mode-isolation`, based on packaged-verified Candidate 15
