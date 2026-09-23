@@ -100,7 +100,8 @@ done
 
 grep -q '^pkgname = archverse-overlay$' "$work/arch/.PKGINFO"
 grep -q '^pkgver = 0.1.47.r31.alpha23.candidate16-1$' "$work/arch/.PKGINFO"
-dpkg-deb -f "$deb_package" Package Version Architecture | \
-  grep -q '^archverse-overlay 0.1.47~r31~alpha23~candidate16-1 amd64$'
+[[ "$(dpkg-deb -f "$deb_package" Package)" == 'archverse-overlay' ]]
+[[ "$(dpkg-deb -f "$deb_package" Version)" == '0.1.47~r31~alpha23~candidate16-1' ]]
+[[ "$(dpkg-deb -f "$deb_package" Architecture)" == 'amd64' ]]
 
 printf 'PASS: package metadata and cross-distribution payload identity\n'
