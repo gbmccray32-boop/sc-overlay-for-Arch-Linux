@@ -12,6 +12,31 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 17 Nobara window-class repair — September 23, 2026
+
+Branch: `agent/alpha23-candidate17-nobara-window-class`, based on packaged-verified Candidate 16
+artifact `10598690018` and native archive SHA-256
+`244c4da008883a3bff8143078bda85c2a4f23450e11a459f2e5cc3c303483091`. Upstream remains
+frozen at v0.1.47 `e482c1ce3d461b390079486115293535be9b2ab7`.
+
+Gabe's Nobara 44 field run produced a core dump from
+`xdotool getwindowclassname 2097152`. The stack terminates in Fedora's `libxdo`
+`xdo_get_window_classname` and `XFree`. ArchVerse remained open because the failed `xdotool`
+instance was a child process. Candidate 16 calls that operation from two focus-ownership lookups,
+so each abort can create a coredump and return an empty window class to one ownership decision.
+
+Candidate 17 reads `WM_CLASS` through `xprop -id <XID> WM_CLASS`, matching the established normal
+capture probe. A stale or vanished XID becomes an empty lookup result. The KDE portal capture,
+direct Gamescope PipeWire capture, session binding, pointer sampling, focus handoff, OCR, and
+widgets are unchanged. A regression verifies the exact `xprop` argument vector, invalid-XID
+rejection, vanished-window handling, and removal of `xdotool getwindowclassname` from the focus
+controller.
+
+**Automated verified locally:** the changed controller and staging script pass `node --check`; the
+new window-class regression passes; `git diff --check` passes. The staged archive gates, widget
+integration, package checksum, and in-game Nobara retest are **unverified** until Candidate 17 CI
+and field testing finish.
+
 ## Alpha23 Candidate 16 pointer-mode isolation — September 20, 2026
 
 Branch: `agent/alpha23-candidate16-pointer-mode-isolation`, based on packaged-verified Candidate 15
