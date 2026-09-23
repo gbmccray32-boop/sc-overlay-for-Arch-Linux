@@ -115,7 +115,9 @@ fi
 
 temporary_dir=""
 cleanup() {
-  [[ -n "$temporary_dir" && -d "$temporary_dir" ]] && rm -rf -- "$temporary_dir"
+  if [[ -n "$temporary_dir" && -d "$temporary_dir" ]]; then
+    rm -rf -- "$temporary_dir"
+  fi
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -134,7 +136,16 @@ manifest="$package_dir/SHA256SUMS"
 [[ -f "$package" ]] || { printf 'Package is missing: %s\n' "$package" >&2; exit 5; }
 [[ -f "$manifest" ]] || { printf 'Checksum manifest is missing: %s\n' "$manifest" >&2; exit 5; }
 
-expected="$(awk -v name="$asset" '$2 == name { print $1; exit }' "$manifest")"
+expected="$(awk -v name="$asset" '
+  {
+    file = $2
+    sub(/^\.\//, "", file)
+    if (file == name) {
+      print $1
+      exit
+    }
+  }
+' "$manifest")"
 [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || {
   printf 'No valid SHA-256 entry exists for %s.\n' "$asset" >&2
   exit 6

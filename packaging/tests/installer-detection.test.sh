@@ -60,4 +60,17 @@ run_case no_xwayland 'ID=nobara
 ID_LIKE=fedora
 PRETTY_NAME="Nobara Linux"' fedora no wayland KDE ''
 
+asset='archverse-overlay-0.1.47.r31.alpha23.candidate16-1-x86_64.pkg.tar.zst'
+package_dir="$work/checksum-package"
+mkdir -p "$package_dir"
+touch "$package_dir/$asset"
+(cd "$package_dir" && sha256sum "./$asset" > SHA256SUMS)
+checksum_out="$(env -i PATH="$PATH" HOME="$HOME" \
+  ARCHVERSE_OS_RELEASE_FILE="$work/cachyos.os-release" \
+  XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE DISPLAY=:1 \
+  "$INSTALLER" --package-dir "$package_dir" --dry-run)"
+grep -q '^Checksum verified:' <<<"$checksum_out" || fail 'checksum manifest with ./ prefix'
+grep -q 'pacman -U' <<<"$checksum_out" || fail 'Arch dry-run install command'
+pass=$((pass + 1))
+
 printf 'PASS: %s installer/doctor platform cases\n' "$pass"
