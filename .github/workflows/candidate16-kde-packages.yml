@@ -131,12 +131,14 @@ jobs:
           packaging/tests/package-contract.test.sh \
             candidate16-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate16.tar.gz \
             dist/arch/archverse-overlay-0.1.47.r31.alpha23.candidate16-1-x86_64.pkg.tar.zst \
-            dist/fedora/archverse-overlay-0.1.47-1.r31.alpha23.candidate16.x86_64.rpm \
+            package-work/fedora/RPMS/x86_64/*.rpm \
             dist/debian/archverse-overlay_0.1.47~r31~alpha23~candidate16-1_amd64.deb
 
       - name: Assemble test downloads
         run: |
           set -euo pipefail
+          cp package-work/fedora/RPMS/x86_64/*.rpm \
+            dist/fedora/archverse-overlay-0.1.47-1.r31.alpha23.candidate16.x86_64.rpm
           for family in arch fedora debian; do
             cp packaging/release/install-archverse.sh "dist/$family/"
             cp packaging/release/archverse-doctor "dist/$family/"
