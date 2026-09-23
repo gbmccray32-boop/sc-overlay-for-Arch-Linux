@@ -32,10 +32,15 @@ widgets are unchanged. A regression verifies the exact `xprop` argument vector, 
 rejection, vanished-window handling, and removal of `xdotool getwindowclassname` from the focus
 controller.
 
-**Automated verified locally:** the changed controller and staging script pass `node --check`; the
-new window-class regression passes; `git diff --check` passes. The staged archive gates, widget
-integration, package checksum, and in-game Nobara retest are **unverified** until Candidate 17 CI
-and field testing finish.
+Remote repair commit `974f816f6754512362b4f5cf3c9a56e54b6e4ec0` has exact tree
+`9effb01078ddf073d8acad4afdd23eae71a693d1`. Workflow run `35820400137` passed the complete
+source, packaged capture/input, Electron, refinery, RapidOCR, configuration, age-band, and widget
+integration gates. Artifact `10733032746` produced
+`ArchVerse-Native-0.1.47-r31.alpha23.candidate17.tar.gz`, SHA-256
+`90b75e9ceb4c075eadd205284128d01a17cac2489fac8697dde32310995aab06`. Independent verification
+passed the artifact ZIP digest, archive checksum, and all 1,658 internal manifest entries.
+Packaging is **verified**. A live Nobara retest confirming that no new
+`xdotool getwindowclassname` coredump appears remains **unverified**.
 
 ## Alpha23 Candidate 16 pointer-mode isolation — September 20, 2026
 
@@ -1282,16 +1287,17 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest packaged-verified deliverable is Alpha23 Candidate 16. Candidate 14's normal KDE portal
+The latest packaged-verified native deliverable is Alpha23 Candidate 17. Candidate 14's normal KDE portal
 capture, Mining, and Hauling are field-working, while Candidate 13's direct Gamescope capture passed
 its field test. Candidate 15 repaired the shared refinery classifier without replacing either capture
 path. Candidate 16 isolates normal host pointer coordinates from Gamescope's nested coordinate
-mapping. Candidate 8k remains the older rollback whose Mining and base operation Gabe reported
+mapping. Candidate 17 replaces the crashing Nobara `xdotool` class probe without changing either
+capture path. Candidate 8k remains the older rollback whose Mining and base operation Gabe reported
 working.
 
-The last documented Arch, Fedora and Debian package set belongs to the older Alpha 21 line. Do not
-publish Candidate 16 or claim a current three-distribution package set until both normal
-Wine/XWayland and Gamescope field gates pass, then fresh distribution packages pass their own checks.
+The current Arch, Fedora/Nobara, and Debian package set contains Candidate 16. Do not publish
+Candidate 17 or claim that the three-distribution packages include its repair until the Nobara field
+gate passes and fresh distribution packages pass their own checks.
 
 ## Continuity maintenance
 
