@@ -1,0 +1,181 @@
+name: Candidate 16 KDE test packages
+
+on:
+  push:
+    branches: [agent/candidate16-kde-packaging-installer]
+    paths:
+      - '.github/workflows/candidate16-kde-packages.yml'
+      - 'packaging/arch/**'
+      - 'packaging/common/archverse-overlay'
+      - 'packaging/debian/**'
+      - 'packaging/fedora/**'
+      - 'packaging/native/archverse-overlay.desktop'
+      - 'packaging/release/**'
+      - 'packaging/tests/**'
+      - 'docs/CANDIDATE16-KDE-INSTALLER.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: candidate16-kde-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified Candidate 16 payload
+        uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Alpha23-Candidate16-field-test
+          path: candidate16-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35488559407
+
+      - name: Verify source archive and installer detection
+        run: |
+          set -euo pipefail
+          payload=candidate16-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate16.tar.gz
+          test "$(sha256sum "$payload" | cut -d ' ' -f1)" = 244c4da008883a3bff8143078bda85c2a4f23450e11a459f2e5cc3c303483091
+          sha256sum -c candidate16-artifact/SHA256SUMS
+          bash -n \
+            packaging/common/archverse-overlay \
+            packaging/debian/build-deb.sh \
+            packaging/release/archverse-doctor \
+            packaging/release/install-archverse.sh \
+            packaging/tests/installer-detection.test.sh \
+            packaging/tests/package-definition.test.sh \
+            packaging/tests/package-contract.test.sh
+          packaging/tests/installer-detection.test.sh
+          packaging/tests/package-definition.test.sh
+
+      - name: Build Debian and Ubuntu package
+        run: |
+          set -euo pipefail
+          mkdir -p dist/debian
+          packaging/debian/build-deb.sh \
+            candidate16-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate16.tar.gz \
+            dist/debian
+          dpkg-deb --info dist/debian/*.deb
+          dpkg-deb --contents dist/debian/*.deb | grep -E \
+            'opt/archverse-overlay/bin/sc-blueprint-tracker|usr/bin/archverse-overlay|usr/bin/archverse-doctor'
+          sudo apt-get update
+          apt-get --simulate install "$PWD"/dist/debian/*.deb
+
+      - name: Build Arch-family package
+        run: |
+          set -euo pipefail
+          mkdir -p package-work/arch/input package-work/arch/output dist/arch
+          cp packaging/arch/PKGBUILD package-work/arch/input/
+          cp packaging/common/archverse-overlay package-work/arch/input/
+          cp packaging/release/archverse-doctor package-work/arch/input/
+          cp packaging/native/archverse-overlay.desktop package-work/arch/input/
+          cp candidate16-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate16.tar.gz \
+            package-work/arch/input/
+          docker run --rm \
+            -v "$PWD/package-work/arch/input:/input:ro" \
+            -v "$PWD/package-work/arch/output:/output" \
+            archlinux:base-devel bash -ceu '
+              useradd --create-home builder
+              cp -a /input /tmp/build
+              chown -R builder:builder /tmp/build
+              runuser -u builder -- bash -lc "cd /tmp/build && makepkg --cleanbuild --force --nodeps --noconfirm"
+              cp /tmp/build/*.pkg.tar.zst /output/
+              pacman -Sy --noconfirm
+              pacman -U --print --print-format "%n %v" /output/*.pkg.tar.zst
+            '
+          cp package-work/arch/output/archverse-overlay-0.1.47.r31.alpha23.candidate16-1-x86_64.pkg.tar.zst dist/arch/
+          bsdtar -xOf dist/arch/*.pkg.tar.zst .PKGINFO | grep -E '^(pkgname|pkgver|depend) = '
+
+      - name: Build Fedora and Nobara package
+        run: |
+          set -euo pipefail
+          mkdir -p package-work/fedora/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} dist/fedora
+          cp packaging/fedora/archverse-overlay.spec package-work/fedora/SPECS/
+          cp packaging/common/archverse-overlay package-work/fedora/SOURCES/
+          cp packaging/release/archverse-doctor package-work/fedora/SOURCES/
+          cp packaging/native/archverse-overlay.desktop package-work/fedora/SOURCES/
+          cp candidate16-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate16.tar.gz \
+            package-work/fedora/SOURCES/
+          docker run --rm \
+            -v "$PWD/package-work/fedora:/work" \
+            fedora:latest bash -ceu '
+              dnf install -y rpm-build
+              rpmbuild --define "_topdir /work" -bb /work/SPECS/archverse-overlay.spec
+            '
+          rpm_file="$(find package-work/fedora/RPMS -type f -name '*.rpm' -print -quit)"
+          test -n "$rpm_file"
+          cp "$rpm_file" dist/fedora/archverse-overlay-0.1.47-1.r31.alpha23.candidate16.x86_64.rpm
+          docker run --rm -v "$PWD/dist/fedora:/packages:ro" fedora:latest \
+            rpm -qip /packages/archverse-overlay-0.1.47-1.r31.alpha23.candidate16.x86_64.rpm
+          docker run --rm -v "$PWD/dist/fedora:/packages:ro" fedora:latest bash -ceu '
+            dnf install -y --setopt=tsflags=test \
+              /packages/archverse-overlay-0.1.47-1.r31.alpha23.candidate16.x86_64.rpm
+          '
+
+      - name: Verify package identity and metadata
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libarchive-tools rpm2cpio cpio
+          packaging/tests/package-contract.test.sh \
+            candidate16-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate16.tar.gz \
+            dist/arch/archverse-overlay-0.1.47.r31.alpha23.candidate16-1-x86_64.pkg.tar.zst \
+            dist/fedora/archverse-overlay-0.1.47-1.r31.alpha23.candidate16.x86_64.rpm \
+            dist/debian/archverse-overlay_0.1.47~r31~alpha23~candidate16-1_amd64.deb
+
+      - name: Assemble test downloads
+        run: |
+          set -euo pipefail
+          for family in arch fedora debian; do
+            cp packaging/release/install-archverse.sh "dist/$family/"
+            cp packaging/release/archverse-doctor "dist/$family/"
+            cp docs/CANDIDATE16-KDE-INSTALLER.md "dist/$family/TESTING.md"
+            chmod 0755 "dist/$family/install-archverse.sh" "dist/$family/archverse-doctor"
+          done
+          printf '%s\n' \
+            'Candidate 16 source workflow: 35488559407' \
+            'Candidate 16 source commit: 4f9f94c2907470fc095859ee659c465173e647e2' \
+            'Candidate 16 archive SHA-256: 244c4da008883a3bff8143078bda85c2a4f23450e11a459f2e5cc3c303483091' \
+            "Package source commit: $GITHUB_SHA" > dist/PROVENANCE.txt
+          for family in arch fedora debian; do
+            cp dist/PROVENANCE.txt "dist/$family/"
+            (
+              cd "dist/$family"
+              find . -maxdepth 1 -type f \
+                \( -name '*.pkg.tar.zst' -o -name '*.rpm' -o -name '*.deb' \) \
+                -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+            )
+            test -s "dist/$family/SHA256SUMS"
+          done
+
+      - name: Upload Arch-family test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Candidate16-Arch-KDE-test1
+          path: dist/arch/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload Fedora and Nobara test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Candidate16-Nobara-KDE-test1
+          path: dist/fedora/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload Debian and Ubuntu test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Candidate16-Debian-KDE-test1
+          path: dist/debian/
+          if-no-files-found: error
+          retention-days: 90
