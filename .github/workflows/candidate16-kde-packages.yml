@@ -120,6 +120,8 @@ jobs:
             dnf install -y --setopt=tsflags=test \
               /packages/archverse-overlay-0.1.47-1.r31.alpha23.candidate16.x86_64.rpm
           '
+          cp "$rpm_file" dist/fedora/archverse-overlay-0.1.47-1.r31.alpha23.candidate16.x86_64.rpm
+          test -s dist/fedora/archverse-overlay-0.1.47-1.r31.alpha23.candidate16.x86_64.rpm
 
       - name: Verify package identity and metadata
         run: |
