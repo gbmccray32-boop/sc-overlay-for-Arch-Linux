@@ -39,8 +39,8 @@ integration gates. Artifact `10733032746` produced
 `ArchVerse-Native-0.1.47-r31.alpha23.candidate17.tar.gz`, SHA-256
 `90b75e9ceb4c075eadd205284128d01a17cac2489fac8697dde32310995aab06`. Independent verification
 passed the artifact ZIP digest, archive checksum, and all 1,658 internal manifest entries.
-Packaging is **verified**. A live Nobara retest confirming that no new
-`xdotool getwindowclassname` coredump appears remains **unverified**.
+Packaging is **verified**. Gabe reports that Candidate 17 no longer produces the Nobara
+`xdotool getwindowclassname` crash, so that repair is **field verified**.
 
 Gabe preserved the Nobara coredump report for PID `23113`, command
 `xdotool getwindowclassname 2097152`, boot ID
@@ -53,13 +53,18 @@ The accompanying `sidecar(20260923-063728).log` is 11 lines, 1,102 bytes, SHA-25
 `1bb1ef74c2c1dace60872edcb0ffed79b186ec552b41e1ae75c9ee9bbeb14286`. It shows successful
 economy, Hauling, localization, rotated-log replay, and live `Game.log` watcher startup. The two
 optional emote providers returned HTTP 404; chat explicitly continued without those emotes. The
-log contains no capture, OCR, Mining, refinery, scanner, process, or fatal error and cannot confirm
-the window-class repair.
+log contains no capture, OCR, Mining, refinery, scanner, process, or fatal error. It also contains
+no held-`F` input diagnostics.
+
+New field issue: Candidate 17 sometimes does not register the `F` key. The current sidecar log
+cannot distinguish a missing low-level key event from rejected pointer/widget ownership or a focus
+handoff failure. Do not change the input path until a controlled reproduction supplies the complete
+Electron log and identifies whether the launch used normal X11/XWayland or Gamescope.
 
 Next field step: run the extracted Candidate 17 `./bin/sc-blueprint-tracker` with stdout and stderr
-redirected to `~/.config/sc-blueprint-tracker/electron-candidate17.log`. Record the start time, use
-normal X11/XWayland focus and held-`F` interaction, close ArchVerse, then run `coredumpctl` from that
-start time. The gate passes only if there is no new `xdotool getwindowclassname` event.
+redirected to `~/.config/sc-blueprint-tracker/electron-candidate17.log`. Reproduce one successful
+and one failed `F` press if possible, then preserve the complete Electron log. Note the launch mode,
+whether the pointer was over an ArchVerse widget, and whether Star Citizen itself received `F`.
 
 ## Alpha23 Candidate 16 pointer-mode isolation — September 20, 2026
 
