@@ -21,6 +21,8 @@ grep -q '^Version:[[:space:]]*0.1.47$' "$RPM_FILE" || fail 'RPM version drift'
 grep -q "VERSION='0.1.47~r31~alpha23~candidate16-1'" "$DEB_FILE" || fail 'Debian version drift'
 grep -q "$PAYLOAD_SHA" "$ARCH_FILE" || fail 'Arch payload checksum missing'
 grep -q "$PAYLOAD_SHA" "$DEB_FILE" || fail 'Debian payload checksum missing'
+grep -q '^%global __brp_mangle_shebangs %{nil}$' "$RPM_FILE" || \
+  fail 'RPM shebang rewriting is not disabled for the verified payload'
 
 for file in "$ARCH_FILE" "$RPM_FILE" "$DEB_FILE"; do
   grep -q 'xdg-desktop-portal-kde' "$file" || fail "KDE portal dependency missing from $file"

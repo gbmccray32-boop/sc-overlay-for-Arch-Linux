@@ -37,6 +37,7 @@ Conflicts:      sc-blueprint-tracker
 # Preserve the bundled Electron and N-API binaries exactly as verified.
 %global debug_package %{nil}
 %global __strip /bin/true
+%global __brp_mangle_shebangs %{nil}
 
 %description
 ArchVerse is a community Linux companion overlay for Star Citizen. This package installs the
