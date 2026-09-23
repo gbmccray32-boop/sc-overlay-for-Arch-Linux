@@ -1303,10 +1303,57 @@ shared refinery classifier; Candidate 16 isolated normal host pointer coordinate
 nested coordinate mapping. Candidate 8k remains the older rollback whose Mining and base operation
 Gabe reported working.
 
-The last documented Arch, Fedora and Debian package set belongs to the older Alpha 21 line. Do not
-claim a current Arch KDE or Nobara KDE release until fresh packages pass their own dependency,
-installation, launch, capture, widget, upgrade, and rollback checks. Candidate 16's launch-mode
-field gates satisfy the runtime prerequisite for that packaging work; they do not substitute for it.
+Candidate 16 now has checksum-pinned test packages for Arch-family KDE, Fedora/Nobara KDE, and
+Debian/Ubuntu KDE. Automated package builds, native package-manager dependency transactions,
+metadata checks, and byte-for-byte payload identity passed. The Arch-family download also passed an
+independent ZIP digest, extraction, internal checksum, KDE/XWayland detection, and installer dry-run
+check. These packages remain test candidates: installation, launch, capture, widget, upgrade, and
+rollback checks are still field-unverified on their target distributions.
+
+## Candidate 16 KDE packaging checkpoint
+
+- Branch: `agent/candidate16-kde-packaging-installer`
+- Package source commit: `a48573fa3a41406dc9c78a2c550542098b8d433b`
+- Source payload commit: `4f9f94c2907470fc095859ee659c465173e647e2`
+- Source payload workflow: `35488559407`
+- Source archive SHA-256:
+  `244c4da008883a3bff8143078bda85c2a4f23450e11a459f2e5cc3c303483091`
+- Green package workflow: `35811665101`
+- Arch artifact: `ArchVerse-Candidate16-Arch-KDE-test1`, ID `10729789786`, ZIP SHA-256
+  `7aa6b6aa381e308ff537fbe245986c37f39b63355e8115956e8b5aff7d4bd80e`
+- Fedora/Nobara artifact: `ArchVerse-Candidate16-Nobara-KDE-test1`, ID `10730480457`, ZIP SHA-256
+  `8521abffe34f28283b0940ab5fefb0a252d8bd20ee53f25e56c4b1a8c48c1b7d`
+- Debian/Ubuntu artifact: `ArchVerse-Candidate16-Debian-KDE-test1`, ID `10730635092`, ZIP SHA-256
+  `2e3277144b82b90cf9cec0f2aadd542c04e09d328858561b081ce800fa71df4e`
+- Artifacts expire on December 22, 2026 unless promoted or rebuilt.
+
+The installer detects Arch, Fedora/Nobara, or Debian/Ubuntu families, accepts KDE X11 and KDE
+Wayland with XWayland, verifies the selected package checksum, delegates installation to the native
+package manager, and runs `archverse-doctor`. It deliberately rejects Hyprland, unsupported
+desktops, native Wayland without XWayland, non-x86-64 systems, and non-glibc systems. Hyprland stays
+reserved for the separate Omarchy port.
+
+Automated evidence from workflow `35811665101`:
+
+- exact Candidate 16 archive provenance and checksum passed;
+- 7 installer/doctor platform and checksum-manifest cases passed;
+- Arch `pacman`, Fedora `dnf`, and Ubuntu `apt` dependency transactions passed;
+- all application files and symlinks in the Arch, RPM, and Debian packages matched the verified
+  Candidate 16 payload byte-for-byte;
+- each package's internal `SHA256SUMS` passed; and
+- package metadata and all three GitHub artifact uploads passed.
+
+Independent evidence for the final Arch artifact:
+
+- downloaded ZIP matched GitHub's artifact digest;
+- ZIP integrity and internal package SHA-256 passed;
+- package SHA-256 was
+  `3b3c52daf513dcd7bc2b68cf7221e15a577dfd74c1c7b24682e0bb5c8a0056ec`; and
+- a simulated CachyOS KDE Wayland/XWayland install selected the Arch package, verified its checksum,
+  and produced the expected `pacman -U --needed --noconfirm` command with exit status 0.
+
+Next single step: install the Arch-family artifact on Gabe's CachyOS KDE system, run
+`archverse-doctor`, then exercise normal KDE and Gamescope separately before promotion.
 
 ## Continuity maintenance
 
