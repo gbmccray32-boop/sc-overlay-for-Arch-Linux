@@ -16,6 +16,14 @@ payload_name='ArchVerse-Native-0.1.47-r31.alpha23.candidate16'
 for file in "$payload" "$arch_package" "$rpm_package" "$deb_package"; do
   [[ -s "$file" ]] || { printf 'Missing package test input: %s\n' "$file" >&2; exit 2; }
 done
+
+# The RPM extractor runs from its destination directory. Resolve every input first so later
+# directory changes cannot reinterpret a caller-provided relative path.
+payload="$(realpath -- "$payload")"
+arch_package="$(realpath -- "$arch_package")"
+rpm_package="$(realpath -- "$rpm_package")"
+deb_package="$(realpath -- "$deb_package")"
+
 for command_name in bsdtar dpkg-deb rpm2cpio cpio; do
   command -v "$command_name" >/dev/null 2>&1 || {
     printf 'Package contract test requires %s.\n' "$command_name" >&2

@@ -122,15 +122,12 @@ jobs:
           '
           cp "$rpm_file" dist/fedora/archverse-overlay-0.1.47-1.r31.alpha23.candidate16.x86_64.rpm
           test -s dist/fedora/archverse-overlay-0.1.47-1.r31.alpha23.candidate16.x86_64.rpm
-          tar -czf package-work/fedora-rpm-checkpoint.tar.gz \
-            -C dist/fedora archverse-overlay-0.1.47-1.r31.alpha23.candidate16.x86_64.rpm
 
       - name: Verify package identity and metadata
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libarchive-tools rpm2cpio cpio
-          tar -xzf package-work/fedora-rpm-checkpoint.tar.gz -C dist/fedora
           packaging/tests/package-contract.test.sh \
             candidate16-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate16.tar.gz \
             dist/arch/archverse-overlay-0.1.47.r31.alpha23.candidate16-1-x86_64.pkg.tar.zst \
