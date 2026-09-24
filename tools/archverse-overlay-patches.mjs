@@ -6,6 +6,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { patchFirstFCanvas } from "./archverse-first-f-canvas.mjs";
+import { lockWidgetHotkeySettings, assertNoWidgetHotkeyEditor } from "./archverse-widget-hotkey-contract.mjs";
 
 function must(cond, msg) {
   if (!cond) throw new Error(`ArchVerse overlay patch: ${msg}`);
@@ -128,6 +129,7 @@ function patchLinuxSettings(html) {
 }
 
 export function applyArchVerseOverlayPatches(outDir) {
+  assertNoWidgetHotkeyEditor(readFileSync(join(outDir, "overlay/canvas.js"), "utf8"));
   const overlay = join(outDir, "overlay");
   rewrite(join(overlay, "canvas.js"), (source) => patchFirstFCanvas(patchMissionInteractionRegions(patchLinuxOcrRegions(source))));
 
@@ -148,6 +150,7 @@ export function applyArchVerseOverlayPatches(outDir) {
   rewrite(join(overlay, "config.html"), (html) => {
     let next = html.replaceAll("Mining Scanner", "Resource Scanner").replaceAll("Mining Assistant", "Resource Scanner");
     next = patchLinuxSettings(next);
+    next = lockWidgetHotkeySettings(next);
     return next;
   });
 

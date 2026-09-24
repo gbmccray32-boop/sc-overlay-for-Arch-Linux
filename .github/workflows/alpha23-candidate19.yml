@@ -1,0 +1,38 @@
+name: Alpha23 Candidate 19 Source Gates
+on:
+  push:
+    branches: [agent/alpha23-candidate19-upstream-stability]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: candidate19-source-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm}
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify approved source changes and immutable hotkey contract
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm run test:linux-widget-hotkeys
+          npm run test:trade
+          npm run test:jaudit
+          npm run test:playerloc
+          npm run test:signals
+          npm run test:origin
+          npm run test:proximity
+          npm run test:logshare
+          npm run control:locfix
+          npm run control:logsharefault
+          npm run build:server
+          node tools/archverse-config-e2e.mjs build/server
+          node tools/check-suite-literals.cjs
+          node --check tools/widget-dom-test.cjs
+      # No package or release upload: packaged Candidate 18 preservation gates remain required.

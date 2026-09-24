@@ -14,6 +14,29 @@ Do not convert one label into another without new evidence.
 
 ## Alpha23 public Linux release — September 24, 2026
 
+### Candidate 19 source checkpoint — September 24, 2026
+
+Work branch: `agent/alpha23-candidate19-upstream-stability`, based on Candidate 18
+`970eaa59b1c176ee1211c6c287ea03fac569b42c`. Gabe approved the post-v0.1.47 trade filters,
+Ledger audit, location corrections, log-sharing repairs, and test improvements, but permanently
+excluded per-widget hotkey editing from official Linux builds. The imported upstream commits are
+`370da99`, `8eea9f6`, `403e7d8`, `d2a8576`, `54a7450`, `e8c25b0`, `8897aed`, and `1a8ead3`.
+Upstream editor commit `56c74df` is intentionally excluded, not deferred for automatic import.
+
+The source build locks existing per-widget Settings capture/clear controls and strips widget
+hotkey changes from Linux config POSTs while preserving existing startup configuration. The build
+rejects known upstream editor entry points. Source tests include negative controls and non-Linux
+positive controls. The contract and widget handoff record the permanent exclusion.
+
+Local TypeScript, server build, and hotkey contract checks passed. Runtime upstream tests were
+blocked by the local test runner's IPC socket permission error and are assigned to the new source
+CI workflow. CI results are not yet verified. No Candidate 19 package or release exists.
+
+Next: finish packaged shell IPC lockout, stage from the checksum-pinned Candidate 18 archive,
+preserve package-only Mining/refinery/transport repairs while integrating the new sidecar, and run
+the complete packaged and widget gates. Do not replace the packaged sidecar with the source build
+without those semantic preservation steps. Candidate 18 remains the public rollback baseline.
+
 Public prerelease tag `v0.1.47-r31-alpha.23` points to release-approval commit
 `3c11045011014004903113c8f4f213e6c98dd8f0` on
 `agent/alpha23-candidate18-nobara-keyboard`. Publication workflow `35946226335` passed. It

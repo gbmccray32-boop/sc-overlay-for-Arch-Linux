@@ -31,6 +31,9 @@ document identifies which historical files are superseded.
 - Do not inject into Star Citizen, read game memory, or add another mechanism that violates the
   read-only Game.log and screen-capture boundary.
 - Preserve user privacy and opt-in behavior.
+- Per-widget hotkey editing is permanently excluded from official Linux builds, including
+  widget cogs and Settings. Preserve existing startup bindings and the mandatory F/Shift+F6
+  controls. Never import the upstream keyboard-grab editor during widget updates.
 
 The complete testable contract is in `linux-port/PORTING_CONTRACT.md`.
 

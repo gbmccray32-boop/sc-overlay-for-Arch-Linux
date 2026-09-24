@@ -1,5 +1,13 @@
 # ArchVerse Linux widget developer handoff
 
+## Permanent widget-hotkey exclusion
+
+Gabe requires per-widget hotkey editing to remain disabled in official Linux builds.
+Do not import upstream's widget-cog editor, inject hotkey rows, or acquire keyboard ownership
+for widget key capture. Existing startup bindings remain intact. Settings and the config API
+must not change individual widget bindings. Personal source customization is outside this
+supported contract. Ordinary widget features remain editable under the boundaries below.
+
 Date: September 22, 2026
 
 This handoff authorizes widget UI and feature development for Arch KDE and Nobara KDE while keeping

@@ -95,6 +95,15 @@ The following are ArchVerse platform contracts:
 
 ### 2.1 Widget development boundary
 
+**Permanent Linux exclusion (Gabe, September 24, 2026): per-widget hotkey editing.**
+Official Linux builds must not offer widget hotkey capture, reassignment, or clearing in
+widget cogs, injected sheets, or Settings. Do not import upstream commit `56c74df` or an
+equivalent keyboard-grab editor. Preserve existing startup bindings without silently resetting
+user configuration. Held F and Shift+F6 remain mandatory. Source modifications in personal
+forks are outside the supported runtime contract; they are not a supported UI escape hatch.
+This exclusion has no automatic expiry and must not be relaxed during widget updates.
+Build and packaged tests must reject the prohibited editor and verify Settings lockout.
+
 The Linux contracts protect behavior and integration interfaces; they do not freeze widget UI or
 feature development. A developer may add, remove, restyle, reorganize, or update widgets for Arch
 KDE and Nobara KDE when the change preserves the following boundaries:
