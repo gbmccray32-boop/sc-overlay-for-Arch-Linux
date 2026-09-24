@@ -1,0 +1,118 @@
+name: Publish Alpha23 Linux Release
+
+on:
+  push:
+    branches: [agent/alpha23-candidate18-nobara-keyboard]
+    paths:
+      - .github/workflows/publish-alpha23-linux-release.yml
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-alpha23-linux-release
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: v0.1.47-r31-alpha.23
+  ARCH_ARTIFACT_ID: '10783683341'
+  ARCH_ARTIFACT_SHA256: 6d2a8a48170458b0258b961e807958a7379a0742fb2cc5848ca7592e56da17e5
+  ARCH_PACKAGE_SHA256: 8543c675437173761a04712e2e0c50468ec0261d92216f847162f950e140bc17
+  FEDORA_ARTIFACT_ID: '10784067281'
+  FEDORA_ARTIFACT_SHA256: cb440ceaeac9bbf5d38549fc61a8e64d0c4ab82ecf51b828c013b78c42165ce5
+  FEDORA_PACKAGE_SHA256: 556571aae92ae9471e2e30c84e08e52f8474a8bb7c2737e363cef5378021b2a0
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download checksum-pinned CI packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/incoming" "$RUNNER_TEMP/dist/arch" "$RUNNER_TEMP/dist/fedora" release-assets
+          curl --fail --location --retry 4 \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARCH_ARTIFACT_ID/zip" \
+            --output "$RUNNER_TEMP/incoming/arch-ci.zip"
+          curl --fail --location --retry 4 \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$FEDORA_ARTIFACT_ID/zip" \
+            --output "$RUNNER_TEMP/incoming/fedora-ci.zip"
+          echo "$ARCH_ARTIFACT_SHA256  $RUNNER_TEMP/incoming/arch-ci.zip" | sha256sum -c -
+          echo "$FEDORA_ARTIFACT_SHA256  $RUNNER_TEMP/incoming/fedora-ci.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/incoming/arch-ci.zip" -d "$RUNNER_TEMP/dist/arch"
+          unzip -q "$RUNNER_TEMP/incoming/fedora-ci.zip" -d "$RUNNER_TEMP/dist/fedora"
+
+      - name: Verify packages and assemble public downloads
+        run: |
+          set -euo pipefail
+          arch_dir="$RUNNER_TEMP/dist/arch"
+          fedora_dir="$RUNNER_TEMP/dist/fedora"
+          arch_package="$arch_dir/archverse-overlay-0.1.47.r31.alpha23.candidate18-1-x86_64.pkg.tar.zst"
+          fedora_package="$fedora_dir/archverse-overlay-0.1.47-1.r31.alpha23.candidate18.x86_64.rpm"
+
+          (cd "$arch_dir" && sha256sum -c SHA256SUMS)
+          (cd "$fedora_dir" && sha256sum -c SHA256SUMS)
+          echo "$ARCH_PACKAGE_SHA256  $arch_package" | sha256sum -c -
+          echo "$FEDORA_PACKAGE_SHA256  $fedora_package" | sha256sum -c -
+
+          for family_dir in "$arch_dir" "$fedora_dir"; do
+            cp docs/CANDIDATE18-KDE-INSTALLER.md "$family_dir/README.md"
+            cp docs/CANDIDATE18-KDE-INSTALLER.md "$family_dir/TESTING.md"
+            (
+              cd "$family_dir"
+              find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\0' \
+                | sort -z \
+                | xargs -0 sha256sum > SHA256SUMS
+              sha256sum -c SHA256SUMS
+            )
+          done
+
+          find "$arch_dir" -maxdepth 1 -type f -exec touch -d 'UTC 2026-09-24 00:00:00' {} +
+          find "$fedora_dir" -maxdepth 1 -type f -exec touch -d 'UTC 2026-09-24 00:00:00' {} +
+          (
+            cd "$arch_dir"
+            find . -maxdepth 1 -type f -printf '%P\n' | sort \
+              | zip -X -9 -@ "$GITHUB_WORKSPACE/release-assets/ArchVerse-Linux-0.1.47-r31-alpha23-Arch-KDE.zip"
+          )
+          (
+            cd "$fedora_dir"
+            find . -maxdepth 1 -type f -printf '%P\n' | sort \
+              | zip -X -9 -@ "$GITHUB_WORKSPACE/release-assets/ArchVerse-Linux-0.1.47-r31-alpha23-Fedora-Nobara-KDE.zip"
+          )
+          (cd release-assets && sha256sum *.zip > SHA256SUMS && sha256sum -c SHA256SUMS)
+
+      - name: Publish public prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title 'ArchVerse Linux 0.1.47-r31 Alpha23' \
+            --notes-file docs/RELEASE-0.1.47-R31-ALPHA23-LINUX.md \
+            --prerelease \
+            release-assets/ArchVerse-Linux-0.1.47-r31-alpha23-Arch-KDE.zip \
+            release-assets/ArchVerse-Linux-0.1.47-r31-alpha23-Fedora-Nobara-KDE.zip \
+            release-assets/SHA256SUMS
+
+      - name: Verify published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isDraft,isPrerelease,url,targetCommitish,assets
