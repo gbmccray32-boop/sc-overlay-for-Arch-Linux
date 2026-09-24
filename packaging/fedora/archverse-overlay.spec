@@ -63,7 +63,7 @@ install -Dm0644 %{SOURCE3} %{buildroot}%{_datadir}/applications/archverse-overla
 install -Dm0644 app/build/icon.png \
   %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/archverse-overlay.png
 install -Dm0644 LICENSE.md %{buildroot}%{_licensedir}/%{name}/LICENSE.md
-install -Dm0644 %{SOURCE4} %{buildroot}%{_udevrulesdir}/70-archverse-input.rules
+install -Dm0644 %{SOURCE4} %{buildroot}/usr/lib/udev/rules.d/70-archverse-input.rules
 
 chmod 0755 %{buildroot}/opt/archverse-overlay/bin/sc-blueprint-tracker
 if [ -f %{buildroot}/opt/archverse-overlay/runtime/electron/chrome-sandbox ]; then
@@ -84,7 +84,7 @@ udevadm control --reload-rules >/dev/null 2>&1 || :
 %{_bindir}/sc-blueprint-tracker
 %{_datadir}/applications/archverse-overlay.desktop
 %{_datadir}/icons/hicolor/256x256/apps/archverse-overlay.png
-%{_udevrulesdir}/70-archverse-input.rules
+/usr/lib/udev/rules.d/70-archverse-input.rules
 /opt/archverse-overlay
 
 %changelog
