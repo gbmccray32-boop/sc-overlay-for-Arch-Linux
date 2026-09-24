@@ -40,6 +40,18 @@ archverse-doctor
 The doctor must report `Physical keyboard input` as `[OK]`. If it does not, log out of Plasma and
 back in once, then run the doctor again.
 
+## KDE Plasma long-press characters under Gamescope
+
+Recent KDE Plasma versions can offer to enable an **Alternate characters** feature for physical
+keyboards. When enabled, holding a letter such as `A`, `S`, `D`, or `F` opens a small character
+selection popup instead of repeating the key. This prevents normal held-key movement in Star
+Citizen under Gamescope and is not an ArchVerse input failure.
+
+For proper gameplay under Gamescope, open **System Settings → Keyboard → On-Screen Keyboard** and
+disable **Alternate characters — Show popup when holding a key**. If that switch is not available
+and an on-screen keyboard is not required, set **Virtual Keyboard** to **None**. Restart Gamescope
+and Star Citizen after changing the setting.
+
 ## Field-test gate
 
 Test normal KDE first, then Gamescope separately. Confirm:
