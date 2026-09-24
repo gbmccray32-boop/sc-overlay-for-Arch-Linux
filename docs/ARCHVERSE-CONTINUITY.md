@@ -49,12 +49,33 @@ authority markers pass. All inherited static capture, session, cadence, Gamescop
 normal-pointer, window-class, refinery, RapidOCR, renderer/IPC, Linux bridge, main-startup, cargo,
 encoder, portal, and preload checks pass. Installer detection reports seven passing platform cases;
 package definitions and workflow YAML pass; JavaScript and shell syntax and `git diff --check` pass.
-The local config E2E test is blocked by this execution environment's
-`uv_interface_addresses returned Unknown system error 1`; CI remains responsible for that unchanged
-test, the real Electron tests, widget integration, native packages, and artifact verification.
+The local config E2E test was blocked by this execution environment's
+`uv_interface_addresses returned Unknown system error 1`; the clean CI runner passed that unchanged
+test.
 
-Candidate 18 packaging and both in-game launch-mode gates are **unverified** until CI and Gabe's
-field test finish.
+**Automated verified in packaged CI:** workflow `35937512246` passed against remote commit
+`a645c545e599622abf7f58a752161d41910542d1`, exact tree
+`7589a779a02993f27f5c7bd9431f16f121eea027`. Both the complete application job and package job are
+green. Source gates, all inherited packaged regressions, the Candidate 18 keyboard failure test,
+real Electron encoding, configuration and age-band controls, widget/sidecar integration, and the
+deterministic native checksum passed. Debian `apt`, Arch package construction, and Fedora 44 `dnf`
+dependency transactions passed. Cross-package comparison verified that the Arch, RPM, and Debian
+packages preserve every native payload file and symlink.
+
+**Packaged verified:** native artifact `10783523641`, digest
+`d958ff9a33e406ae1601ebdc135a1b706206e71bb35953f908050a94745dc37a`, contains native archive
+SHA-256 `1c5bb72be177704ff1dc18788d9d65457e6d9965ddf68b7c8bdee6201c66495f`.
+Arch artifact `10783683341` has ZIP digest
+`6d2a8a48170458b0258b961e807958a7379a0742fb2cc5848ca7592e56da17e5`; Fedora/Nobara artifact
+`10784067281` has ZIP digest
+`cb440ceaeac9bbf5d38549fc61a8e64d0c4ab82ecf51b828c013b78c42165ce5`; Debian artifact
+`10783444428` has ZIP digest
+`2ac430d0393f181740cabc7b489aa7672db2efedb078545c64e5d413c96e2c54`.
+
+Independent download verification passed for the Fedora/Nobara artifact: ZIP integrity and digest,
+its internal manifest, and RPM SHA-256
+`556571aae92ae9471e2e30c84e08e52f8474a8bb7c2737e363cef5378021b2a0` all match. Both in-game
+launch-mode gates remain **unverified** until Gabe installs Candidate 18 and tests held `F`.
 
 ## Alpha23 Candidate 17 Nobara window-class repair — September 23, 2026
 
@@ -1386,8 +1407,7 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest packaged-verified native deliverable is Alpha23 Candidate 17; Candidate 18 is under
-automated package validation. Candidate 14's normal KDE portal
+The latest packaged-verified native deliverable is Alpha23 Candidate 18. Candidate 14's normal KDE portal
 capture, Mining, and Hauling are field-working, while Candidate 13's direct Gamescope capture passed
 its field test. Candidate 15 repaired the shared refinery classifier without replacing either capture
 path. Candidate 16 isolates normal host pointer coordinates from Gamescope's nested coordinate
@@ -1395,12 +1415,11 @@ mapping. Candidate 17 replaces the crashing Nobara `xdotool` class probe without
 capture path. Candidate 8k remains the older rollback whose Mining and base operation Gabe reported
 working.
 
-Candidate 16 now has checksum-pinned test packages for Arch-family KDE, Fedora/Nobara KDE, and
+Candidate 18 has checksum-pinned test packages for Arch-family KDE, Fedora/Nobara KDE, and
 Debian/Ubuntu KDE. Automated package builds, native package-manager dependency transactions,
-metadata checks, and byte-for-byte payload identity passed. The Arch-family download also passed an
-independent ZIP digest, extraction, internal checksum, KDE/XWayland detection, and installer dry-run
-check. These packages remain test candidates: installation, launch, capture, widget, upgrade, and
-rollback checks are still field-unverified on their target distributions.
+metadata checks, and byte-for-byte payload identity passed. The Fedora/Nobara download also passed
+an independent ZIP digest, extraction, and internal checksum. These packages remain test candidates:
+installation, launch, capture, widget, upgrade, and rollback checks are field-unverified.
 
 ## Candidate 16 KDE packaging checkpoint
 
