@@ -12,6 +12,30 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 public Linux release — September 24, 2026
+
+Public prerelease tag `v0.1.47-r31-alpha.23` points to release-approval commit
+`3c11045011014004903113c8f4f213e6c98dd8f0` on
+`agent/alpha23-candidate18-nobara-keyboard`. Publication workflow `35946226335` passed. It
+downloaded the exact checksum-pinned Candidate 18 package artifacts from CI run `35937512246`,
+verified their outer ZIP and native package hashes, inserted the current installer README, rebuilt
+the two public downloads, and verified their complete internal manifests before publication.
+
+Public assets:
+
+- `ArchVerse-Linux-0.1.47-r31-alpha23-Arch-KDE.zip`, SHA-256
+  `ad1ec28773fe8127248d50b8672137ac4638d703721e22ea4ca2f1f30072559c`;
+- `ArchVerse-Linux-0.1.47-r31-alpha23-Fedora-Nobara-KDE.zip`, SHA-256
+  `85df473a884c64ac3e47697974d1ea232584693980470335933e19d7837f0326`; and
+- public `SHA256SUMS`, SHA-256
+  `d04a0513d46fda48077f8e10181a707feed1fb59066368c737b2e6671251eebc`.
+
+The public ZIPs retain the CI-built Arch package SHA-256
+`8543c675437173761a04712e2e0c50468ec0261d92216f847162f950e140bc17` and Fedora/Nobara RPM
+SHA-256 `556571aae92ae9471e2e30c84e08e52f8474a8bb7c2737e363cef5378021b2a0`.
+The release README includes the KDE Plasma long-press alternate-character warning required for
+normal held-key gameplay under Gamescope.
+
 ## Alpha23 Candidate 18 Nobara keyboard authority repair — September 23, 2026
 
 Branch: `agent/alpha23-candidate18-nobara-keyboard`, based on packaged-verified Candidate 17
@@ -1440,11 +1464,12 @@ mapping. Candidate 17 replaces the crashing Nobara `xdotool` class probe without
 capture path. Candidate 8k remains the older rollback whose Mining and base operation Gabe reported
 working.
 
-Candidate 18 has checksum-pinned test packages for Arch-family KDE, Fedora/Nobara KDE, and
-Debian/Ubuntu KDE. Automated package builds, native package-manager dependency transactions,
-metadata checks, and byte-for-byte payload identity passed. The Fedora/Nobara download also passed
-an independent ZIP digest, extraction, and internal checksum. These packages remain test candidates:
-installation, launch, capture, widget, upgrade, and rollback checks are field-unverified.
+Candidate 18 is publicly released for Arch-family KDE and Fedora/Nobara KDE under tag
+`v0.1.47-r31-alpha.23`. Automated package builds, native package-manager dependency transactions,
+metadata checks, and byte-for-byte payload identity passed. Nobara 44 installation, normal
+Wine/XWayland, Gamescope, physical-keyboard held-`F`, direct PipeWire capture, focus handoff, and
+click-through are field verified. Debian/Ubuntu remains a packaged test artifact and is not part of
+this public release.
 
 ## Candidate 16 KDE packaging checkpoint
 
