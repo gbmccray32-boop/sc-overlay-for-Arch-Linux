@@ -1,0 +1,3 @@
+# ArchVerse reads the held-F state while Star Citizen owns focus. Grant raw keyboard access only
+# to the active local seat through systemd-logind/systemd-udevd; do not grant the input group.
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="uaccess"

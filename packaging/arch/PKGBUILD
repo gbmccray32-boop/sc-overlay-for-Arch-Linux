@@ -1,31 +1,26 @@
 pkgname=archverse-overlay
-pkgver=0.1.42.r31.alpha21
+pkgver=0.1.47.r31.alpha23.candidate18
 pkgrel=1
-pkgdesc='Community Linux companion overlay for Star Citizen'
+pkgdesc='ArchVerse Star Citizen companion overlay for KDE Linux'
 arch=('x86_64')
 url='https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux'
 license=('custom:FSL-1.1-MIT')
 provides=('sc-blueprint-tracker')
+conflicts=('sc-blueprint-tracker')
 options=('!strip' '!debug')
 
 depends=(
   'nodejs'
   'tesseract'
   'tesseract-data-eng'
-pkgrel=7
-pkgdesc='Community Linux port of the ArchVerse Star Citizen overlay'
-arch=('x86_64')
-url='https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux'
-license=('custom:FSL-1.1-MIT')
-depends=(
-  'electron42'
-  'nodejs'
-  'tesseract'
-  'tesseract-data-eng'
   'pipewire'
+  'wireplumber'
   'gstreamer'
   'gst-plugin-pipewire'
+  'gst-plugins-base'
   'gst-plugins-good'
+  'xdg-desktop-portal'
+  'xdg-desktop-portal-kde'
   'xdotool'
   'xorg-xprop'
   'xorg-xrandr'
@@ -48,65 +43,47 @@ depends=(
   'xdg-utils'
 )
 
-_appver='0.1.42-r31-alpha.21'
-source=("ArchVerse-Native-${_appver}.tar.gz")
-# The CI staging job derives this archive from two separately SHA-pinned upstream assets and
-# verifies the staged tree before makepkg. Replace SKIP with the published payload checksum when
-# this field-test packaging branch is promoted to a release.
-sha256sums=('SKIP')
+optdepends=('kscreen: more accurate KDE multi-monitor geometry detection')
+
+install=archverse-overlay.install
+
+_payload='ArchVerse-Native-0.1.47-r31.alpha23.candidate18'
+source=(
+  "${_payload}.tar.gz"
+  'archverse-overlay'
+  'archverse-doctor'
+  'archverse-overlay.desktop'
+  '70-archverse-input.rules'
+)
+sha256sums=(
+  '1c5bb72be177704ff1dc18788d9d65457e6d9965ddf68b7c8bdee6201c66495f'
+  'dcec4e19bb5459f5b0bf9edef8c83efa380ba7ba31f4705f7e29f7de74f9e733'
+  '01a1475eac9a904fbebab13a8d5d5ae5cebf6f27e264e76785d206b7a98873ff'
+  'c0cc209dbe606ca24b2439f50d9a5336621a533a52fefd748d893fbebc4df7fe'
+  'c9eeae8e774e84b22ee704fd8e5c65c1fad4d3a42221a30eb8b761d82588a75f'
+)
 
 package() {
-  local root="$srcdir/ArchVerse-Native-${_appver}"
+  local root="$srcdir/$_payload"
   [[ -d "$root/app" && -x "$root/bin/sc-blueprint-tracker" ]] || return 1
 
   install -d "$pkgdir/opt/archverse-overlay"
   cp -a "$root/." "$pkgdir/opt/archverse-overlay/"
 
-  install -d "$pkgdir/usr/bin"
-  ln -s /opt/archverse-overlay/bin/sc-blueprint-tracker "$pkgdir/usr/bin/archverse-overlay"
-  ln -s /opt/archverse-overlay/bin/sc-blueprint-tracker "$pkgdir/usr/bin/sc-blueprint-tracker"
-
-  install -Dm644 "$startdir/../native/archverse-overlay.desktop" \
+  install -Dm0755 "$srcdir/archverse-overlay" "$pkgdir/usr/bin/archverse-overlay"
+  install -Dm0755 "$srcdir/archverse-doctor" "$pkgdir/usr/bin/archverse-doctor"
+  ln -s archverse-overlay "$pkgdir/usr/bin/sc-blueprint-tracker"
+  install -Dm0644 "$srcdir/archverse-overlay.desktop" \
     "$pkgdir/usr/share/applications/archverse-overlay.desktop"
-  install -Dm644 "$root/app/build/icon.png" \
+  install -Dm0644 "$root/app/build/icon.png" \
     "$pkgdir/usr/share/icons/hicolor/256x256/apps/archverse-overlay.png"
-  install -Dm644 "$root/LICENSE.md" \
+  install -Dm0644 "$root/LICENSE.md" \
     "$pkgdir/usr/share/licenses/$pkgname/LICENSE.md"
+  install -Dm0644 "$srcdir/70-archverse-input.rules" \
+    "$pkgdir/usr/lib/udev/rules.d/70-archverse-input.rules"
 
   chmod 0755 "$pkgdir/opt/archverse-overlay/bin/sc-blueprint-tracker"
   if [[ -f "$pkgdir/opt/archverse-overlay/runtime/electron/chrome-sandbox" ]]; then
     chmod 4755 "$pkgdir/opt/archverse-overlay/runtime/electron/chrome-sandbox"
   fi
-  'libx11'
-  'libxtst'
-)
-optdepends=(
-  'kscreen: more accurate KDE multi-monitor geometry detection'
-)
-provides=('sc-blueprint-tracker')
-conflicts=('sc-blueprint-tracker')
-options=('!strip')
-
-_appver='0.1.42-r31-alpha.21'
-source=(
-  "ArchVerse-Overlay-${_appver}-payload.tar.gz"
-  'archverse-overlay'
-  'archverse-overlay.desktop'
-)
-sha256sums=('SKIP' 'SKIP' 'SKIP')
-
-package() {
-  local srcroot="$srcdir/ArchVerse-Overlay-${_appver}"
-
-  install -d "$pkgdir/opt/archverse-overlay"
-  cp -a "$srcroot/." "$pkgdir/opt/archverse-overlay/"
-
-  install -Dm755 "$srcdir/archverse-overlay" "$pkgdir/usr/bin/archverse-overlay"
-  ln -s archverse-overlay "$pkgdir/usr/bin/sc-blueprint-tracker"
-  install -Dm644 "$srcdir/archverse-overlay.desktop" \
-    "$pkgdir/usr/share/applications/archverse-overlay.desktop"
-  install -Dm644 "$srcroot/app/build/icon.png" \
-    "$pkgdir/usr/share/icons/hicolor/256x256/apps/archverse-overlay.png"
-  install -Dm644 "$srcroot/LICENSE.md" \
-    "$pkgdir/usr/share/licenses/$pkgname/LICENSE.md"
 }

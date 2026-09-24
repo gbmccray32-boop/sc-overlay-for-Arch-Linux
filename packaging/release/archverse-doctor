@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+set -u
+
+APP_ROOT="${ARCHVERSE_APP_ROOT:-/opt/archverse-overlay}"
+OS_RELEASE_FILE="${ARCHVERSE_OS_RELEASE_FILE:-/etc/os-release}"
+mode="${1:-}"
+ok=1
+
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+read_os_release() {
+  ID=""
+  ID_LIKE=""
+  PRETTY_NAME="Unknown Linux"
+  if [[ -r "$OS_RELEASE_FILE" ]]; then
+    # os-release is a shell-compatible assignment file maintained by the operating system.
+    # shellcheck disable=SC1090
+    source "$OS_RELEASE_FILE"
+  fi
+}
+
+distro_family() {
+  local tokens=" $(lower "${ID:-} ${ID_LIKE:-}") "
+  if [[ "$tokens" =~ [[:space:]](arch|cachyos|endeavouros|manjaro)[[:space:]] ]]; then
+    printf 'arch'
+  elif [[ "$tokens" =~ [[:space:]](fedora|rhel|centos|nobara)[[:space:]] ]]; then
+    printf 'fedora'
+  elif [[ "$tokens" =~ [[:space:]](debian|ubuntu|linuxmint|neon|pop)[[:space:]] ]]; then
+    printf 'debian'
+  else
+    printf 'unsupported'
+  fi
+}
+
+session_type() {
+  local session
+  session="$(lower "${XDG_SESSION_TYPE:-}")"
+  if [[ "$session" == "x11" || "$session" == "wayland" ]]; then
+    printf '%s' "$session"
+  elif [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    printf 'wayland'
+  elif [[ -n "${DISPLAY:-}" ]]; then
+    printf 'x11'
+  else
+    printf 'unknown'
+  fi
+}
+
+desktop_type() {
+  local desktop
+  desktop="$(lower "${XDG_CURRENT_DESKTOP:-}:${DESKTOP_SESSION:-}")"
+  if [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" || "$desktop" == *hypr* ]]; then
+    printf 'hyprland'
+  elif [[ -n "${KDE_FULL_SESSION:-}" || "$desktop" == *kde* || "$desktop" == *plasma* ]]; then
+    printf 'kde'
+  else
+    printf 'unsupported'
+  fi
+}
+
+supported_session() {
+  local family="$1" session="$2" desktop="$3"
+  [[ "$family" != "unsupported" ]] || return 1
+  [[ "$desktop" == "kde" ]] || return 1
+  [[ "$session" == "x11" || "$session" == "wayland" ]] || return 1
+  if [[ "$session" == "wayland" && -z "${DISPLAY:-}" ]]; then
+    # Candidate 18 deliberately runs Electron through XWayland even on KDE Wayland.
+    return 1
+  fi
+  return 0
+}
+
+check_command() {
+  local command_name="$1" label="${2:-$1}"
+  if command -v "$command_name" >/dev/null 2>&1; then
+    printf '[OK]       %-30s %s\n' "$label" "$(command -v "$command_name")"
+  else
+    printf '[MISSING]  %-30s\n' "$label"
+    ok=0
+  fi
+}
+
+read_os_release
+family="$(distro_family)"
+session="$(session_type)"
+desktop="$(desktop_type)"
+
+if [[ "$mode" == "--detect-only" ]]; then
+  printf 'family=%s\nsession=%s\ndesktop=%s\n' "$family" "$session" "$desktop"
+  if supported_session "$family" "$session" "$desktop"; then
+    printf 'supported=yes\n'
+    exit 0
+  fi
+  printf 'supported=no\n'
+  exit 4
+fi
+
+printf 'ArchVerse Candidate 18 KDE diagnostics\n\n'
+printf 'Distribution: %s (family=%s)\n' "${PRETTY_NAME:-Unknown Linux}" "$family"
+printf 'Desktop:      %s\n' "$desktop"
+printf 'Session:      %s\n' "$session"
+
+if [[ "$(uname -m)" != "x86_64" ]]; then
+  printf '[UNSUPPORTED] Architecture %s; Candidate 18 is x86_64 only.\n' "$(uname -m)"
+  ok=0
+fi
+if ! getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
+  printf '[UNSUPPORTED] Candidate 18 requires a glibc-based Linux distribution.\n'
+  ok=0
+fi
+if ! supported_session "$family" "$session" "$desktop"; then
+  printf '[UNSUPPORTED] Candidate 18 supports KDE X11 and KDE Wayland with XWayland.\n'
+  [[ "$desktop" == "hyprland" ]] && \
+    printf '              Hyprland support is reserved for the separate Omarchy port.\n'
+  [[ "$session" == "wayland" && -z "${DISPLAY:-}" ]] && \
+    printf '              KDE Wayland is active, but no XWayland DISPLAY is available.\n'
+  ok=0
+fi
+
+printf '\nRuntime commands\n'
+check_command node 'Node.js sidecar'
+check_command tesseract 'Tesseract OCR fallback'
+check_command pw-dump 'PipeWire discovery'
+check_command gst-launch-1.0 'GStreamer runner'
+check_command gst-inspect-1.0 'GStreamer inspection'
+check_command xdotool 'X11/XWayland control'
+check_command xprop 'X11 window properties'
+check_command xrandr 'X11 geometry fallback'
+check_command spectacle 'KDE Spectacle fallback'
+check_command magick 'ImageMagick filters'
+check_command ffplay 'Mining alert audio'
+
+if command -v gst-inspect-1.0 >/dev/null 2>&1; then
+  if gst-inspect-1.0 pipewiresrc >/dev/null 2>&1; then
+    printf '[OK]       %-30s\n' 'GStreamer pipewiresrc'
+  else
+    printf '[MISSING]  %-30s\n' 'GStreamer pipewiresrc'
+    ok=0
+  fi
+fi
+
+if [[ -x "$APP_ROOT/bin/sc-blueprint-tracker" && -x "$APP_ROOT/runtime/electron/electron" ]]; then
+  printf '[OK]       %-30s %s\n' 'Candidate 18 payload' "$APP_ROOT"
+else
+  printf '[MISSING]  %-30s %s\n' 'Candidate 18 payload' "$APP_ROOT"
+  ok=0
+fi
+
+keyboard_found=0
+keyboard_readable=0
+for keyboard in /dev/input/by-id/*-event-kbd; do
+  [[ -e "$keyboard" ]] || continue
+  identity="$(lower "$(basename -- "$keyboard")")"
+  if [[ "$identity" == *mouse* && "$identity" != *keyboard* && "$identity" != *keypad* ]]; then
+    continue
+  fi
+  keyboard_found=$((keyboard_found + 1))
+  [[ -r "$keyboard" ]] && keyboard_readable=$((keyboard_readable + 1))
+done
+if (( keyboard_readable > 0 )); then
+  printf '[OK]       %-30s %s/%s readable\n' 'Physical keyboard input' "$keyboard_readable" "$keyboard_found"
+else
+  printf '[MISSING]  %-30s %s devices found\n' 'Physical keyboard input' "$keyboard_found"
+  printf '           Reinstall Candidate 18, then log out and back in if access remains unavailable.\n'
+  ok=0
+fi
+
+if [[ "$session" == "wayland" ]]; then
+  if command -v busctl >/dev/null 2>&1 && \
+      busctl --user introspect org.freedesktop.portal.Desktop \
+        /org/freedesktop/portal/desktop org.freedesktop.portal.ScreenCast >/dev/null 2>&1; then
+    printf '[OK]       %-30s\n' 'XDG desktop portal'
+  else
+    printf '[MISSING]  %-30s\n' 'XDG desktop portal'
+    printf '           Log into Plasma again after installing the portal packages.\n'
+    ok=0
+  fi
+fi
+
+if (( ok )); then
+  printf '\nCandidate 18 KDE runtime requirements are ready.\n'
+  exit 0
+fi
+printf '\nOne or more Candidate 18 requirements are missing or unsupported.\n'
+exit 1

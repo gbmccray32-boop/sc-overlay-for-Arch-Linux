@@ -12,6 +12,50 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Alpha23 Candidate 18 Nobara keyboard authority repair — September 23, 2026
+
+Branch: `agent/alpha23-candidate18-nobara-keyboard`, based on packaged-verified Candidate 17
+artifact `10733032746` and native archive SHA-256
+`90b75e9ceb4c075eadd205284128d01a17cac2489fac8697dde32310995aab06`. Upstream remains
+frozen at v0.1.47 `e482c1ce3d461b390079486115293535be9b2ab7`.
+
+Gabe's Candidate 17 Nobara Electron log is 17,906 bytes, SHA-256
+`04b50dd74826f8be34898ffb9dcc00c4dc7813a714f298d38bfe1fef342816a8`. It proves the held-`F`
+failure occurs before pointer, widget, or focus logic. uIOhook reported
+`XkbGetKeyboard failed to locate a valid keyboard`; evdev opened the Logitech G300s mouse's
+auxiliary keyboard endpoint; and the physical SINO WEALTH keyboard failed with `EACCES` on
+`/dev/input/event5`. The runtime nevertheless declared evdev authoritative and suppressed all
+uIOhook transitions. No `F` down, held, released, or focus-latch event appears in the log. Star
+Citizen PID binding, KDE portal PipeWire capture, widget-region publication, and OCR remained
+active, so capture and session routing are not causal.
+
+Candidate 18 keeps uIOhook active until a non-pointer physical keyboard stream successfully opens.
+It groups aliases by event node, rejects mouse/trackball/touchpad-labeled auxiliary keyboard
+endpoints, exposes dynamic evdev authority, restores uIOhook if the keyboard disappears, and logs
+an actionable permission error. The native packages install a systemd-udev `uaccess` rule for
+keyboard event devices. This grants raw-key access to the active local desktop session without
+adding the user to the broad `input` group. The doctor verifies that at least one physical keyboard
+endpoint is readable.
+
+The Candidate 16 checksum-pinned Arch, Fedora/Nobara, and Debian installer work is merged into the
+Candidate 18 branch and advanced to the Candidate 18 payload. The local installer detects its own
+package directory automatically. Candidate 18 uses a deterministic native archive so all three
+package definitions can pin SHA-256
+`1c5bb72be177704ff1dc18788d9d65457e6d9965ddf68b7c8bdee6201c66495f`.
+
+**Automated verified locally:** the exact field failure regression passes; mouse auxiliary alias
+deduplication, permission denial, fallback retention, physical-keyboard promotion, and main-process
+authority markers pass. All inherited static capture, session, cadence, Gamescope pointer,
+normal-pointer, window-class, refinery, RapidOCR, renderer/IPC, Linux bridge, main-startup, cargo,
+encoder, portal, and preload checks pass. Installer detection reports seven passing platform cases;
+package definitions and workflow YAML pass; JavaScript and shell syntax and `git diff --check` pass.
+The local config E2E test is blocked by this execution environment's
+`uv_interface_addresses returned Unknown system error 1`; CI remains responsible for that unchanged
+test, the real Electron tests, widget integration, native packages, and artifact verification.
+
+Candidate 18 packaging and both in-game launch-mode gates are **unverified** until CI and Gabe's
+field test finish.
+
 ## Alpha23 Candidate 17 Nobara window-class repair — September 23, 2026
 
 Branch: `agent/alpha23-candidate17-nobara-window-class`, based on packaged-verified Candidate 16
@@ -56,17 +100,9 @@ optional emote providers returned HTTP 404; chat explicitly continued without th
 log contains no capture, OCR, Mining, refinery, scanner, process, or fatal error. It also contains
 no held-`F` input diagnostics.
 
-New field issue: Candidate 17 sometimes does not register the `F` key. The current sidecar log
-cannot distinguish a missing low-level key event from rejected pointer/widget ownership or a focus
-handoff failure. Do not change the input path until a controlled reproduction supplies the complete
-Electron log and identifies whether the launch used normal X11/XWayland or Gamescope.
+The later held-`F` diagnosis and Candidate 18 repair are recorded above.
 
-Next field step: run the extracted Candidate 17 `./bin/sc-blueprint-tracker` with stdout and stderr
-redirected to `~/.config/sc-blueprint-tracker/electron-candidate17.log`. Reproduce one successful
-and one failed `F` press if possible, then preserve the complete Electron log. Note the launch mode,
-whether the pointer was over an ArchVerse widget, and whether Star Citizen itself received `F`.
-
-## Alpha23 Candidate 16 pointer-mode isolation — September 20, 2026
+## Alpha23 Candidate 16 pointer-mode isolation — field verified September 22, 2026
 
 Branch: `agent/alpha23-candidate16-pointer-mode-isolation`, based on packaged-verified Candidate 15
 artifact `10596449945` and native archive SHA-256
@@ -104,7 +140,46 @@ integration gates. Artifact `10598690018` produced
 verification passed all 1,657 internal manifest entries. The Candidate 15-to-16 comparison found
 only the intended pointer controller, package/provenance/field-guide changes, the updated inherited
 pointer test, and the new mode-isolation test; all other files and all five symlinks match. Packaging
-is **verified**. Both normal Wine/XWayland and Gamescope field gates remain **unverified**.
+is **verified**.
+
+**Both launch-mode field gates are now verified.** Gabe first reported that Candidate 16's normal
+Wine/XWayland run worked without an observed issue. The supplied normal Electron and sidecar logs
+confirmed that the native KDE portal stream, refinery reader, widget interaction, and host-coordinate
+pointer path operated together without the Candidate 15 cursor fight.
+
+Gabe then completed a roughly 91-minute Gamescope run and reported no observed issue. The complete
+Gamescope Electron log, SHA-256
+`46a1a7857fc9a979c917254c01d4346658ccbba69377292a5ba879356f21f059`, and sidecar log,
+SHA-256 `a4227cafd7a4a831a7174af78313adaae4016c5fcf454a8229b51d3ba1016d58`, show:
+
+- exact Star Citizen PID binding to its Gamescope ancestor and direct `gamescope-pipewire` capture
+  from PipeWire node 143 throughout active play;
+- 353 capture heartbeat samples at 9 ms minimum, 62 ms median, 69 ms p95, and 79 ms maximum;
+- 1,066 Mining OCR observations at 23 ms minimum, 189 ms median, 315 ms p95, and 453 ms maximum;
+- 354 Mining heartbeats with zero pending or failed IPC, 265 signature detections, 159 commit
+  submissions, 154 acknowledgements, and no rejected commit;
+- 141 sidecar Mining signature events admitted by Game.log vehicle authority plus an exact Resource
+  Signature value;
+- four accepted refinery reads at LEVSKI with a decreasing timer;
+- successful held-`F` interaction with Mining, Hauling, Notepad, Battaglia, Twitch chat, and generic
+  widgets, followed by focus and click-through restoration; and
+- successful Gamescope Location Sync to Crusader.
+
+Non-blocking recovery evidence remains visible and must not be hidden: five bounded vehicle-gate
+GET timeouts retained the last confirmed state and recovered; one RapidOCR native error recycled the
+worker and used Tesseract fallback; and a final Mining commit timeout retained the newest result while
+the game was quitting. After the main Star Citizen PID exited, Wine briefly exposed a transient
+replacement PID outside the prior Gamescope ancestry. That exit-time race attempted one normal portal
+session, which was denied, and briefly captured a fallback desktop frame before the PID disappeared.
+It did not affect active gameplay, but session-shutdown cleanup is a future hardening item. The
+sidecar also received four `400 bad_size` responses while trying to share a rotated 4 MiB Game.log;
+local readers continued normally, so this is a separate cloud log-share defect.
+
+Candidate 16 is therefore the **field-verified Linux integration baseline** for normal KDE
+Wine/XWayland and Gamescope. It is not yet a current Arch KDE or Nobara KDE distribution release.
+Fresh distro packages must still pass dependency, installation, launch, portal, direct Gamescope,
+widget, and upgrade/rollback checks. Widget development may now continue from Candidate 16 under
+`docs/LINUX-WIDGET-DEVELOPER-HANDOFF.md` without freezing ordinary widget UI and feature work.
 
 ## Alpha23 Candidate 15 refinery reader repair — September 20, 2026
 
@@ -1311,7 +1386,8 @@ These files remain useful as history, but they are not current status authoritie
 
 ## Distribution status
 
-The latest packaged-verified native deliverable is Alpha23 Candidate 17. Candidate 14's normal KDE portal
+The latest packaged-verified native deliverable is Alpha23 Candidate 17; Candidate 18 is under
+automated package validation. Candidate 14's normal KDE portal
 capture, Mining, and Hauling are field-working, while Candidate 13's direct Gamescope capture passed
 its field test. Candidate 15 repaired the shared refinery classifier without replacing either capture
 path. Candidate 16 isolates normal host pointer coordinates from Gamescope's nested coordinate
@@ -1319,9 +1395,57 @@ mapping. Candidate 17 replaces the crashing Nobara `xdotool` class probe without
 capture path. Candidate 8k remains the older rollback whose Mining and base operation Gabe reported
 working.
 
-The current Arch, Fedora/Nobara, and Debian package set contains Candidate 16. Do not publish
-Candidate 17 or claim that the three-distribution packages include its repair until the Nobara field
-gate passes and fresh distribution packages pass their own checks.
+Candidate 16 now has checksum-pinned test packages for Arch-family KDE, Fedora/Nobara KDE, and
+Debian/Ubuntu KDE. Automated package builds, native package-manager dependency transactions,
+metadata checks, and byte-for-byte payload identity passed. The Arch-family download also passed an
+independent ZIP digest, extraction, internal checksum, KDE/XWayland detection, and installer dry-run
+check. These packages remain test candidates: installation, launch, capture, widget, upgrade, and
+rollback checks are still field-unverified on their target distributions.
+
+## Candidate 16 KDE packaging checkpoint
+
+- Branch: `agent/candidate16-kde-packaging-installer`
+- Package source commit: `a48573fa3a41406dc9c78a2c550542098b8d433b`
+- Source payload commit: `4f9f94c2907470fc095859ee659c465173e647e2`
+- Source payload workflow: `35488559407`
+- Source archive SHA-256:
+  `244c4da008883a3bff8143078bda85c2a4f23450e11a459f2e5cc3c303483091`
+- Green package workflow: `35811665101`
+- Arch artifact: `ArchVerse-Candidate16-Arch-KDE-test1`, ID `10729789786`, ZIP SHA-256
+  `7aa6b6aa381e308ff537fbe245986c37f39b63355e8115956e8b5aff7d4bd80e`
+- Fedora/Nobara artifact: `ArchVerse-Candidate16-Nobara-KDE-test1`, ID `10730480457`, ZIP SHA-256
+  `8521abffe34f28283b0940ab5fefb0a252d8bd20ee53f25e56c4b1a8c48c1b7d`
+- Debian/Ubuntu artifact: `ArchVerse-Candidate16-Debian-KDE-test1`, ID `10730635092`, ZIP SHA-256
+  `2e3277144b82b90cf9cec0f2aadd542c04e09d328858561b081ce800fa71df4e`
+- Artifacts expire on December 22, 2026 unless promoted or rebuilt.
+
+The installer detects Arch, Fedora/Nobara, or Debian/Ubuntu families, accepts KDE X11 and KDE
+Wayland with XWayland, verifies the selected package checksum, delegates installation to the native
+package manager, and runs `archverse-doctor`. It deliberately rejects Hyprland, unsupported
+desktops, native Wayland without XWayland, non-x86-64 systems, and non-glibc systems. Hyprland stays
+reserved for the separate Omarchy port.
+
+Automated evidence from workflow `35811665101`:
+
+- exact Candidate 16 archive provenance and checksum passed;
+- 7 installer/doctor platform and checksum-manifest cases passed;
+- Arch `pacman`, Fedora `dnf`, and Ubuntu `apt` dependency transactions passed;
+- all application files and symlinks in the Arch, RPM, and Debian packages matched the verified
+  Candidate 16 payload byte-for-byte;
+- each package's internal `SHA256SUMS` passed; and
+- package metadata and all three GitHub artifact uploads passed.
+
+Independent evidence for the final Arch artifact:
+
+- downloaded ZIP matched GitHub's artifact digest;
+- ZIP integrity and internal package SHA-256 passed;
+- package SHA-256 was
+  `3b3c52daf513dcd7bc2b68cf7221e15a577dfd74c1c7b24682e0bb5c8a0056ec`; and
+- a simulated CachyOS KDE Wayland/XWayland install selected the Arch package, verified its checksum,
+  and produced the expected `pacman -U --needed --noconfirm` command with exit status 0.
+
+Next single step: install the Arch-family artifact on Gabe's CachyOS KDE system, run
+`archverse-doctor`, then exercise normal KDE and Gamescope separately before promotion.
 
 ## Continuity maintenance
 

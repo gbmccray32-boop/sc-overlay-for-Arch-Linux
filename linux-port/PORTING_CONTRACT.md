@@ -93,6 +93,32 @@ The following are ArchVerse platform contracts:
 - RapidOCR remains isolated in a disposable Node child process with bounded queue/thread resources.
 - OpenGL remains the normal Linux renderer, with software Safe Mode as the fallback.
 
+### 2.1 Widget development boundary
+
+The Linux contracts protect behavior and integration interfaces; they do not freeze widget UI or
+feature development. A developer may add, remove, restyle, reorganize, or update widgets for Arch
+KDE and Nobara KDE when the change preserves the following boundaries:
+
+- Widget code may consume the existing HTTP, event, preload, and canvas interfaces. It may not start
+  a competing screen-capture pipeline, query game memory, inject into Star Citizen, or bypass the
+  exact-session privacy gate.
+- Widget interaction regions must continue to register through the established canvas/renderer
+  protocol. Held `F`, hard click-through outside owned regions, one native cursor, physical pointer
+  forwarding, and `Shift+F6` arrange mode remain platform-owned behavior.
+- Widget layouts must remain in the established full-canvas coordinate space. A widget must not
+  apply Gamescope scaling or normal-host pointer conversion itself.
+- Widget settings may add application-owned values, but they may not rename the canonical Linux
+  config root or make the protected Linux interaction controls user-overridable.
+- Widget features may use sidecar routes and state, but authoritative Mining admission, Game.log
+  vehicle presence, capture selection, OCR isolation, and sidecar supervision remain outside the
+  widget layer.
+- Arch KDE and Nobara KDE use the same runtime behavior. Distribution packaging may express
+  different dependency names or metadata, but must not create separate widget or capture logic.
+
+Changes that cross these seams are integration changes, not ordinary widget changes. They require
+the complete relevant Linux regression gates in addition to widget tests. The developer-facing file
+map and handoff checklist are in `docs/LINUX-WIDGET-DEVELOPER-HANDOFF.md`.
+
 ## 3. Mining integration rule
 
 Mining authority is the conjunction of two independent facts:

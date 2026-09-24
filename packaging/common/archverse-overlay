@@ -9,9 +9,8 @@ PAYLOAD_LAUNCHER="$APP_ROOT/bin/sc-blueprint-tracker"
   exit 127
 }
 
-# Arch-family packages intentionally keep the already-tested system Electron 42 path.
-# Debian/Fedora packages ship the same Electron major in /opt so they do not depend on
-# a distro-specific Electron package being available.
+# Every Candidate 18 package carries the same verified Electron runtime. Keep the system Electron
+# fallback only for diagnostics and recovery from an incomplete installation.
 if [[ -z "${SC_TRACKER_ELECTRON_BIN:-}" ]]; then
   if [[ -x "$APP_ROOT/runtime/electron/electron" ]]; then
     export SC_TRACKER_ELECTRON_BIN="$APP_ROOT/runtime/electron/electron"

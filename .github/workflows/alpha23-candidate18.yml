@@ -1,0 +1,220 @@
+name: Alpha23 Candidate 18 Nobara Keyboard
+
+on:
+  push:
+    branches: [agent/alpha23-candidate18-nobara-keyboard]
+    paths-ignore:
+      - docs/ARCHVERSE-CONTINUITY.md
+      - ARCHVERSE-HANDOFF.generated.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: alpha23-candidate18-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - name: Install native portal build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libglib2.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-pipewire gstreamer1.0-plugins-base
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify upstream v0.1.47 source gates
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm run test:reppage
+          npm run test:repscan
+          npm run control:repname
+          node --import tsx src/refinery-classify.test.ts
+          node --import tsx src/mineable.test.ts
+          npm run build:server
+      - uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Alpha23-Candidate17-field-test
+          path: candidate17-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 35820400137
+      - name: Verify Candidate 17 and stage Candidate 18
+        run: |
+          set -euo pipefail
+          archive=candidate17-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate17.tar.gz
+          test "$(sha256sum "$archive" | cut -d ' ' -f1)" = 90b75e9ceb4c075eadd205284128d01a17cac2489fac8697dde32310995aab06
+          (cd candidate17-artifact && sha256sum -c SHA256SUMS)
+          mkdir candidate17
+          tar --no-same-owner -xzf "$archive" -C candidate17
+          baseline="$(realpath candidate17/ArchVerse-Native-0.1.47-r31.alpha23.candidate17)"
+          node "$baseline/tests/alpha23-candidate17-window-class.test.cjs"
+          node packaging/common/stage-alpha23-candidate18.mjs "$baseline" "$RUNNER_TEMP/field/ArchVerse-Native-0.1.47-r31.alpha23.candidate18"
+      - name: Run packaged gates
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/field/ArchVerse-Native-0.1.47-r31.alpha23.candidate18"
+          find "$candidate/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          node --check "$candidate/app/server/server.mjs"
+          python3 packaging/common/alpha23-renderer-audit.py "$candidate"
+          node packaging/common/alpha23-linux-bridge-selftest.cjs "$candidate"
+          node packaging/common/alpha23-main-startup-selftest.cjs "$candidate/app/electron/main.cjs"
+          node "$candidate/tests/r31-alpha8-gamescope-pointer.test.cjs" "$candidate/app"
+          node "$candidate/tests/alpha23-candidate16-pointer-mode.test.cjs"
+          node "$candidate/tests/alpha23-candidate17-window-class.test.cjs"
+          node "$candidate/tests/alpha23-candidate18-keyboard.test.cjs" "$candidate"
+          node "$candidate/tests/alpha23-candidate6-normal-capture.test.cjs"
+          node "$candidate/tests/alpha23-candidate8-capture.test.cjs"
+          node "$candidate/tests/alpha23-candidate9-session.test.cjs"
+          node "$candidate/tests/alpha23-candidate10-cadence.test.cjs"
+          node "$candidate/tests/alpha23-candidate11-capture.test.cjs"
+          node "$candidate/tests/alpha23-candidate11-cargo.test.cjs"
+          node "$candidate/tests/alpha23-candidate12-encoder.test.cjs"
+          node "$candidate/tests/alpha23-candidate13-native-portal.test.cjs"
+          node "$candidate/tests/alpha23-candidate14-portal-reply.test.cjs"
+          node "$candidate/tests/alpha23-candidate15-refinery.test.cjs"
+          node "$candidate/tests/alpha23-candidate15-rapidocr-recycle.test.cjs"
+          node "$candidate/tests/alpha23-candidate11-preload.test.cjs"
+          xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox "$candidate/tests/alpha23-candidate12-electron-encoder.cjs"
+          xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox "$candidate/tests/alpha23-candidate13-electron-raw-frame.cjs"
+          xvfb-run -a node "$candidate/tests/alpha23-candidate8-renderer.test.cjs" "$GITHUB_WORKSPACE/packaging/common/alpha23-candidate7"
+          xvfb-run -a node "$candidate/tests/alpha23-candidate9-renderer.test.cjs" "$GITHUB_WORKSPACE/candidate17/ArchVerse-Native-0.1.47-r31.alpha23.candidate17"
+          node tools/archverse-config-e2e.mjs "$candidate/app/server"
+          mkdir -p node_modules/electron/dist
+          printf '#!/bin/sh\nexec "%s" --no-sandbox "$@"\n' "$candidate/runtime/electron/electron" > node_modules/electron/dist/electron.exe
+          chmod +x node_modules/electron/dist/electron.exe
+          xvfb-run -a npm run control:ageband
+      - name: Run staged widget integration
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/field/ArchVerse-Native-0.1.47-r31.alpha23.candidate18"
+          mkdir -p "$RUNNER_TEMP/alpha23-widget-config"
+          printf '%s\n' '{"syncEnabled":false,"shareLogs":false,"setupComplete":true}' > "$RUNNER_TEMP/alpha23-widget-config/config.json"
+          SC_TRACKER_CONFIG_DIR="$RUNNER_TEMP/alpha23-widget-config" PORT=18778 node "$candidate/app/server/server.mjs" > "$RUNNER_TEMP/alpha23-widget-server.log" 2>&1 &
+          sidecar=$!
+          trap 'kill "$sidecar" 2>/dev/null || true' EXIT
+          for _ in {1..30}; do curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null
+          OVERLAY_PORT=18778 xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox tools/widget-dom-test.cjs --pairs
+      - name: Package deterministic Candidate 18 archive
+        run: |
+          set -euo pipefail
+          name=ArchVerse-Native-0.1.47-r31.alpha23.candidate18
+          root="$RUNNER_TEMP/field/$name"
+          mkdir -p native-artifact
+          (cd "$root" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && sha256sum -c SHA256SUMS >/dev/null)
+          tar --sort=name --mtime='UTC 2026-09-23 00:00:00' --owner=0 --group=0 --numeric-owner -cf - -C "$RUNNER_TEMP/field" "$name" | gzip -n > "native-artifact/$name.tar.gz"
+          test "$(sha256sum "native-artifact/$name.tar.gz" | cut -d ' ' -f1)" = 1c5bb72be177704ff1dc18788d9d65457e6d9965ddf68b7c8bdee6201c66495f
+          (cd native-artifact && sha256sum "$name.tar.gz" > SHA256SUMS)
+          cp "$root/FIELD-TEST.md" native-artifact/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha23-Candidate18-native
+          path: native-artifact/
+          if-no-files-found: error
+          retention-days: 90
+
+  packages:
+    needs: candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ArchVerse-Alpha23-Candidate18-native
+          path: candidate18-artifact
+      - name: Verify definitions and installer
+        run: |
+          set -euo pipefail
+          payload=candidate18-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate18.tar.gz
+          test "$(sha256sum "$payload" | cut -d ' ' -f1)" = 1c5bb72be177704ff1dc18788d9d65457e6d9965ddf68b7c8bdee6201c66495f
+          (cd candidate18-artifact && sha256sum -c SHA256SUMS)
+          bash -n packaging/common/archverse-overlay packaging/debian/build-deb.sh packaging/release/archverse-doctor packaging/release/install-archverse.sh packaging/tests/*.sh
+          packaging/tests/installer-detection.test.sh
+          packaging/tests/package-definition.test.sh
+      - name: Build Debian package
+        run: |
+          mkdir -p dist/debian
+          packaging/debian/build-deb.sh candidate18-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate18.tar.gz dist/debian
+          sudo apt-get update
+          apt-get --simulate install "$PWD"/dist/debian/*.deb
+      - name: Build Arch package
+        run: |
+          set -euo pipefail
+          mkdir -p package-work/arch/input package-work/arch/output dist/arch
+          cp packaging/arch/PKGBUILD packaging/arch/archverse-overlay.install package-work/arch/input/
+          cp packaging/common/archverse-overlay packaging/common/70-archverse-input.rules package-work/arch/input/
+          cp packaging/release/archverse-doctor packaging/native/archverse-overlay.desktop package-work/arch/input/
+          cp candidate18-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate18.tar.gz package-work/arch/input/
+          docker run --rm -v "$PWD/package-work/arch/input:/input:ro" -v "$PWD/package-work/arch/output:/output" archlinux:base-devel bash -ceu '
+            useradd --create-home builder
+            cp -a /input /tmp/build
+            chown -R builder:builder /tmp/build
+            runuser -u builder -- bash -lc "cd /tmp/build && makepkg --cleanbuild --force --nodeps --noconfirm"
+            cp /tmp/build/*.pkg.tar.zst /output/
+          '
+          cp package-work/arch/output/*.pkg.tar.zst dist/arch/
+      - name: Build Fedora and Nobara package
+        run: |
+          set -euo pipefail
+          mkdir -p package-work/fedora/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} dist/fedora
+          cp packaging/fedora/archverse-overlay.spec package-work/fedora/SPECS/
+          cp packaging/common/archverse-overlay packaging/common/70-archverse-input.rules package-work/fedora/SOURCES/
+          cp packaging/release/archverse-doctor packaging/native/archverse-overlay.desktop package-work/fedora/SOURCES/
+          cp candidate18-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate18.tar.gz package-work/fedora/SOURCES/
+          docker run --rm -v "$PWD/package-work/fedora:/work" fedora:latest bash -ceu '
+            dnf install -y rpm-build
+            rpmbuild --define "_topdir /work" -bb /work/SPECS/archverse-overlay.spec
+          '
+          rpm_file="$(find package-work/fedora/RPMS -type f -name '*.rpm' -print -quit)"
+          test -n "$rpm_file"
+          cp "$rpm_file" dist/fedora/archverse-overlay-0.1.47-1.r31.alpha23.candidate18.x86_64.rpm
+          docker run --rm -v "$PWD/dist/fedora:/packages:ro" fedora:latest bash -ceu '
+            dnf install -y --setopt=tsflags=test /packages/archverse-overlay-0.1.47-1.r31.alpha23.candidate18.x86_64.rpm
+          '
+      - name: Verify package identity
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libarchive-tools rpm2cpio cpio
+          packaging/tests/package-contract.test.sh \
+            candidate18-artifact/ArchVerse-Native-0.1.47-r31.alpha23.candidate18.tar.gz \
+            dist/arch/archverse-overlay-0.1.47.r31.alpha23.candidate18-1-x86_64.pkg.tar.zst \
+            dist/fedora/archverse-overlay-0.1.47-1.r31.alpha23.candidate18.x86_64.rpm \
+            dist/debian/archverse-overlay_0.1.47~r31~alpha23~candidate18-1_amd64.deb
+      - name: Assemble distribution downloads
+        run: |
+          set -euo pipefail
+          for family in arch fedora debian; do
+            cp packaging/release/install-archverse.sh packaging/release/archverse-doctor "dist/$family/"
+            cp docs/CANDIDATE18-KDE-INSTALLER.md "dist/$family/TESTING.md"
+            cp packaging/common/alpha23-candidate18/FIELD-TEST.md "dist/$family/FIELD-TEST.md"
+            chmod 0755 "dist/$family/install-archverse.sh" "dist/$family/archverse-doctor"
+            (cd "dist/$family" && find . -maxdepth 1 -type f \( -name '*.pkg.tar.zst' -o -name '*.rpm' -o -name '*.deb' \) -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Candidate18-Arch-KDE-test
+          path: dist/arch/
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Candidate18-Nobara-KDE-test
+          path: dist/fedora/
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Candidate18-Debian-KDE-test
+          path: dist/debian/
+          if-no-files-found: error
+          retention-days: 90

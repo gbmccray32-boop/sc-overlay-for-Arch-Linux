@@ -7,6 +7,9 @@ sc-loadout-overlay.code-workspace
 # local dev/test state
 .replay-state/
 release/
+!packaging/release/
+!packaging/release/archverse-doctor
+!packaging/release/install-archverse.sh
 build/server/
 
 # personal runtime config (erkul URLs + sync token) — seeded from DEFAULTS, stored in %APPDATA%
