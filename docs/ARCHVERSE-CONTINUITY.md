@@ -75,7 +75,32 @@ Arch artifact `10783683341` has ZIP digest
 Independent download verification passed for the Fedora/Nobara artifact: ZIP integrity and digest,
 its internal manifest, and RPM SHA-256
 `556571aae92ae9471e2e30c84e08e52f8474a8bb7c2737e363cef5378021b2a0` all match. Both in-game
-launch-mode gates remain **unverified** until Gabe installs Candidate 18 and tests held `F`.
+launch-mode gates were still **unverified** at the package-verification checkpoint.
+
+**Field verified on Nobara 44 KDE:** Gabe installed Candidate 18 and completed both normal
+Wine/XWayland and Gamescope sessions. `archverse-doctor` reported every runtime dependency, the KDE
+portal, the Candidate 18 payload, and one readable physical keyboard as `[OK]`. The normal launch
+opened the SINO WEALTH physical keyboard through evdev, rejected the Logitech G300s mouse's
+auxiliary keyboard endpoint, and delivered every tested `F` down and release transition. With Star
+Citizen running, held-`F` widget interaction worked.
+
+The Gamescope run bound the exact `StarCitizen.exe` PID to its Gamescope ancestor and retained a
+direct BGRx 1920x1080 PipeWire stream. Steady capture completed in 5–11 ms, Mining processing
+averaged about 42–54 ms, and IPC failures remained zero. Held `F` entered the Mining widget and
+panel, verified the host-pointer handoff, pinned the compositor mouse stream, and restored hard
+click-through after leaving the widgets. The Star Citizen session released cleanly at game exit.
+No ArchVerse crash, capture restart, permission failure, or lost keyboard stream occurred.
+
+The only observed interruption was KDE Plasma's optional long-press alternate-character feature,
+which consumes held letter keys and displays a character-selection popup. Disabling **System
+Settings → Keyboard → On-Screen Keyboard → Alternate characters — Show popup when holding a key**
+restores normal Gamescope gameplay. This is documented in the public installer README and is not an
+ArchVerse defect.
+
+Candidate 18 is therefore the **field-verified Nobara KDE release baseline** for both normal
+Wine/XWayland and Gamescope. The Arch-family package contains the byte-identical native application
+payload already proven on Arch/CachyOS through Candidate 16 and passed Candidate 18's complete
+packaged regression and package-identity gates.
 
 ## Alpha23 Candidate 17 Nobara window-class repair — September 23, 2026
 
