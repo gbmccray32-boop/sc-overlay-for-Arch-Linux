@@ -36,13 +36,20 @@ reject per-widget hotkey changes; startup registration and held-F behavior remai
 
 Local packaged static and regression checks pass through Gamescope/normal capture separation,
 Mining cadence, refinery OCR, keyboard authority, pointer behavior, and preload capture. The local
-live config check is blocked by the execution sandbox's `uv_interface_addresses` restriction and
-is assigned to GitHub CI with the real Electron and widget integration checks. Candidate 19 is not
-field verified and is not a public release.
+live config check is blocked by the execution sandbox's `uv_interface_addresses` restriction.
+GitHub CI run `36188508887` passed the full source suite, pinned-baseline verification, packaged
+regressions, real Electron checks, config check, age-band controls, and widget/sidecar integration.
 
-Next: require the complete Candidate 19 packaged CI to pass, verify the generated archive and then
-field-test Arch KDE and Nobara KDE in both normal and Gamescope launch modes. Candidate 18 remains
-the public rollback baseline; do not publish Candidate 19 before those field results.
+The CI field artifact is `10887299449`. Its outer artifact ZIP SHA-256 is
+`04528d41ab3f368b6fdf26d0b43e20982feded119f4fdb0f4fb550913c612a6c`; the contained
+`ArchVerse-Native-0.1.47-r31.alpha23.candidate19.tar.gz` SHA-256 is
+`ff45d22c84606b94ce7aed79f84b56ea236de2f04a1334d6a6d35c2fb3ed4475`. Independent download
+verification passed all 1,659 internal manifest entries. Candidate 19 remains unverified in the
+field and is not a public release.
+
+Next: field-test Candidate 19 on Arch KDE and Nobara KDE in both normal and Gamescope launch modes.
+Candidate 18 remains the public rollback baseline; do not publish Candidate 19 before those field
+results.
 
 Public prerelease tag `v0.1.47-r31-alpha.23` points to release-approval commit
 `3c11045011014004903113c8f4f213e6c98dd8f0` on
