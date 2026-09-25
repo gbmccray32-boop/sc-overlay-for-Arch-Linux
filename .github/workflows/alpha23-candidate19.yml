@@ -35,4 +35,68 @@ jobs:
           node tools/archverse-config-e2e.mjs build/server
           node tools/check-suite-literals.cjs
           node --check tools/widget-dom-test.cjs
-      # No package or release upload: packaged Candidate 18 preservation gates remain required.
+      - name: Fetch checksum-pinned public Candidate 18 baseline
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 -o baseline.zip https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/releases/download/v0.1.47-r31-alpha.23/ArchVerse-Linux-0.1.47-r31-alpha23-Arch-KDE.zip
+          echo 'ad1ec28773fe8127248d50b8672137ac4638d703721e22ea4ca2f1f30072559c  baseline.zip' | sha256sum -c -
+          unzip -q baseline.zip -d baseline-archive
+          echo '8543c675437173761a04712e2e0c50468ec0261d92216f847162f950e140bc17  baseline-archive/archverse-overlay-0.1.47.r31.alpha23.candidate18-1-x86_64.pkg.tar.zst' | sha256sum -c -
+          mkdir baseline
+          tar --no-same-owner --zstd -xf baseline-archive/*.pkg.tar.zst -C baseline
+          node tools/archverse-widget-hotkey-package.test.mjs baseline/opt/archverse-overlay
+          node packaging/common/stage-alpha23-candidate19.mjs baseline/opt/archverse-overlay candidate19
+      - name: Install packaged test dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1 libxss1
+      - name: Packaged Linux regression gates
+        run: |
+          set -euo pipefail
+          candidate="$GITHUB_WORKSPACE/candidate19"
+          find "$candidate/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          node --check "$candidate/app/server/server.mjs"
+          python3 packaging/common/alpha23-renderer-audit.py "$candidate"
+          node packaging/common/alpha23-linux-bridge-selftest.cjs "$candidate"
+          node packaging/common/alpha23-main-startup-selftest.cjs "$candidate/app/electron/main.cjs"
+          node "$candidate/tests/r31-alpha8-gamescope-pointer.test.cjs" "$candidate/app"
+          node "$candidate/tests/alpha23-candidate18-keyboard.test.cjs" "$candidate"
+          for test in candidate16-pointer-mode candidate17-window-class candidate6-normal-capture candidate8-capture candidate9-session candidate10-cadence candidate11-capture candidate11-cargo candidate12-encoder candidate13-native-portal candidate14-portal-reply candidate15-refinery candidate15-rapidocr-recycle candidate11-preload; do
+            node "$candidate/tests/alpha23-$test.test.cjs"
+          done
+          xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox "$candidate/tests/alpha23-candidate12-electron-encoder.cjs"
+          xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox "$candidate/tests/alpha23-candidate13-electron-raw-frame.cjs"
+          xvfb-run -a node "$candidate/tests/alpha23-candidate8-renderer.test.cjs" "$GITHUB_WORKSPACE/packaging/common/alpha23-candidate7"
+          xvfb-run -a node "$candidate/tests/alpha23-candidate9-renderer.test.cjs" "$GITHUB_WORKSPACE/baseline/opt/archverse-overlay"
+          node tools/archverse-config-e2e.mjs "$candidate/app/server"
+          mkdir -p node_modules/electron/dist
+          printf '#!/bin/sh\nexec "%s" --no-sandbox "$@"\n' "$candidate/runtime/electron/electron" > node_modules/electron/dist/electron.exe
+          chmod +x node_modules/electron/dist/electron.exe
+          xvfb-run -a npm run control:ageband
+      - name: Staged widget integration
+        run: |
+          set -euo pipefail
+          candidate="$GITHUB_WORKSPACE/candidate19"
+          mkdir -p "$RUNNER_TEMP/candidate19-config"
+          printf '%s\n' '{"syncEnabled":false,"shareLogs":false,"setupComplete":true}' > "$RUNNER_TEMP/candidate19-config/config.json"
+          SC_TRACKER_CONFIG_DIR="$RUNNER_TEMP/candidate19-config" PORT=18778 node "$candidate/app/server/server.mjs" > "$RUNNER_TEMP/candidate19-server.log" 2>&1 &
+          sidecar=$!
+          trap 'kill "$sidecar" 2>/dev/null || true' EXIT
+          for _ in {1..30}; do curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null
+          OVERLAY_PORT=18778 xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox tools/widget-dom-test.cjs --pairs
+      - name: Package unverified Candidate 19 field archive
+        run: |
+          set -euo pipefail
+          name=ArchVerse-Native-0.1.47-r31.alpha23.candidate19
+          candidate="$GITHUB_WORKSPACE/candidate19"
+          mkdir -p "$RUNNER_TEMP/field/$name" candidate19-artifact
+          cp -a "$candidate/." "$RUNNER_TEMP/field/$name/"
+          (cd "$RUNNER_TEMP/field/$name" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && sha256sum -c SHA256SUMS >/dev/null)
+          tar --sort=name --mtime='UTC 2026-09-25 00:00:00' --owner=0 --group=0 --numeric-owner -cf - -C "$RUNNER_TEMP/field" "$name" | gzip -n > "candidate19-artifact/$name.tar.gz"
+          (cd candidate19-artifact && sha256sum "$name.tar.gz" > SHA256SUMS && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Alpha23-Candidate19-field-test
+          path: candidate19-artifact/
+          if-no-files-found: error
+          retention-days: 14
+      # No release upload: field validation is still required.

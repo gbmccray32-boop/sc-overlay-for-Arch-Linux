@@ -28,14 +28,21 @@ hotkey changes from Linux config POSTs while preserving existing startup configu
 rejects known upstream editor entry points. Source tests include negative controls and non-Linux
 positive controls. The contract and widget handoff record the permanent exclusion.
 
-Local TypeScript, server build, and hotkey contract checks passed. Runtime upstream tests were
-blocked by the local test runner's IPC socket permission error and are assigned to the new source
-CI workflow. CI results are not yet verified. No Candidate 19 package or release exists.
+Candidate 19 source CI run `35963406730` passed. The package step is staged from the checksum-pinned
+public Candidate 18 Arch package. It selectively replaces only the five approved sidecar module
+bodies plus the hauling trade UI, refusing wholesale replacement of the package-only Mining and
+refinery repairs. Linux Settings, config POSTs, and all five Electron hotkey-editing IPC handlers
+reject per-widget hotkey changes; startup registration and held-F behavior remain unchanged.
 
-Next: finish packaged shell IPC lockout, stage from the checksum-pinned Candidate 18 archive,
-preserve package-only Mining/refinery/transport repairs while integrating the new sidecar, and run
-the complete packaged and widget gates. Do not replace the packaged sidecar with the source build
-without those semantic preservation steps. Candidate 18 remains the public rollback baseline.
+Local packaged static and regression checks pass through Gamescope/normal capture separation,
+Mining cadence, refinery OCR, keyboard authority, pointer behavior, and preload capture. The local
+live config check is blocked by the execution sandbox's `uv_interface_addresses` restriction and
+is assigned to GitHub CI with the real Electron and widget integration checks. Candidate 19 is not
+field verified and is not a public release.
+
+Next: require the complete Candidate 19 packaged CI to pass, verify the generated archive and then
+field-test Arch KDE and Nobara KDE in both normal and Gamescope launch modes. Candidate 18 remains
+the public rollback baseline; do not publish Candidate 19 before those field results.
 
 Public prerelease tag `v0.1.47-r31-alpha.23` points to release-approval commit
 `3c11045011014004903113c8f4f213e6c98dd8f0` on

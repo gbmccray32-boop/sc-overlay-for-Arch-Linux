@@ -10,6 +10,25 @@ export function assertNoWidgetHotkeyEditor(text) {
   }
 }
 
+/** Patch only editing IPC handlers; leave startup registration and held F intact. */
+export function lockWidgetHotkeyIpc(main) {
+  assertNoWidgetHotkeyEditor(main);
+  for (const [channel, fn, args] of [
+    ["binding", "registerBindingHotkey", 'typeof accel === "string" ? accel : ""'],
+    ["webview", "registerWebViewHotkey", 'typeof accel === "string" ? accel : ""'],
+    ["mining", "registerMiningHotkey", 'typeof accel === "string" ? accel : ""'],
+    ["widget", "registerWidgetHotkey", 'String(key || ""), typeof accel === "string" ? accel : ""'],
+    ["notepad", "registerNotepadHotkey", 'typeof accel === "string" ? accel : ""'],
+  ]) {
+    const params = channel === "widget" ? "_e, key, accel" : "_e, accel";
+    const from = `  ipcMain.handle("set-${channel}-hotkey", (${params}) =>\n    ${fn}(${args}));`;
+    if (main.split(from).length !== 2) throw new Error(`Widget-hotkey IPC anchor changed: ${channel}`);
+    const to = `  ipcMain.handle("set-${channel}-hotkey", (${params}) =>\n    process.platform === "linux"\n      ? { ok: false, error: "Widget hotkey editing is disabled by the Linux stability contract." }\n      : ${fn}(${args}));`;
+    main = main.replace(from, to);
+  }
+  return main;
+}
+
 export function lockWidgetHotkeySettings(html) {
   assertNoWidgetHotkeyEditor(html);
   const replace = (from, to) => {
