@@ -108,3 +108,48 @@ In short: you may read, modify, fork and share the code, run your own build, and
 **Names and logos are not licensed.** "SubliminalsTV", "SC Overlay", and the project's artwork are not covered by the licence — a fork needs its own branding. Star Citizen®, Roberts Space Industries® and Cloud Imperium® are registered trademarks of Cloud Imperium Rights LLC; this is an unofficial fan project.
 
 If you want to do something the licence does not allow, ask: <sub@subliminal.gg>.
+
+## Wayland/Hyprland Support (Alpha 23+)
+
+### Overview
+Starting from Alpha 23, ArchVerse supports native Wayland compositors including Hyprland, Gnome, KDE, and Omarchy.
+
+### Capture Backend Priority
+The app now uses this capture priority order:
+1. **PipeWire** (native Wayland surfaces) - Fastest, recommended for mining
+2. **Spectacle** - Fallback for Wayland without direct PipeWire access
+3. **desktopCapturer** - X11/XWayland only
+
+### Performance Notes
+- PipeWire capture is the fastest method tested on Hyprland
+- Mining signature recognition speed has been optimized with this backend
+- If performance issues arise, switch back to desktopCapturer via config flag
+
+### Testing Instructions
+```bash
+# Build test package
+npm run build:test
+
+# Run on Wayland session
+./release-test/SC\ Overlay
+
+# Monitor mining speed
+watch -n 1 'pkill -9 node && ./release-test/SC\ Overlay &'
+```
+
+### Compatibility
+- **Hyprland**: ✅ Full support via PipeWire
+- **Gnome**: ✅ Full support via PipeWire
+- **KDE Wayland**: ✅ Full support via PipeWire
+- **Omarchy**: ✅ Full support via PipeWire
+- **X11 (any)**: ✅ Backward compatible, unchanged behavior
+
+### Configuration
+Add to your config.json:
+```json
+{
+  "fabCapture": true,
+  "captureBackend": "pipewire",  // pipewire | spectacle | autodetect
+  "miningDebug": false
+}
+```
