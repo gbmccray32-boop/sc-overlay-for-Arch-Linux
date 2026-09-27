@@ -15,7 +15,7 @@
 // or a field on an existing request the sidecar logs. That split is the 0.1.42 lesson.
 
 const { desktopCapturer, screen, nativeImage } = require("electron");
-const { execFile } = require("node:child_process");
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
@@ -77,19 +77,109 @@ function foregroundWindow() {
   });
 }
 
+// Detect if we're running on Wayland (native) or X11/XWayland
+function isNativeWayland() {
+  try {
+    // Check for Wayland session or compositor-specific indicators
+    const result = execFileSync("echo", ["$XDG_SESSION_TYPE"], { encoding: "utf8" });
+    return String(result).trim().toLowerCase() === "wayland";
+  } catch {
+    return false;
+  }
+}
+
+// Get PipeWire video nodes for capture
+function getPipeWireVideoNode() {
+  try {
+    // On Hyprland/KDE/Gnome, enumerate PipeWire video nodes and find the one with Star Citizen stream
+    const pwDump = execFileSync("pw-dump", ["--video", "all", "--json"], { encoding: "utf8" });
+    
+    const nodeMatch = /"name":"([^"]+)".*"object_path":"([^"]+)"/.exec(pwDump);
+    if (nodeMatch) {
+      return {
+        name: nodeMatch[1],
+        objectPath: nodeMatch[2],
+      };
+    }
+  } catch {
+    // pw-dump not available or failed
+  }
+  return null;
+}
+
+// Capture using PipeWire (native Wayland, Hyprland/KDE/Gnome)
+async function captureViaPipeWire(winRect) {
+  const node = getPipeWireVideoNode();
+  if (!node) return null;
+  
+  try {
+    // Use GStreamer to capture from PipeWire remote fd
+    // On Wayland compositors, we can use pw-media or direct pipewiresrc
+    const gstPipeline = `gst-launch-1.0 uridecodebin pipewire://@/media/video:${node.objectPath} ! videoconvert ! 'video/x-raw,format=RGB' ! jpegenc ! filesink location=/tmp/sc-pw-capture.jpg sync=false`;
+    execFileSync("sh", ["-c", gstPipeline], { timeout: 5000 });
+    
+    if (fs.existsSync("/tmp/sc-pw-capture.jpg")) {
+      const image = nativeImage.createFromPath("/tmp/sc-pw-capture.jpg");
+      fs.unlinkSync("/tmp/sc-pw-capture.jpg");
+      return { image, onPrimary: true };
+    }
+  } catch (error) {
+    console.error("[fab-capture] PipeWire capture failed", error);
+  }
+  
+  return null;
+}
+
+// Capture using Spectacle (fallback for Wayland without native PipeWire access)
+async function captureViaSpectacle() {
+  try {
+    execFileSync("spectacle", ["--filename=/tmp/sc-spectacle-capture.jpg"]);
+    
+    if (fs.existsSync("/tmp/sc-spectacle-capture.jpg")) {
+      const image = nativeImage.createFromPath("/tmp/sc-spectacle-capture.jpg");
+      fs.unlinkSync("/tmp/sc-spectacle-capture.jpg");
+      return { image, onPrimary: true };
+    }
+  } catch {
+    console.error("[fab-capture] Spectacle not available or failed");
+  }
+  return null;
+}
+
 // Capture the display the GAME window is on (matched by display_id), at that monitor's full
 // resolution → nativeImage. Falls back to the primary / sources[0] if the match fails.
 async function captureGame(winRect) {
   const disp = winRect ? screen.getDisplayMatching(winRect) : screen.getPrimaryDisplay();
   const width = Math.round(disp.size.width * disp.scaleFactor);
   const height = Math.round(disp.size.height * disp.scaleFactor);
-  const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width, height } });
-  const src = sources.find((s) => s.display_id && String(s.display_id) === String(disp.id)) || sources[0];
-  // `onPrimary` is reported because the calibration box is drawn over the PRIMARY display only —
-  // the canvas is told nothing about any other one — so a game running elsewhere is being
-  // calibrated against pixels nobody can see. Cheap here (we already resolved the display) and
-  // impossible to work out downstream.
-  return src ? { image: src.thumbnail, width, height, onPrimary: disp.id === screen.getPrimaryDisplay().id } : null;
+  
+  // Check if we're on native Wayland (Hyprland, Gnome, KDE, etc.)
+  const isWayland = isNativeWayland();
+  
+  if (isWayland) {
+    // Try PipeWire capture first (native Wayland surfaces)
+    const pwCapture = await captureViaPipeWire();
+    if (pwCapture) return pwCapture;
+    
+    // Fallback to Spectacle (if available on Wayland)
+    const spectacleCapture = await captureViaSpectacle();
+    if (spectacleCapture) return spectacleCapture;
+  }
+  
+  // X11/XWayland: use desktopCapturer as before
+  try {
+    const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width, height } });
+    const src = sources.find((s) => s.display_id && String(s.display_id) === String(disp.id)) || sources[0];
+    
+    // `onPrimary` is reported because the calibration box is drawn over the PRIMARY display only —
+    // the canvas is told nothing about any other one — so a game running elsewhere is being
+    // calibrated against pixels nobody can see. Cheap here (we already resolved the display) and
+    // impossible to work out downstream.
+    return src ? { image: src.thumbnail, width, height, onPrimary: disp.id === screen.getPrimaryDisplay().id } : null;
+  } catch {
+    console.error("[fab-capture] desktopCapturer failed");
+    return null;
+  }
 }
 
 // The kiosk's item render + name + category all live in the upper-right of the screen. Cropping to
