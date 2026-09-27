@@ -228,3 +228,132 @@ watch -n 1 'pkill -9 node && ./release-test/"SC Overlay" &'
 
 ## License
 FSL-1.1-MIT allows ports if unofficial and not commercial substitute.
+
+## NEW: Linux Contract - Intelligent Installer Requirement (v0.1.48)
+
+### Mandated Starting Alpha23
+
+Every new candidate release or test program push must include an **intelligent installer** that:
+
+#### 1. Auto-Detects System
+- Detects distribution: Omarchy, Fedora, Arch, Debian, Ubuntu
+- Detects package manager: DNF, pacman, apt
+- Detects compositor: Hyprland, Gnome, KDE, XFCE, Omarchy, X11/XWayland
+
+#### 2. Auto-Detects Compositor
+- Identifies Wayland vs X11 session
+- Determines specific compositor (Hyprland, Gnome Shell, KDE Plasma, etc.)
+- Configures capture backend accordingly (pipewire vs x11)
+
+#### 3. Installs to User-Writable Location
+- Default: `~/.local/share/sc-overlay`
+- No sudo required for app files
+- Respects XDG_base_dirs
+
+#### 4. Creates Desktop Integration
+- Desktop entry in `~/.local/share/applications/`
+- Proper MIME types and categories
+- Icon integration
+
+#### 5. Configures Automatically
+- Creates config.json with appropriate settings
+- Sets capture backend based on compositor
+- Includes bundled dependencies (xdotool, libraries)
+
+#### 6. Self-Contained
+- Bundles all necessary files
+- No manual post-installation steps required
+- Works out-of-the-box on target system
+
+## Implementation: tools/install-sc-overlay.mjs
+
+The current implementation (`tools/install-sc-overlay.mjs`) demonstrates compliance:
+
+```bash
+node tools/install-sc-overlay.mjs
+```
+
+### Features Demonstrated
+
+✅ Auto-detects distribution (Omarchy, Fedora, Arch, Debian, Ubuntu)  
+✅ Auto-detects compositor (Wayland vs X11/Hyprland/Gnome/KDE)  
+✅ Installs to ~/.local/share/sc-overlay (user-writable)  
+✅ Creates desktop entry automatically  
+✅ Configures capture backend based on compositor  
+✅ Bundles all dependencies (xdotool, libraries)  
+
+### Testing Checklist for Each Release
+
+Before pushing to main branch:
+- [ ] Installer detects current system correctly
+- [ ] Installer detects compositor properly
+- [ ] App installs without sudo
+- [ ] Desktop entry created in ~/.local/share/applications/
+- [ ] App runs after installation
+- [ ] Works on target system (Omarchy, Fedora, Arch, etc.)
+
+### Files Required for Each Release
+
+For every candidate push:
+1. **Installer script** (`tools/install-sc-overlay.mjs`)
+2. **Installation guide** (`tools/INSTALLER-GUIDE.md`)
+3. **Usage documentation** in README.md
+4. **Test results** showing installer works
+
+### Compliance Enforcement
+
+Starting Alpha23, releases without working installers will be:
+- Flagged for review
+- Delayed until installer is created
+- Documented in changelog as "installer pending"
+
+## Previous Installers (Deprecated)
+
+The old `install-omarchy.sh` and manual installation methods are **deprecated**. All new releases must use the auto-installer pattern.
+
+## Testing Instructions
+
+### Quick Test
+```bash
+cd /home/gavinb/Work/ArchVerse
+node tools/install-sc-overlay.mjs
+~/.local/share/sc-overlay/run.sh
+```
+
+### Verify Installation
+- Check `~/.local/share/sc-overlay/` contains app files
+- Check `~/.config/sc-blueprint-tracker/config.json` exists
+- Check desktop entry in `~/.local/share/applications/`
+- Run app and verify it starts correctly
+
+### Reinstall After Update
+```bash
+cd /home/gavinb/Work/ArchVerse
+npm run dist
+node tools/install-sc-overlay.mjs
+```
+
+## Documentation Updates
+
+The installer documentation (`tools/INSTALLER-GUIDE.md`) must be:
+- Included in release package
+- Referenced in README.md installation section
+- Updated when installer changes significantly
+
+## Related Files
+
+- `linux-contracts.md` - Full contract specification
+- `tools/install-sc-overlay.mjs` - Current installer implementation
+- `tools/INSTALLER-GUIDE.md` - Usage documentation
+- `ARCHVERSE-HANDOFF-SEPT27-updated.md` - This handoff file
+
+## Summary
+
+This contract ensures:
+1. **Consistent installation** across all supported systems
+2. **User-friendly setup** without manual configuration
+3. **Cross-compositor support** (Wayland and X11)
+4. **Clear documentation** for end users
+5. **Maintainable codebase** with standardized installers
+
+All future releases must comply with this contract before pushing to main branch.
