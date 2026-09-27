@@ -51,43 +51,32 @@ try {
   console.log(`   ✓ ${installDir}`);
   console.log(`   ✓ ${configDir}`);
   
-  // Copy application files (skip node_modules and git)
+  // Copy application files
   console.log("\n📦 Installing application...");
   
-  const appFiles = fs.readdirSync(appDir).filter(f => 
-    !f.startsWith(".") && 
-    !f.includes("node_modules") && 
-    !f.includes(".git") &&
-    f.endsWith(".so") || 
-    f === "sc-log-watcher" ||
-    f === "squashfs-root"
-  );
+  if (fs.existsSync(path.join(appDir, "squashfs-root"))) {
+    // Old style: copy squashfs-root as-is
+    const squashfsRoot = path.join(appDir, "squashfs-root");
+    fs.cpSync(squashfsRoot, installDir, { recursive: true });
+    console.log("   ✓ Copied from squashfs-root");
+  } else if (fs.existsSync(path.join(appDir, "linux-unpacked"))) {
+    // New style: copy linux-unpacked
+    const linuxUnpacked = path.join(appDir, "linux-unpacked");
+    fs.cpSync(linuxUnpacked, installDir, { recursive: true });
+    console.log("   ✓ Copied from linux-unpacked");
+  } else {
+    throw new Error("No application found in release directory");
+  }
   
-  appFiles.forEach(file => {
-    try {
-      const src = path.join(appDir, file);
-      const dest = path.join(installDir, file);
-      
-      if (fs.statSync(src).isDirectory()) {
-        fs.cpSync(src, dest, { recursive: true });
-      } else {
-        fs.copyFileSync(src, dest);
+  // Copy sc-log-watcher binary (if not already copied)
+  const binaryPath = path.join(installDir, "sc-log-watcher");
+  if (!fs.existsSync(binaryPath)) {
+    // Try to find it
+    fs.readdirSync(installDir).forEach(file => {
+      if (file === "sc-log-watcher") {
+        console.log("   ✓ Main binary found");
       }
-    } catch (e) {
-      // Skip files that can't be copied
-    }
-  });
-  
-  console.log("   ✓ Application files copied");
-  
-  // Copy sc-log-watcher from squashfs-root to root of install dir
-  const squashfsRoot = path.join(appDir, "squashfs-root");
-  if (fs.existsSync(squashfsRoot)) {
-    const binaryPath = path.join(squashfsRoot, "sc-log-watcher");
-    if (fs.existsSync(binaryPath)) {
-      fs.copyFileSync(binaryPath, path.join(installDir, "sc-log-watcher"));
-      console.log("   ✓ Main binary copied from squashfs-root");
-    }
+    });
   }
   
   // Create wrapper script using bash heredoc literal
@@ -135,19 +124,6 @@ Terminal=false
   
   fs.writeFileSync(desktopFile, desktopContent);
   console.log("   ✓ Desktop entry created");
-  
-  // Copy shared libraries if they exist
-  const libsDir = path.join(appDir, "squashfs-root");
-  if (fs.existsSync(libsDir)) {
-    const libs = fs.readdirSync(libsDir).filter(f => f.endsWith(".so"));
-    libs.forEach(lib => {
-      try {
-        fs.copyFileSync(path.join(libsDir, lib), path.join(installDir, lib));
-      } catch (e) {}
-    });
-  }
-  
-  console.log("   ✓ Shared libraries copied");
   
   // Create systemd service (optional)
   const systemdFile = path.join(os.homedir(), ".config/systemd/user/sc-overlay.service");

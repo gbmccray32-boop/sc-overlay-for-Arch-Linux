@@ -66,14 +66,16 @@ const { readBars, pixelsOf } = require("./rep-bars.cjs");
    `repRefusalWorthReporting()` beside `repReadPayload()` is where the rule (and its test) lives. */
 function foregroundWindow() {
   if (fgWatch.ready()) return Promise.resolve(fgWatch.foreground());
+  // On non-Windows systems, return null immediately since we don't need HWND detection
+  if (!process.platform.includes("win")) {
+    return Promise.resolve({ name: "", rect: null });
+  }
   return new Promise((resolve) => {
     try { writeFgPs1(); } catch { return resolve({ name: "", rect: null }); }
-    execFile("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", fgPs1], { windowsHide: true, timeout: 4000 }, (err, out) => {
-      if (err) return resolve({ name: "", rect: null });
-      const p = String(out).trim().split("|");
-      const x = +p[1], y = +p[2], w = +p[3], hh = +p[4];
-      resolve({ name: p[0] || "", rect: w > 0 && hh > 0 ? { x, y, width: w, height: hh } : null });
-    });
+    const stdout = execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", fgPs1], { windowsHide: true, encoding: "utf8" });
+    const p = String(stdout).trim().split("|");
+    const x = +p[1], y = +p[2], w = +p[3], hh = +p[4];
+    resolve({ name: p[0] || "", rect: w > 0 && hh > 0 ? { x, y, width: w, height: hh } : null });
   });
 }
 
