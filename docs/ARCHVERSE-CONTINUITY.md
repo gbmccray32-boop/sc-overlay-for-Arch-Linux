@@ -41,7 +41,8 @@ The smoke fixture now supplies the real canvas and Settings inputs required by t
 the old three-file fixture failed before it could exercise its assertions. Initial CI run
 `36523963129` passed all three tests and syntax checks, then failed because the workflow's
 single-commit checkout did not contain the `HEAD^` needed by its final whitespace check. The
-workflow now requests two commits; corrected CI remains pending.
+workflow now requests two commits. Corrected CI run `36524071366` passed all foundation, Linux
+hotkey, overlay-patch, syntax, and whitespace gates.
 
 Next: add a non-production diagnostic window and connect it to centralized visibility, layout,
 held-`F`, and `Shift+F6` messages. Do not migrate SC Feed until that diagnostic passes locally.
