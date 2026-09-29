@@ -38,8 +38,10 @@ production widget. The migration and rollback gates are in `docs/MULTI-WINDOW-MI
 **Automated verified locally:** the focused widget-window policy test, existing Linux hotkey lock,
 ArchVerse overlay-patch smoke test, JavaScript syntax checks, and repository whitespace check pass.
 The smoke fixture now supplies the real canvas and Settings inputs required by the current patcher;
-the old three-file fixture failed before it could exercise its assertions. The branch-specific CI
-gate remains pending until the commit is pushed.
+the old three-file fixture failed before it could exercise its assertions. Initial CI run
+`36523963129` passed all three tests and syntax checks, then failed because the workflow's
+single-commit checkout did not contain the `HEAD^` needed by its final whitespace check. The
+workflow now requests two commits; corrected CI remains pending.
 
 Next: add a non-production diagnostic window and connect it to centralized visibility, layout,
 held-`F`, and `Shift+F6` messages. Do not migrate SC Feed until that diagnostic passes locally.
