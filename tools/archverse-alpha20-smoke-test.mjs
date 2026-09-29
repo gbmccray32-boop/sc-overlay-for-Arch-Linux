@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { applyArchVerseOverlayPatches } from "./archverse-overlay-patches.mjs";
@@ -10,9 +10,12 @@ const overlay = join(temp, "overlay");
 mkdirSync(overlay, { recursive: true });
 
 try {
+  // The build-time patcher validates and rewrites canvas.js before it touches the page fixtures.
+  // Keep this smoke test on the real upstream canvas so its required anchors cannot silently drift.
+  copyFileSync(join(root, "overlay", "canvas.js"), join(overlay, "canvas.js"));
+  copyFileSync(join(root, "overlay", "config.html"), join(overlay, "config.html"));
   writeFileSync(join(overlay, "missions.html"), "<html><body>Mining Scanner</body></html>");
   writeFileSync(join(overlay, "mining.html"), "<html><body>Mining Scanner<script>const t='Mining assistant ready';</script></body></html>");
-  writeFileSync(join(overlay, "config.html"), "<html><body>Mining Scanner / Mining Assistant</body></html>");
   applyArchVerseOverlayPatches(temp);
 
   const missions = readFileSync(join(overlay, "missions.html"), "utf8");

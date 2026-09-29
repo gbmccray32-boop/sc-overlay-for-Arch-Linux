@@ -12,6 +12,38 @@ baseline, current target, field result, open problem, or next step changes.
 
 Do not convert one label into another without new evidence.
 
+## Candidate 19 multi-window migration foundation — September 28, 2026
+
+Work branch: `agent/candidate19-multi-window-foundation`, based exactly on Candidate 19 commit
+`2267820328fad5080ac7750ccdc572ba9597c52f`. The single-canvas Candidate 19 behavior remains the
+default and rollback path.
+
+The newer experimental `main` at `928c51fcf75e2e18edd327e65ee28bca9640028b` is 22 commits ahead
+of Candidate 19 but lacks 470 Candidate 19 commits. It changes protected capture and session files
+and contains the permanently excluded per-widget hotkey editor in its history. Treat it as an
+input source. Do not merge or rebase Candidate 19 onto it. The audit and port order are recorded in
+`docs/UPSTREAM-928C51F-MIGRATION.md`.
+
+The KDE/XWayland multi-window migration stays in this repository. A future native Omarchy/Hyprland
+port will use a separate `archverse-omarchy-hyprland` repository because its layer-shell, stacking,
+capture, packaging, and compositor evidence differ. Do not extract a shared repository until the
+widget/runtime interface proves stable on both platforms.
+
+The first implementation milestone adds `electron/widget-window-manager.cjs`. It is dormant unless
+Linux starts with `SC_TRACKER_WIDGET_WINDOWS=preview`; no production startup path sets that value.
+The manager defines stable KWin titles, secure frameless window policy, initial hard click-through,
+bounded geometry, popup denial, lifecycle ownership, and deterministic cleanup. It does not move a
+production widget. The migration and rollback gates are in `docs/MULTI-WINDOW-MIGRATION.md`.
+
+**Automated verified locally:** the focused widget-window policy test, existing Linux hotkey lock,
+ArchVerse overlay-patch smoke test, JavaScript syntax checks, and repository whitespace check pass.
+The smoke fixture now supplies the real canvas and Settings inputs required by the current patcher;
+the old three-file fixture failed before it could exercise its assertions. The branch-specific CI
+gate remains pending until the commit is pushed.
+
+Next: add a non-production diagnostic window and connect it to centralized visibility, layout,
+held-`F`, and `Shift+F6` messages. Do not migrate SC Feed until that diagnostic passes locally.
+
 ## Alpha23 public Linux release — September 24, 2026
 
 ### Candidate 19 source checkpoint — September 24, 2026
@@ -44,12 +76,27 @@ The CI field artifact is `10887299449`. Its outer artifact ZIP SHA-256 is
 `04528d41ab3f368b6fdf26d0b43e20982feded119f4fdb0f4fb550913c612a6c`; the contained
 `ArchVerse-Native-0.1.47-r31.alpha23.candidate19.tar.gz` SHA-256 is
 `ff45d22c84606b94ce7aed79f84b56ea236de2f04a1334d6a6d35c2fb3ed4475`. Independent download
-verification passed all 1,659 internal manifest entries. Candidate 19 remains unverified in the
-field and is not a public release.
+verification passed all 1,659 internal manifest entries.
 
-Next: field-test Candidate 19 on Arch KDE and Nobara KDE in both normal and Gamescope launch modes.
-Candidate 18 remains the public rollback baseline; do not publish Candidate 19 before those field
-results.
+**Field verified on CachyOS KDE for normal Wine/XWayland:** Gabe ran Candidate 19 for approximately
+2 hours and 23 minutes and reported no issue. The Electron log was mistakenly named
+`archverse-alpha23-candidate19Gamescope.log`, but exact session binding identifies a direct Wine
+launch with no Gamescope ancestor. Its SHA-256 is
+`dacdac0b5566aad0a9dffac0d23d23b3622a480b3b0cd62f5a9c8798bd495eee`. The native KDE portal
+stream remained active, capture averaged about 30.8 ms, Mining OCR averaged about 179.2 ms, and
+11,102 IPC acknowledgements completed with zero failures. Mining, Hauling, refinery, held-`F`, and
+normal pointer behavior remained operational.
+
+**Gamescope remains partially tested, not field verified.** Gabe stopped that test because a host
+Gamescope mouse problem continued after ArchVerse closed. The partial ArchVerse log SHA-256 is
+`23d4dff9250fc978d582eeab592c4ffaa1d3909ce026fba60250aa6b4c181beb`. It initially bound direct
+Gamescope PipeWire node 168. A later game/session launch fell back to Electron after PipeWire node
+149 returned GStreamer `not-negotiated (-4)`. Retest direct Gamescope restart/reconfiguration after
+the external mouse issue is resolved.
+
+Candidate 19 is therefore field verified only for the CachyOS KDE normal launch. Candidate 18
+remains the public rollback baseline. Do not publish Candidate 19 as the replacement release before
+the remaining KDE distribution and Gamescope field gates pass.
 
 Public prerelease tag `v0.1.47-r31-alpha.23` points to release-approval commit
 `3c11045011014004903113c8f4f213e6c98dd8f0` on

@@ -34,6 +34,11 @@ document identifies which historical files are superseded.
 - Per-widget hotkey editing is permanently excluded from official Linux builds, including
   widget cogs and Settings. Preserve existing startup bindings and the mandatory F/Shift+F6
   controls. Never import the upstream keyboard-grab editor during widget updates.
+- Keep the KDE/XWayland multi-window migration in this repository. Reserve native Hyprland and
+  Omarchy compositor work for a separate `archverse-omarchy-hyprland` repository. Do not share
+  compositor-specific capture, stacking, focus, or package code between them by copying it.
+- Keep the single-canvas runtime as the default and rollback path until the multi-window mode passes
+  normal and Gamescope field tests on both Arch/CachyOS KDE and Fedora/Nobara KDE.
 
 The complete testable contract is in `linux-port/PORTING_CONTRACT.md`.
 

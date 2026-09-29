@@ -128,6 +128,30 @@ Changes that cross these seams are integration changes, not ordinary widget chan
 the complete relevant Linux regression gates in addition to widget tests. The developer-facing file
 map and handoff checklist are in `docs/LINUX-WIDGET-DEVELOPER-HANDOFF.md`.
 
+### 2.2 Multi-window migration boundary
+
+The Linux overlay may migrate from one desktop-sized canvas to one transparent native window per
+enabled widget only under these conditions:
+
+- The Electron main process remains the single owner of capture, OCR, sidecar supervision, session
+  binding, input authority, focus handoff, visibility, and layout persistence.
+- The existing canvas remains the default and rollback path until the new mode passes normal and
+  Gamescope field tests on Arch/CachyOS KDE and Fedora/Nobara KDE.
+- Every native widget starts hard click-through and becomes interactive only through the existing
+  held-`F` or `Shift+F6` authority.
+- XWayland widget windows request always-on-top behavior. KWin rules provide the stacking backstop.
+- On native Wayland, KWin owns global stacking and placement. ArchVerse must not try to rearrange
+  unrelated desktop windows.
+- Widget windows use stable, testable identities. They must not depend on a changing X11 window ID.
+- No migration step may change capture backends and widget-window architecture in the same field
+  candidate.
+- Mining moves last. Its capture cadence, Game.log vehicle gate, distinct-frame confirmation, and
+  result transport must remain independent of widget rendering.
+
+Native Hyprland and Omarchy compositor integration belongs to a separate project. It may share a
+documented widget/runtime interface after that interface stabilizes, but it must not copy or replace
+the proven KDE capture and focus implementation.
+
 ## 3. Mining integration rule
 
 Mining authority is the conjunction of two independent facts:

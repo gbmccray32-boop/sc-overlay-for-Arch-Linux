@@ -1,0 +1,33 @@
+name: Multi-window Foundation Gates
+
+on:
+  push:
+    branches: [agent/candidate19-multi-window-foundation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: multi-window-foundation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm}
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify dormant window policy and preserved Linux controls
+        run: |
+          set -euo pipefail
+          npm run test:widget-windows
+          npm run test:linux-widget-hotkeys
+          npm run test:archverse
+          node --check electron/widget-window-manager.cjs
+          node --check test/widget-window-manager-foundation.test.cjs
+          node --check tools/archverse-alpha20-smoke-test.mjs
+          git diff --check HEAD^
