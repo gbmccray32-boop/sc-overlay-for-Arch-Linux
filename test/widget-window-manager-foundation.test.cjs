@@ -21,6 +21,7 @@ class FakeBrowserWindow extends EventEmitter {
     this.calls = [];
     this.webContents = {
       setWindowOpenHandler: (handler) => { this.windowOpenHandler = handler; },
+      send: (...args) => { this.calls.push(["send", ...args]); },
     };
     FakeBrowserWindow.created.push(this);
   }
@@ -31,6 +32,15 @@ class FakeBrowserWindow extends EventEmitter {
   showInactive() { this.calls.push(["showInactive"]); }
   hide() { this.calls.push(["hide"]); }
   setBounds(bounds) { this.calls.push(["bounds", bounds]); }
+  getBounds() { return this.calls.findLast((call) => call[0] === "bounds")?.[1] || {
+    x: this.options.x, y: this.options.y, width: this.options.width, height: this.options.height,
+  }; }
+  setMinimumSize(...args) { this.calls.push(["minimumSize", ...args]); }
+  setMovable(value) { this.calls.push(["movable", value]); }
+  setResizable(value) { this.calls.push(["resizable", value]); }
+  moveTop() { this.calls.push(["moveTop"]); }
+  focus() { this.calls.push(["focus"]); }
+  show() { this.calls.push(["show"]); }
   destroy() { this.destroyed = true; this.emit("closed"); }
   isDestroyed() { return this.destroyed; }
 }
@@ -67,6 +77,7 @@ assert.equal(win.options.title, "ArchVerse Widget [scFeed]");
 assert.equal(win.options.type, "toolbar");
 assert.equal(win.options.alwaysOnTop, true);
 assert.equal(win.options.skipTaskbar, true);
+assert.equal(win.options.focusable, false);
 assert.equal(win.options.webPreferences.contextIsolation, true);
 assert.equal(win.options.webPreferences.nodeIntegration, false);
 assert.equal(win.options.webPreferences.sandbox, true);
@@ -84,13 +95,24 @@ assert.equal(loaded.searchParams.get("widgetId"), "scFeed");
 assert.equal(manager.show("scFeed"), true);
 assert.deepEqual(win.calls.at(-1), ["showInactive"]);
 assert.equal(manager.setInteractive("scFeed", true), true);
-assert.deepEqual(win.calls.slice(-2), [["focusable", true], ["ignore", false, { forward: true }]]);
+assert.deepEqual(win.calls.slice(-3, -1), [["focusable", true], ["ignore", false, { forward: true }]]);
 assert.equal(manager.setInteractive("scFeed", false), true);
-assert.deepEqual(win.calls.slice(-2), [["focusable", false], ["ignore", true, { forward: true }]]);
+assert.deepEqual(win.calls.slice(-3, -1), [["focusable", false], ["ignore", true, { forward: true }]]);
 assert.equal(manager.setBounds("scFeed", { x: -20, y: 10, width: 0, height: 90.7 }), true);
-assert.deepEqual(win.calls.at(-1), ["bounds", { x: -20, y: 10, width: 1, height: 91 }]);
+assert.deepEqual(win.calls.findLast((call) => call[0] === "bounds"), ["bounds", { x: -20, y: 10, width: 1, height: 91 }]);
 assert.equal(manager.hide("scFeed"), true);
 assert.deepEqual(win.calls.at(-1), ["hide"]);
+
+assert.equal(manager.containsPoint("scFeed", { x: -20, y: 11 }), true);
+assert.equal(manager.containsPoint("scFeed", { x: -21, y: 11 }), false);
+assert.equal(manager.updateHeldPointer({ x: -20, y: 11 }, true), "scFeed");
+assert.equal(win.calls.some((call) => call[0] === "focus"), true);
+manager.updateHeldPointer(null, false);
+manager.setArrangeMode(true);
+assert.equal(manager.state("scFeed").arrangeMode, true);
+assert.equal(manager.resizeBy("scFeed", 50, 70), true);
+assert.deepEqual(manager.bounds("scFeed"), { x: -20, y: 10, width: 260, height: 161 });
+manager.setArrangeMode(false);
 
 assert.equal(windowTitle("mining"), "ArchVerse Widget [mining]");
 assert.deepEqual(kwinRuleHints("mining"), {

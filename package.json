@@ -105,7 +105,7 @@
     "control:locfix": "node tools/control-locfix.mjs",
     "control:logsharefault": "node tools/control-logsharefault.mjs",
     "test:linux-widget-hotkeys": "node tools/archverse-widget-hotkey-contract.test.mjs",
-    "test:widget-windows": "node test/widget-window-manager-foundation.test.cjs",
+    "test:widget-windows": "node test/widget-window-manager-foundation.test.cjs && node --check electron/widget-window-preview-preload.cjs && node --check packaging/common/port-widget-window-preview-main.mjs && node --check packaging/common/stage-widget-window-preview.mjs && node --check tools/widget-window-preview-package.test.mjs",
     "test:archverse": "node tools/archverse-alpha20-smoke-test.mjs"
   },
   "dependencies": {

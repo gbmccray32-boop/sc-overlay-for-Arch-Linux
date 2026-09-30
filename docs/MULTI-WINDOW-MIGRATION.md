@@ -82,3 +82,9 @@ then normal and Gamescope on Fedora/Nobara KDE.
 No production startup path enables the preview. Candidate 19 behavior therefore remains unchanged.
 The foundation validates widget IDs and pages, creates secure frameless windows, starts them in hard
 click-through mode, denies child popups, assigns stable KWin titles, and owns deterministic cleanup.
+
+The first field milestone adds one opt-in diagnostic window. Launch it with
+`./bin/sc-blueprint-tracker-window-preview`. The probe exercises KWin stacking, separately persisted
+native geometry, held-`F` interaction, hard click-through, and `Shift+F6` arrange mode. It contains no
+production widget and does not alter capture, OCR, the sidecar, or the Gamescope helper. The normal
+`./bin/sc-blueprint-tracker` launcher remains Candidate 19 canvas mode.

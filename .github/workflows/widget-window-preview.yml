@@ -1,0 +1,107 @@
+name: Candidate 19 Native Window Preview
+on:
+  push:
+    branches: [agent/candidate19-multi-window-foundation]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: candidate19-window-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm}
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Source and immutable Linux contract gates
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm run test:linux-widget-hotkeys
+          npm run test:widget-windows
+          npm run test:trade
+          npm run test:jaudit
+          npm run test:playerloc
+          npm run test:signals
+          npm run test:origin
+          npm run test:proximity
+          npm run test:logshare
+          npm run control:locfix
+          npm run control:logsharefault
+          npm run build:server
+          node tools/archverse-config-e2e.mjs build/server
+          node tools/check-suite-literals.cjs
+          node --check tools/widget-dom-test.cjs
+      - name: Stage checksum-pinned Candidate 19 and opt-in preview
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 -o baseline.zip https://github.com/gbmccray32-boop/sc-overlay-for-Arch-Linux/releases/download/v0.1.47-r31-alpha.23/ArchVerse-Linux-0.1.47-r31-alpha23-Arch-KDE.zip
+          echo 'ad1ec28773fe8127248d50b8672137ac4638d703721e22ea4ca2f1f30072559c  baseline.zip' | sha256sum -c -
+          unzip -q baseline.zip -d baseline-archive
+          echo '8543c675437173761a04712e2e0c50468ec0261d92216f847162f950e140bc17  baseline-archive/archverse-overlay-0.1.47.r31.alpha23.candidate18-1-x86_64.pkg.tar.zst' | sha256sum -c -
+          mkdir baseline
+          tar --no-same-owner --zstd -xf baseline-archive/*.pkg.tar.zst -C baseline
+          node tools/archverse-widget-hotkey-package.test.mjs baseline/opt/archverse-overlay
+          node packaging/common/stage-alpha23-candidate19.mjs baseline/opt/archverse-overlay candidate19
+          (cd candidate19 && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && sha256sum -c SHA256SUMS >/dev/null)
+          node packaging/common/stage-widget-window-preview.mjs candidate19 preview
+          node tools/widget-window-preview-package.test.mjs candidate19 preview
+      - name: Install packaged test dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1 libxss1
+      - name: Packaged Linux regression gates
+        run: |
+          set -euo pipefail
+          candidate="$GITHUB_WORKSPACE/preview"
+          xvfb-run -a npx electron --no-sandbox test/widget-window-manager-electron.cjs
+          find "$candidate/app/electron" -type f \( -name '*.cjs' -o -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          node --check "$candidate/app/server/server.mjs"
+          python3 packaging/common/alpha23-renderer-audit.py "$candidate"
+          node packaging/common/alpha23-linux-bridge-selftest.cjs "$candidate"
+          node packaging/common/alpha23-main-startup-selftest.cjs "$candidate/app/electron/main.cjs"
+          node "$candidate/tests/r31-alpha8-gamescope-pointer.test.cjs" "$candidate/app"
+          node "$candidate/tests/alpha23-candidate18-keyboard.test.cjs" "$candidate"
+          for test in candidate16-pointer-mode candidate17-window-class candidate6-normal-capture candidate8-capture candidate9-session candidate10-cadence candidate11-capture candidate11-cargo candidate12-encoder candidate13-native-portal candidate14-portal-reply candidate15-refinery candidate15-rapidocr-recycle candidate11-preload; do
+            node "$candidate/tests/alpha23-$test.test.cjs"
+          done
+          xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox "$candidate/tests/alpha23-candidate12-electron-encoder.cjs"
+          xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox "$candidate/tests/alpha23-candidate13-electron-raw-frame.cjs"
+          xvfb-run -a node "$candidate/tests/alpha23-candidate8-renderer.test.cjs" "$GITHUB_WORKSPACE/packaging/common/alpha23-candidate7"
+          xvfb-run -a node "$candidate/tests/alpha23-candidate9-renderer.test.cjs" "$GITHUB_WORKSPACE/baseline/opt/archverse-overlay"
+          node tools/archverse-config-e2e.mjs "$candidate/app/server"
+          mkdir -p node_modules/electron/dist
+          printf '#!/bin/sh\nexec "%s" --no-sandbox "$@"\n' "$candidate/runtime/electron/electron" > node_modules/electron/dist/electron.exe
+          chmod +x node_modules/electron/dist/electron.exe
+          xvfb-run -a npm run control:ageband
+      - name: Staged widget integration
+        run: |
+          set -euo pipefail
+          candidate="$GITHUB_WORKSPACE/preview"
+          mkdir -p "$RUNNER_TEMP/preview-config"
+          printf '%s\n' '{"syncEnabled":false,"shareLogs":false,"setupComplete":true}' > "$RUNNER_TEMP/preview-config/config.json"
+          SC_TRACKER_CONFIG_DIR="$RUNNER_TEMP/preview-config" PORT=18778 node "$candidate/app/server/server.mjs" > "$RUNNER_TEMP/preview-server.log" 2>&1 &
+          sidecar=$!
+          trap 'kill "$sidecar" 2>/dev/null || true' EXIT
+          for _ in {1..30}; do curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:18778/widget-window-preview.html >/dev/null
+          OVERLAY_PORT=18778 xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox tools/widget-dom-test.cjs --pairs
+      - name: Package unverified window preview
+        run: |
+          set -euo pipefail
+          name=ArchVerse-Native-0.1.47-r31.alpha23.candidate19.windowpreview1
+          candidate="$GITHUB_WORKSPACE/preview"
+          mkdir -p "$RUNNER_TEMP/field/$name" preview-artifact
+          cp -a "$candidate/." "$RUNNER_TEMP/field/$name/"
+          (cd "$RUNNER_TEMP/field/$name" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && sha256sum -c SHA256SUMS >/dev/null)
+          tar --sort=name --mtime='UTC 2026-09-30 00:00:00' --owner=0 --group=0 --numeric-owner -cf - -C "$RUNNER_TEMP/field" "$name" | gzip -n > "preview-artifact/$name.tar.gz"
+          (cd preview-artifact && sha256sum "$name.tar.gz" > SHA256SUMS && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ArchVerse-Candidate19-native-window-preview1
+          path: preview-artifact/
+          if-no-files-found: error
+          retention-days: 14

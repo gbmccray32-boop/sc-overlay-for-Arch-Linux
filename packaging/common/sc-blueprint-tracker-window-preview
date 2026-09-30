@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SELF="$(readlink -f -- "${BASH_SOURCE[0]}")"
+ROOT="$(cd -- "$(dirname -- "$SELF")/.." && pwd)"
+export SC_TRACKER_WIDGET_WINDOWS=preview
+printf '%s\n' '[widget-window] launching Candidate 19 diagnostic preview; production widgets remain on the canvas' >&2
+exec "$ROOT/bin/sc-blueprint-tracker" "$@"

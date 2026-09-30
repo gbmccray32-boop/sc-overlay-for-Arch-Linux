@@ -44,8 +44,25 @@ single-commit checkout did not contain the `HEAD^` needed by its final whitespac
 workflow now requests two commits. Corrected CI run `36524071366` passed all foundation, Linux
 hotkey, overlay-patch, syntax, and whitespace gates.
 
-Next: add a non-production diagnostic window and connect it to centralized visibility, layout,
-held-`F`, and `Shift+F6` messages. Do not migrate SC Feed until that diagnostic passes locally.
+The second milestone adds Candidate 19 native-window preview 1. It is still dormant under the
+normal launcher; `bin/sc-blueprint-tracker-window-preview` is the only packaged launcher that sets
+`SC_TRACKER_WIDGET_WINDOWS=preview`. The build creates one sandboxed diagnostic window and no
+production widget window. It uses the existing centralized held-`F` pointer authority, becomes
+interactive only when the held pointer is inside its native bounds, returns to hard click-through
+on release, joins `Shift+F6` arrange mode, and persists geometry atomically in the separate
+`widget-window-preview.json` file. Its IPC rejects every sender except the probe renderer.
+
+**Automated verified locally:** the manager policy and package-diff tests pass; only eleven approved
+package paths differ from staged Candidate 19. Main-process startup, Linux bridge, Gamescope pointer,
+normal portal capture, capture-session retention, cadence, refinery, RapidOCR recovery, preload,
+keyboard authority, and window-class regressions pass against the staged preview. The workspace
+still blocks TSX IPC sockets and `uv_interface_addresses`; those unchanged checks remain assigned to
+the GitHub runner. CI and field testing are pending.
+
+Next: obtain a green packaged preview artifact, then field-test normal CachyOS KDE. Confirm the probe
+stays above Star Citizen, empty desktop/game areas remain click-through, held `F` enables its test
+button, `Shift+F6` moves and resizes it, and the saved geometry survives restart. Do not migrate SC
+Feed until that diagnostic passes.
 
 ## Alpha23 public Linux release — September 24, 2026
 
