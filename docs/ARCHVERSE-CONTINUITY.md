@@ -60,7 +60,16 @@ still blocks TSX IPC sockets and `uv_interface_addresses`; those unchanged check
 the GitHub runner. Initial preview CI run `36661718566` passed every source and packaged regression,
 including the real Electron probe smoke test, then exposed that the sidecar does not serve arbitrary
 new overlay filenames. The probe now loads its packaged local HTML through a `file:` URL instead of
-widening the sidecar's public routes. Corrected CI and field testing are pending.
+widening the sidecar's public routes.
+
+**Packaged verified:** corrected CI run `36662196854` passed source, immutable Linux contracts,
+checksum-pinned Candidate 19 staging, the exact eleven-path package comparison, real Electron probe
+and encoder checks, every inherited capture/input/refinery/OCR regression, configuration and
+age-band controls, widget/sidecar integration, packaging, and upload. Artifact `11075007598` has
+outer ZIP SHA-256 `5658952e22d91036cc908990272fdcb086a078d439a821b94a5cca40cf810a5c`.
+The contained single tarball has SHA-256
+`5f617f0413eaac230e3be918498b1134295692ce5a2752f9da82f99add0f73d2`; independent verification
+passed all 1,663 internal manifest entries. Field testing remains pending.
 
 Next: obtain a green packaged preview artifact, then field-test normal CachyOS KDE. Confirm the probe
 stays above Star Citizen, empty desktop/game areas remain click-through, held `F` enables its test
