@@ -2,34 +2,19 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const { app, BrowserWindow } = require("electron");
 const { WidgetWindowManager } = require("../electron/widget-window-manager.cjs");
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "archverse-widget-preview-"));
-const page = fs.readFileSync(path.join(__dirname, "../electron/widget-window-preview.html"));
-const server = http.createServer((_request, response) => {
-  response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-  response.end(page);
-});
-
-function listening() {
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-}
-
 (async () => {
-  await listening();
   await app.whenReady();
-  const port = server.address().port;
   const manager = new WidgetWindowManager({
     BrowserWindow,
     preloadPath: path.join(__dirname, "../electron/widget-window-preview-preload.cjs"),
-    baseUrl: `http://127.0.0.1:${port}/`,
+    baseUrl: pathToFileURL(path.join(__dirname, "../electron/")).toString(),
     platform: "linux",
     env: { SC_TRACKER_WIDGET_WINDOWS: "preview" },
     layoutPath: path.join(temporary, "layout.json"),
@@ -54,5 +39,5 @@ function listening() {
   console.error(error);
   process.exitCode = 1;
 }).finally(() => {
-  server.close(() => app.quit());
+  app.quit();
 });

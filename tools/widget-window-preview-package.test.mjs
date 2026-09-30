@@ -35,7 +35,7 @@ assert.match(read(preview, "bin/sc-blueprint-tracker-window-preview"), /SC_TRACK
 const allowed = new Set([
   "ALPHA23-PROVENANCE.json", "FIELD-TEST.md", "README.md", "app/package-lock.json", "app/package.json",
   "app/electron/main.cjs", "app/electron/widget-window-manager.cjs", "app/electron/widget-window-preview-preload.cjs",
-  "app/server/overlay/widget-window-preview.html", "bin/sc-blueprint-tracker-window-preview", "SHA256SUMS",
+  "app/electron/widget-window-preview.html", "bin/sc-blueprint-tracker-window-preview", "SHA256SUMS",
 ]);
 const baseFiles = new Set(walk(base));
 const previewFiles = new Set(walk(preview));

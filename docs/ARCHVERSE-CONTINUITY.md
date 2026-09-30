@@ -57,7 +57,10 @@ package paths differ from staged Candidate 19. Main-process startup, Linux bridg
 normal portal capture, capture-session retention, cadence, refinery, RapidOCR recovery, preload,
 keyboard authority, and window-class regressions pass against the staged preview. The workspace
 still blocks TSX IPC sockets and `uv_interface_addresses`; those unchanged checks remain assigned to
-the GitHub runner. CI and field testing are pending.
+the GitHub runner. Initial preview CI run `36661718566` passed every source and packaged regression,
+including the real Electron probe smoke test, then exposed that the sidecar does not serve arbitrary
+new overlay filenames. The probe now loads its packaged local HTML through a `file:` URL instead of
+widening the sidecar's public routes. Corrected CI and field testing are pending.
 
 Next: obtain a green packaged preview artifact, then field-test normal CachyOS KDE. Confirm the probe
 stays above Star Citizen, empty desktop/game areas remain click-through, held `F` enables its test

@@ -22,7 +22,7 @@ fs.writeFileSync(path.join(out, "app/electron/main.cjs"), portWidgetWindowPrevie
 for (const file of ["widget-window-manager.cjs", "widget-window-preview-preload.cjs"]) {
   fs.copyFileSync(path.join(root, "electron", file), path.join(out, "app/electron", file));
 }
-fs.copyFileSync(path.join(root, "electron/widget-window-preview.html"), path.join(out, "app/server/overlay/widget-window-preview.html"));
+fs.copyFileSync(path.join(root, "electron/widget-window-preview.html"), path.join(out, "app/electron/widget-window-preview.html"));
 fs.copyFileSync(path.join(root, "packaging/common/sc-blueprint-tracker-window-preview"), path.join(out, "bin/sc-blueprint-tracker-window-preview"));
 fs.chmodSync(path.join(out, "bin/sc-blueprint-tracker-window-preview"), 0o755);
 
@@ -48,7 +48,7 @@ provenance.widgetWindowPreviewChangedFiles = [
   "app/electron/main.cjs",
   "app/electron/widget-window-manager.cjs",
   "app/electron/widget-window-preview-preload.cjs",
-  "app/server/overlay/widget-window-preview.html",
+  "app/electron/widget-window-preview.html",
   "bin/sc-blueprint-tracker-window-preview",
   "app/package.json",
   "app/package-lock.json",
