@@ -117,6 +117,14 @@ Canvas, and duplicate transitions within 250 ms are rejected. Main-process curso
 header movement every 16 ms; drag completion logs its move count and requested versus actual bounds.
 Normal Candidate 19 remains unchanged.
 
+**Preview 3 packaged verification passed.** Commit
+`50e96d0427e124809a33bf6032f47d216f0ec5ba` passed foundation workflow `36811968373` and the
+complete packaged workflow `36811968362`. Artifact `11140121041` has outer ZIP SHA-256
+`f7f7989f38e664b604002dce844de56a68bb7ccefddfac4649dafa8a951f3c4d`; its native archive
+SHA-256 is `4808fc2d1c196a3d31c851dcdc3e29b3b1f42ccb383ed22a359ebc312083fb70`. Independent download
+verification passed the archive checksum, embedded version, and all 1,663 internal manifest entries.
+Field verification remains pending.
+
 ## Alpha23 public Linux release — September 24, 2026
 
 ### Candidate 19 source checkpoint — September 24, 2026
