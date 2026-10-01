@@ -155,18 +155,26 @@ header drag uses main-process cursor polling, and its geometry persists separate
 `widgets.json`. Capture, OCR, Mining, Hauling, Refinery, Gamescope, sidecar behavior, and the Linux
 hotkey exclusion are unchanged.
 
-**Automated verified locally:** the manager regression covers inactive-notifier exclusion,
-activation, latch retention, hidden-card latch release, focuslessness, and arrange dragging.
-Preview 4 stages from the checksum-verified Candidate 19 tree; its package comparison
-accepts exactly eleven changed paths. Renderer/IPC audit, Linux bridge, packaged main startup,
-Gamescope pointer, Candidate 18 keyboard authority, and the inherited Candidate 6 through 15
-capture/session/refinery gates pass. TypeScript, server build, Linux widget-hotkey lock, syntax, and
-whitespace checks pass. TSX socket tests and the real Electron SC Feed smoke test require the CI
-runner because this workspace blocks TSX IPC and has no X virtual display. Packaged and field
-verification remain pending.
+**Preview 4 packaged verification passed.** Final commit
+`ad3c41bc46e55651dae23a6a9f7c188017637447` passed foundation workflow `36818714356` and the
+complete packaged workflow `36818714357`. The real Electron smoke test loaded the packaged SC Feed
+page, exercised its restricted preload, activated the notifier only while visible, entered arrange
+mode, and completed native drag IPC. All inherited source, capture, input, OCR, refinery, age-band,
+and 1,439-assertion widget/sidecar gates passed. The CI harness now tests the native candidate
+sidecar separately from the legacy deterministic widget-fixture sidecar.
 
-Next: require green Preview 4 CI, independently verify the archive, then field-test normal
-CachyOS KDE. After Gabe marks a field step passed, stop and ask whether to begin the next step.
+Artifact `11142493453` has outer ZIP SHA-256
+`08334f29bba2b9818126d64b25fd8ce0155aeae3121660832976860d55255247`. Its native archive
+SHA-256 is `b91d9fd80a82f0f8c3dff4e7d237994bf8c2fbbfad18c6ce3121b88ca59ff74f`.
+Independent verification passed all 1,662 internal manifest entries, all 25 protected hashes, the
+exact eleven-path Candidate 19 comparison, embedded version, and the one-widget migration
+provenance. The archive remains field unverified.
+
+Next: field-test Preview 4 on normal CachyOS KDE. Confirm one native SC Feed card and no Canvas
+duplicate, held-`F` controls without focus or pointer-confinement loss, Shift+F6 header dragging and
+restored click-through, persisted geometry, Canvas/native mutual exclusion, and unchanged normal
+launcher behavior. Preserve the complete `electron.log`. After Gabe marks this field step passed,
+stop and ask whether to begin the next step.
 
 ## Alpha23 public Linux release — September 24, 2026
 

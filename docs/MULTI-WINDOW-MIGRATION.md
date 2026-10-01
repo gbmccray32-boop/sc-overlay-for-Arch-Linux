@@ -110,4 +110,6 @@ Canvas. Hidden notifier content is excluded from hit testing. A visible card or 
 enables its native bounds, and the first native held-`F` hit excludes all asynchronous Canvas
 classification until key release. The restricted native preload and main-process sender checks own
 links, tone selection, content-active state, and header dragging. The ordinary launcher does not
-enable this path. Preview 4 is automated verified locally but remains packaged and field unverified.
+enable this path. Preview 4 passed foundation and complete packaged CI, including its real Electron
+SC Feed smoke test, exact Candidate 19 package comparison, protected hashes, and the full legacy
+widget integration suite. It remains field unverified; normal CachyOS KDE is the next gate.
