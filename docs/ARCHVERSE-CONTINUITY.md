@@ -123,7 +123,23 @@ complete packaged workflow `36811968362`. Artifact `11140121041` has outer ZIP S
 `f7f7989f38e664b604002dce844de56a68bb7ccefddfac4649dafa8a951f3c4d`; its native archive
 SHA-256 is `4808fc2d1c196a3d31c851dcdc3e29b3b1f42ccb383ed22a359ebc312083fb70`. Independent download
 verification passed the archive checksum, embedded version, and all 1,663 internal manifest entries.
-Field verification remains pending.
+
+**Preview 3 passed its normal CachyOS KDE field gate on October 1.** The complete 16.5-minute
+Electron log shows repeated held-`F` native-window latches and test-button clicks without a focus
+change. Three explicit header drags completed with 107, 240, and 502 movement samples; every final
+requested bound exactly matched KWin's actual bound. Arrange mode remained preview-only and left the
+Canvas focus unchanged. Normal portal capture remained stable, Mining IPC had no failures or pending
+requests, and the process recorded no crash, helper exit, or sidecar restart.
+
+One first-hit transition briefly let the legacy Canvas classifier report an overlay-focused region
+before the native-window latch became authoritative. The user observed no malfunction, and later
+native interactions were clean. Suppress Canvas interaction classification while a native latch is
+active before migrating a production widget. One Fabricator remote-request timeout caused a single
+8.4-second Mining heartbeat outlier and recovered on the next heartbeat; it was not a capture,
+native-window, or IPC failure. Gamescope and Fedora/Nobara field gates remain pending.
+
+Next: add the native-latch/Canvas-classifier exclusion and its regression test, then migrate SC Feed
+as the first production widget preview. Keep every other widget on the Candidate 19 Canvas.
 
 ## Alpha23 public Linux release — September 24, 2026
 

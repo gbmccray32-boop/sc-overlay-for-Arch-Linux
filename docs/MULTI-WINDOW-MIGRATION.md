@@ -96,3 +96,10 @@ can recenter the host cursor immediately after the hit. Its diagnostic arrange m
 does not unlock the Canvas, debounces duplicate Shift+F6 transitions, and polls the main-process
 cursor during header drag. A drag log must show both nonzero movement samples and matching requested
 and actual bounds before the movement contract passes.
+
+Preview 3 passed the normal CachyOS KDE field gate on October 1. Repeated held-`F` clicks preserved
+focus, and three recorded drags finished with nonzero movement samples and exact requested/actual
+bounds. The remaining diagnostic hardening item is to prevent the legacy Canvas classifier from
+briefly claiming pointer authority after a native latch. After that regression is covered, SC Feed
+is the first production widget eligible for migration. Gamescope plus both Fedora/Nobara gates still
+apply before the Canvas can be retired.
