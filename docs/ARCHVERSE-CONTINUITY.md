@@ -141,6 +141,33 @@ native-window, or IPC failure. Gamescope and Fedora/Nobara field gates remain pe
 Next: add the native-latch/Canvas-classifier exclusion and its regression test, then migrate SC Feed
 as the first production widget preview. Keep every other widget on the Candidate 19 Canvas.
 
+Preview 4 implements that next step. The opt-in launcher now migrates only SC Feed to a focusless
+native notifier window and explicitly disables the Canvas copy. The ordinary launcher remains the
+unchanged Candidate 19 Canvas mode. The native preload exposes only SC Feed's required ready,
+active-state, HTTPS-link, tone-picker, and arrange-drag operations. Main validates the sender for
+every new native-window IPC message. An invisible notification card is outside native hit testing;
+the page adds it only while a story or arrange preview is visible.
+
+The first native hit remains authoritative until physical `F` release. While that latch exists,
+asynchronous DOM or reported-region replies from the legacy Canvas cannot make the Canvas
+interactive or focus it. Shift+F6 arranges only the native SC Feed window in this preview. Its
+header drag uses main-process cursor polling, and its geometry persists separately from
+`widgets.json`. Capture, OCR, Mining, Hauling, Refinery, Gamescope, sidecar behavior, and the Linux
+hotkey exclusion are unchanged.
+
+**Automated verified locally:** the manager regression covers inactive-notifier exclusion,
+activation, latch retention, hidden-card latch release, focuslessness, and arrange dragging.
+Preview 4 stages from the checksum-verified Candidate 19 tree; its package comparison
+accepts exactly eleven changed paths. Renderer/IPC audit, Linux bridge, packaged main startup,
+Gamescope pointer, Candidate 18 keyboard authority, and the inherited Candidate 6 through 15
+capture/session/refinery gates pass. TypeScript, server build, Linux widget-hotkey lock, syntax, and
+whitespace checks pass. TSX socket tests and the real Electron SC Feed smoke test require the CI
+runner because this workspace blocks TSX IPC and has no X virtual display. Packaged and field
+verification remain pending.
+
+Next: require green Preview 4 CI, independently verify the archive, then field-test normal
+CachyOS KDE. After Gabe marks a field step passed, stop and ask whether to begin the next step.
+
 ## Alpha23 public Linux release — September 24, 2026
 
 ### Candidate 19 source checkpoint — September 24, 2026

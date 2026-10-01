@@ -87,12 +87,14 @@ jobs:
           sidecar=$!
           trap 'kill "$sidecar" 2>/dev/null || true' EXIT
           for _ in {1..30}; do curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null && break; sleep 1; done
-          test -s "$candidate/app/electron/widget-window-preview.html"
+          test -s "$candidate/app/electron/widget-window-scfeed-preload.cjs"
+          grep -q 'archverse-native-widget-window' "$candidate/app/server/overlay/scfeed.html"
+          OVERLAY_PORT=18778 xvfb-run -a npx electron --no-sandbox test/widget-window-scfeed-electron.cjs "$candidate"
           OVERLAY_PORT=18778 xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox tools/widget-dom-test.cjs --pairs
       - name: Package unverified window preview
         run: |
           set -euo pipefail
-          name=ArchVerse-Native-0.1.47-r31.alpha23.candidate19.windowpreview3
+          name=ArchVerse-Native-0.1.47-r31.alpha23.candidate19.windowpreview4
           candidate="$GITHUB_WORKSPACE/preview"
           mkdir -p "$RUNNER_TEMP/field/$name" preview-artifact
           cp -a "$candidate/." "$RUNNER_TEMP/field/$name/"
@@ -101,7 +103,7 @@ jobs:
           (cd preview-artifact && sha256sum "$name.tar.gz" > SHA256SUMS && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: ArchVerse-Candidate19-native-window-preview3
+          name: ArchVerse-Candidate19-native-window-preview4
           path: preview-artifact/
           if-no-files-found: error
           retention-days: 14

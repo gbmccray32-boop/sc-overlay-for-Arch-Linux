@@ -111,8 +111,10 @@ assert.equal(manager.updateHeldPointer({ x: -20, y: 11 }, true), "scFeed");
 assert.equal(win.calls.some((call) => call[0] === "focus"), false, "held-F must not steal game focus");
 assert.equal(manager.state("scFeed").focusPolicy, "focusless-all-modes");
 assert.equal(manager.updateHeldPointer({ x: 2000, y: 2000 }, true), "scFeed", "a detected native window stays latched until F-up");
+assert.equal(manager.heldInteractionId(), "scFeed");
 assert.equal(manager.state("scFeed").interactive, true);
 manager.updateHeldPointer(null, false);
+assert.equal(manager.heldInteractionId(), null);
 manager.setArrangeMode(true);
 assert.equal(manager.state("scFeed").arrangeMode, true);
 assert.equal(manager.state("scFeed").focusPolicy, "focusless-all-modes");
@@ -126,6 +128,22 @@ assert.equal(manager.resizeBy("scFeed", 50, 70), true);
 assert.deepEqual(manager.bounds("scFeed"), { x: 25, y: 35, width: 260, height: 161 });
 manager.setArrangeMode(false);
 assert.equal(manager.beginDrag("scFeed", { x: 100, y: 200 }), false);
+
+const notifier = manager.create({
+  id: "newsAlert",
+  page: "scfeed.html",
+  title: "Notifier hit test",
+  notifier: true,
+  bounds: { x: 400, y: 400, width: 340, height: 140 },
+});
+assert.equal(manager.containsPoint("newsAlert", { x: 410, y: 410 }), false, "an idle notifier must not own input");
+assert.equal(manager.updateHeldPointer({ x: 410, y: 410 }, true), null);
+assert.equal(manager.setContentActive("newsAlert", true), true);
+assert.equal(manager.updateHeldPointer({ x: 410, y: 410 }, true), "newsAlert");
+assert.equal(manager.heldInteractionId(), "newsAlert");
+assert.equal(manager.setContentActive("newsAlert", false), true);
+assert.equal(manager.heldInteractionId(), null, "a hidden notifier releases its held-input latch");
+assert.equal(notifier.calls.some((call) => call[0] === "focus"), false);
 
 assert.equal(windowTitle("mining"), "ArchVerse Widget [mining]");
 assert.deepEqual(kwinRuleHints("mining"), {

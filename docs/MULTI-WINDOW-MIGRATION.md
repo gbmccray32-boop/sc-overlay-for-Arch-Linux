@@ -103,3 +103,11 @@ bounds. The remaining diagnostic hardening item is to prevent the legacy Canvas 
 briefly claiming pointer authority after a native latch. After that regression is covered, SC Feed
 is the first production widget eligible for migration. Gamescope plus both Fedora/Nobara gates still
 apply before the Canvas can be retired.
+
+Preview 4 migrates SC Feed as the first production widget. The opt-in launcher creates one native
+SC Feed notifier and suppresses its Canvas instance; all other widgets stay on the Candidate 19
+Canvas. Hidden notifier content is excluded from hit testing. A visible card or arrange preview
+enables its native bounds, and the first native held-`F` hit excludes all asynchronous Canvas
+classification until key release. The restricted native preload and main-process sender checks own
+links, tone selection, content-active state, and header dragging. The ordinary launcher does not
+enable this path. Preview 4 is automated verified locally but remains packaged and field unverified.

@@ -42,6 +42,7 @@ function normalizeDefinition(definition) {
     page,
     title: String(definition.title || id),
     bounds: normalizeBounds(definition.bounds),
+    notifier: definition.notifier === true,
   };
 }
 
@@ -157,7 +158,12 @@ class WidgetWindowManager {
     win.on?.("move", save);
     win.on?.("resize", save);
     win.once?.("closed", () => this.windows.delete(widget.id));
-    this.windows.set(widget.id, { definition: widget, window: win, interactive: false });
+    this.windows.set(widget.id, {
+      definition: widget,
+      window: win,
+      interactive: false,
+      contentActive: !widget.notifier,
+    });
     this.logger.log?.(
       `[widget-window] created ${widget.id}; mode=${this.mode} stacking=${this.stackingOwner()}`,
     );
@@ -218,7 +224,27 @@ class WidgetWindowManager {
   }
 
   containsPoint(id, point) {
+    const entry = this.windows.get(id);
+    if (!entry || (!this.arrangeMode && entry.contentActive !== true)) return false;
     return pointInsideBounds(point, this.bounds(id));
+  }
+
+  setContentActive(id, active) {
+    const entry = this.windows.get(id);
+    if (!entry || entry.window.isDestroyed?.()) return false;
+    const on = active === true;
+    if (entry.contentActive === on) return true;
+    entry.contentActive = on;
+    if (!entry.contentActive && this.heldWindowId === id) {
+      this.heldWindowId = null;
+      if (!this.arrangeMode) this.setInteractive(id, false);
+    }
+    this.sendState(id);
+    return true;
+  }
+
+  heldInteractionId() {
+    return this.heldWindowId;
   }
 
   updateHeldPointer(point, held) {
@@ -325,6 +351,7 @@ class WidgetWindowManager {
       arrangeMode: this.arrangeMode,
       heldInteractive: !this.arrangeMode && this.heldWindowId === id,
       interactive: entry?.interactive === true,
+      contentActive: entry?.contentActive === true,
       focusPolicy: "focusless-all-modes",
       bounds: this.bounds(id),
     };

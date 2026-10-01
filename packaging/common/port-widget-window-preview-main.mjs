@@ -8,57 +8,86 @@ const previewRuntime = `// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME
 let widgetWindowPreviewIpcReady = false;
 let widgetWindowPreviewDragTimer = null;
 let widgetWindowPreviewArrangeToggleAt = 0;
+function nativeScFeedPreviewRequested() {
+  return process.platform === "linux" && process.env.SC_TRACKER_WIDGET_WINDOWS === "preview";
+}
 function stopWidgetWindowPreviewDrag() {
   if (widgetWindowPreviewDragTimer) clearInterval(widgetWindowPreviewDragTimer);
   widgetWindowPreviewDragTimer = null;
 }
-function startWidgetWindowPreviewDrag(point) {
+function startWidgetWindowPreviewDrag(id, point) {
   stopWidgetWindowPreviewDrag();
-  if (!widgetWindowPreview.beginDrag("windowProbe", point)) return;
+  if (!widgetWindowPreview.beginDrag(id, point)) return;
   widgetWindowPreviewDragTimer = setInterval(() => {
     try {
       const cursor = screen.getCursorScreenPoint();
       if (cursor && Number.isFinite(cursor.x) && Number.isFinite(cursor.y)) {
-        widgetWindowPreview.dragTo("windowProbe", cursor);
+        widgetWindowPreview.dragTo(id, cursor);
       }
     } catch {}
   }, 16);
   widgetWindowPreviewDragTimer.unref?.();
 }
-function endWidgetWindowPreviewDrag() {
+function endWidgetWindowPreviewDrag(id) {
   stopWidgetWindowPreviewDrag();
-  widgetWindowPreview.endDrag("windowProbe");
+  widgetWindowPreview.endDrag(id);
 }
 function registerWidgetWindowPreviewIpc() {
   if (widgetWindowPreviewIpcReady) return;
   widgetWindowPreviewIpcReady = true;
-  const ownsSender = (event) => event?.sender === widgetWindowPreview?.get("windowProbe")?.webContents;
-  ipcMain.on("widget-window-preview:ready", (event) => {
-    if (ownsSender(event)) widgetWindowPreview.sendState("windowProbe");
+  const ownsSender = (event, id) => event?.sender === widgetWindowPreview?.get(id)?.webContents;
+  ipcMain.on("widget-window:ready", (event) => {
+    if (ownsSender(event, "scFeed")) widgetWindowPreview.sendState("scFeed");
   });
-  ipcMain.on("widget-window-preview:action", (event, action) => {
-    if (!ownsSender(event)) return;
-    if (action === "grow") widgetWindowPreview.resizeBy("windowProbe", 40, 30);
-    else if (action === "shrink") widgetWindowPreview.resizeBy("windowProbe", -40, -30);
-    else if (action === "reset") widgetWindowPreview.resetBounds("windowProbe");
-    else if (action === "done") setMoveMode(false);
-    else if (action === "clicked") console.log("[widget-window] held-F interaction test clicked");
+  ipcMain.on("widget-window:active", (event, on) => {
+    if (ownsSender(event, "scFeed")) widgetWindowPreview.setContentActive("scFeed", on === true);
   });
-  ipcMain.on("widget-window-preview:drag", (event, value) => {
-    if (!ownsSender(event) || !value || typeof value !== "object") return;
+  ipcMain.on("widget-window:open-url", (event, url) => {
+    if (ownsSender(event, "scFeed") && typeof url === "string" && /^https:\\/\\//i.test(url)) {
+      shell.openExternal(url).catch(() => {});
+    }
+  });
+  ipcMain.on("widget-window:drag", (event, value) => {
+    if (!ownsSender(event, "scFeed") || !value || typeof value !== "object") return;
     const point = { x: Number(value.x), y: Number(value.y) };
     if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-    if (value.phase === "start") startWidgetWindowPreviewDrag(point);
-    else if (value.phase === "move") widgetWindowPreview.dragTo("windowProbe", point);
-    else if (value.phase === "end") endWidgetWindowPreviewDrag();
+    if (value.phase === "start") startWidgetWindowPreviewDrag("scFeed", point);
+    else if (value.phase === "move") widgetWindowPreview.dragTo("scFeed", point);
+    else if (value.phase === "end") endWidgetWindowPreviewDrag("scFeed");
   });
+}
+function ensureNativeScFeedWindow() {
+  if (!widgetWindowPreview?.enabled()) return null;
+  const existing = widgetWindowPreview.get("scFeed");
+  if (existing && !existing.isDestroyed?.()) return existing;
+  const zone = centeredDefaultZone();
+  const win = widgetWindowPreview.create({
+    id: "scFeed", page: "scfeed.html", title: "SC Feed", notifier: true,
+    bounds: { x: zone.x + Math.max(24, zone.width - 380), y: zone.y + 80, width: 340, height: 140 },
+  });
+  win?.webContents?.once("did-finish-load", () => {
+    if (scFeedVisible) widgetWindowPreview.show("scFeed");
+    widgetWindowPreview.sendState("scFeed");
+    console.log("[widget-window] native SC Feed loaded; canvas copy disabled");
+  });
+  return win;
+}
+function syncNativeScFeedWindow(on) {
+  if (!nativeScFeedPreviewRequested() || !widgetWindowPreview?.enabled()) return false;
+  if (on) {
+    ensureNativeScFeedWindow();
+    widgetWindowPreview.show("scFeed");
+  } else {
+    widgetWindowPreview.hide("scFeed");
+  }
+  return true;
 }
 function createWidgetWindowPreview() {
   if (widgetWindowPreview) return widgetWindowPreview.enabled();
   widgetWindowPreview = new WidgetWindowManager({
     BrowserWindow,
-    preloadPath: path.join(__dirname, "widget-window-preview-preload.cjs"),
-    baseUrl: pathToFileURL(__dirname + path.sep).toString(),
+    preloadPath: path.join(__dirname, "widget-window-scfeed-preload.cjs"),
+    baseUrl: HUD_URL,
     platform: process.platform,
     env: process.env,
     logger: console,
@@ -66,16 +95,7 @@ function createWidgetWindowPreview() {
   });
   if (!widgetWindowPreview.enabled()) return false;
   registerWidgetWindowPreviewIpc();
-  const zone = centeredDefaultZone();
-  const win = widgetWindowPreview.create({
-    id: "windowProbe", page: "widget-window-preview.html", title: "Native widget probe",
-    bounds: { x: zone.x + Math.max(24, zone.width - 400), y: zone.y + 80, width: 360, height: 300 },
-  });
-  win?.webContents?.once("did-finish-load", () => {
-    widgetWindowPreview.show("windowProbe");
-    widgetWindowPreview.sendState("windowProbe");
-  });
-  console.log("[widget-window] diagnostic preview enabled; production widgets remain on the canvas");
+  console.log("[widget-window] SC Feed native-window preview enabled; all other widgets remain on the canvas");
   return true;
 }
 
@@ -93,7 +113,7 @@ const previewHeldF = `  let nativePreviewPoint = null;
       fHoverPointerPhase = "host";
       fHoverHostHookAuthoritative = false;
       resetFHoverHostHandoff();
-      console.log(\`[widget-window] held-F native probe hit at \${nativePreviewPoint.x},\${nativePreviewPoint.y}; focus remains with Star Citizen\`);
+      console.log(\`[widget-window] held-F native widget hit id=\${previewHit} at \${nativePreviewPoint.x},\${nativePreviewPoint.y}; focus remains with Star Citizen\`);
     }
     applyFHoverClassification(false, null, "native-widget-preview");
     return;
@@ -106,28 +126,40 @@ export function portWidgetWindowPreviewMain(input) {
   main = mustReplace(
     main,
     'const { OverlayWindowManager } = require("./window-manager.cjs");',
-    'const { OverlayWindowManager } = require("./window-manager.cjs");\nconst { WidgetWindowManager } = require("./widget-window-manager.cjs"); // ARCHVERSE_WIDGET_WINDOW_PREVIEW\nconst { pathToFileURL } = require("node:url");',
+    'const { OverlayWindowManager } = require("./window-manager.cjs");\nconst { WidgetWindowManager } = require("./widget-window-manager.cjs"); // ARCHVERSE_WIDGET_WINDOW_PREVIEW',
     "widget window manager import",
   );
   main = mustReplace(
     main,
     "let relockTimer = null; // Linux safety: automatically restore click-through after temporary interaction",
-    "let relockTimer = null; // Linux safety: automatically restore click-through after temporary interaction\nlet widgetWindowPreview = null; // ARCHVERSE_WIDGET_WINDOW_PREVIEW: opt-in diagnostic only",
+    "let relockTimer = null; // Linux safety: automatically restore click-through after temporary interaction\nlet widgetWindowPreview = null; // ARCHVERSE_WIDGET_WINDOW_PREVIEW: opt-in SC Feed migration",
     "widget preview state",
   );
   main = mustReplace(main, "// What the shell believes about the displays and where it actually put the window. Posted to the", previewRuntime, "widget preview runtime");
   main = mustReplace(
     main,
     "  reportGeometry();\n}\n// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME",
-    "  reportGeometry();\n  widgetWindowPreview?.sendState(\"windowProbe\");\n}\n// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME",
+    "  reportGeometry();\n  widgetWindowPreview?.sendState(\"scFeed\");\n}\n// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME",
     "display refit preview update",
   );
   main = mustReplace(main, "  if (lastGlobalPointer) {\n    const canvas = fullDisplayBounds();", previewHeldF, "held-F preview classification");
   main = mustReplace(
     main,
+    'function applyFHoverClassification(next, target = null, source = "regions") {\n  next = !!(fHoverHeld && !fHoverSuppressedUntilRelease && next);',
+    'function applyFHoverClassification(next, target = null, source = "regions") {\n  if (widgetWindowPreview?.heldInteractionId()) { next = false; target = null; }\n  next = !!(fHoverHeld && !fHoverSuppressedUntilRelease && next);',
+    "native latch excludes canvas classification",
+  );
+  main = mustReplace(
+    main,
     "    fHoverHeld = false;\n    browserController?.setInteractionKeyHeld(false);",
     "    fHoverHeld = false;\n    widgetWindowPreview?.updateHeldPointer(null, false);\n    browserController?.setInteractionKeyHeld(false);",
     "held-F preview release",
+  );
+  main = mustReplace(
+    main,
+    '// SC Feed news notifier.\nfunction sendScFeedVisible(state) { try { overlay?.webContents.send("overlay:scfeed-visible", state); } catch {} }',
+    '// SC Feed news notifier. Preview mode migrates only SC Feed and explicitly disables its Canvas copy.\nfunction sendScFeedVisible(state) {\n  const on = state?.on === true;\n  if (nativeScFeedPreviewRequested()) {\n    try { overlay?.webContents.send("overlay:scfeed-visible", { on: false, nativeWindow: true }); } catch {}\n    syncNativeScFeedWindow(on);\n    return;\n  }\n  try { overlay?.webContents.send("overlay:scfeed-visible", state); } catch {}\n}',
+    "native SC Feed visibility routing",
   );
   main = mustReplace(
     main,
