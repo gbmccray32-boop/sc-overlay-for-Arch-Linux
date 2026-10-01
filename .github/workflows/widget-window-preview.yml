@@ -83,14 +83,24 @@ jobs:
           candidate="$GITHUB_WORKSPACE/preview"
           mkdir -p "$RUNNER_TEMP/preview-config"
           printf '%s\n' '{"syncEnabled":false,"shareLogs":false,"setupComplete":true}' > "$RUNNER_TEMP/preview-config/config.json"
-          (cd "$candidate/app/server" && SC_TRACKER_CONFIG_DIR="$RUNNER_TEMP/preview-config" PORT=18778 node server.mjs) > "$RUNNER_TEMP/preview-server.log" 2>&1 &
-          sidecar=$!
-          trap 'kill "$sidecar" 2>/dev/null || true' EXIT
-          for _ in {1..30}; do curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null && break; sleep 1; done
-          curl --fail --silent http://127.0.0.1:18778/scfeed.html | grep -q 'archverse-native-widget-window'
+          cleanup() {
+            test -z "${candidate_sidecar:-}" || kill "$candidate_sidecar" 2>/dev/null || true
+            test -z "${legacy_sidecar:-}" || kill "$legacy_sidecar" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          (cd "$candidate/app/server" && SC_TRACKER_CONFIG_DIR="$RUNNER_TEMP/preview-config" PORT=18779 node server.mjs) > "$RUNNER_TEMP/preview-candidate-server.log" 2>&1 &
+          candidate_sidecar=$!
+          for _ in {1..30}; do curl --fail --silent http://127.0.0.1:18779/scfeed.html >/dev/null && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:18779/scfeed.html | grep -q 'archverse-native-widget-window'
           test -s "$candidate/app/electron/widget-window-scfeed-preload.cjs"
           grep -q 'archverse-native-widget-window' "$candidate/app/server/overlay/scfeed.html"
-          ARCHVERSE_TEST_CANDIDATE="$candidate" OVERLAY_PORT=18778 xvfb-run -a npx electron --no-sandbox test/widget-window-scfeed-electron.cjs
+          ARCHVERSE_TEST_CANDIDATE="$candidate" OVERLAY_PORT=18779 xvfb-run -a npx electron --no-sandbox test/widget-window-scfeed-electron.cjs
+          kill "$candidate_sidecar" 2>/dev/null || true
+          wait "$candidate_sidecar" 2>/dev/null || true
+          candidate_sidecar=
+          SC_TRACKER_CONFIG_DIR="$RUNNER_TEMP/preview-config" PORT=18778 node "$candidate/app/server/server.mjs" > "$RUNNER_TEMP/preview-legacy-server.log" 2>&1 &
+          legacy_sidecar=$!
+          for _ in {1..30}; do curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null && break; sleep 1; done
           OVERLAY_PORT=18778 xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox tools/widget-dom-test.cjs --pairs
       - name: Package unverified window preview
         run: |
