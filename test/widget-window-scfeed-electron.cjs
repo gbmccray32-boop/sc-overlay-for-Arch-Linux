@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { app, BrowserWindow, ipcMain } = require("electron");
 
-const candidate = path.resolve(process.argv[2] || "");
+const candidate = path.resolve(process.env.ARCHVERSE_TEST_CANDIDATE || process.argv.at(-1) || "");
 const port = Number(process.env.OVERLAY_PORT || 18778);
 if (!candidate || !fs.existsSync(path.join(candidate, "app/electron/widget-window-manager.cjs"))) {
   throw new Error("usage: electron widget-window-scfeed-electron.cjs <staged-candidate>");
@@ -71,5 +71,5 @@ const waitFor = async (predicate, label) => {
 }).finally(() => {
   ipcMain.removeAllListeners("widget-window:ready");
   ipcMain.removeAllListeners("widget-window:active");
-  app.quit();
+  app.exit(process.exitCode || 0);
 });

@@ -89,7 +89,7 @@ jobs:
           for _ in {1..30}; do curl --fail --silent http://127.0.0.1:18778/missions.html >/dev/null && break; sleep 1; done
           test -s "$candidate/app/electron/widget-window-scfeed-preload.cjs"
           grep -q 'archverse-native-widget-window' "$candidate/app/server/overlay/scfeed.html"
-          OVERLAY_PORT=18778 xvfb-run -a npx electron --no-sandbox test/widget-window-scfeed-electron.cjs "$candidate"
+          ARCHVERSE_TEST_CANDIDATE="$candidate" OVERLAY_PORT=18778 xvfb-run -a npx electron --no-sandbox test/widget-window-scfeed-electron.cjs
           OVERLAY_PORT=18778 xvfb-run -a "$candidate/runtime/electron/electron" --no-sandbox tools/widget-dom-test.cjs --pairs
       - name: Package unverified window preview
         run: |
