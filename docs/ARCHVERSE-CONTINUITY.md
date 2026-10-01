@@ -88,8 +88,16 @@ The preview launcher now tees complete stdout/stderr to
 `~/.config/sc-blueprint-tracker/electron.log`. Production widgets remain on the unchanged Candidate
 19 Canvas, so their focus behavior is not claimed fixed by this isolated preview.
 
-Next: package Preview 2, then field-test normal CachyOS KDE. Confirm held `F` clicks the probe while
-Star Citizen keeps its mouse confinement, `Shift+F6` moves it by the header, the geometry survives
+**Preview 2 packaged verification passed.** Commit
+`3a2bf65278e121652fe915ff3a462ece419f7407` passed foundation workflow `36809874872` and the
+complete packaged workflow `36809874869`. Artifact `11138803122` has outer ZIP SHA-256
+`3e6046dac67beb6cdd7bf22868810a94608a51ee7e0a220f282384a138d1777f`; its native archive
+SHA-256 is `3ce2cd7cb14a59a96576832703a24a8086d9d168b72c6f743e163f48bb8e79e7`. Independent download
+verification passed the archive checksum, embedded version, intended repair markers, and all 1,663
+internal manifest entries.
+
+Next: field-test Preview 2 on normal CachyOS KDE. Confirm held `F` clicks the probe while Star
+Citizen keeps its mouse confinement, `Shift+F6` moves it by the header, the geometry survives
 restart, and `electron.log` contains the widget-window transitions. Do not migrate SC Feed until
 that diagnostic passes.
 
