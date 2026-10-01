@@ -49,7 +49,7 @@ const waitFor = async (predicate, label) => {
     win.webContents.once("did-fail-load", (_event, code, description) => reject(new Error(`${code}: ${description}`)));
   });
   assert.equal(await win.webContents.executeJavaScript("typeof window.archverseNativeWidget"), "object");
-  assert.equal(await win.webContents.executeJavaScript("new URLSearchParams(location.search).get('widgetId')"), "scFeed");
+  assert.equal(await win.webContents.executeJavaScript("new URLSearchParams(location.hash.slice(1)).get('widgetId')"), "scFeed");
   assert.equal(await win.webContents.executeJavaScript("!!document.getElementById('archverse-native-widget-window')"), true);
   assert.equal(manager.state("scFeed").contentActive, false, "an idle notifier starts outside native hit testing");
 

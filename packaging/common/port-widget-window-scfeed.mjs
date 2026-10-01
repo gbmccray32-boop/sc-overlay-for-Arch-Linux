@@ -45,7 +45,7 @@ export function portNativeScFeedWindow(input) {
   html = mustReplace(
     html,
     '  const EMBEDDED = new URLSearchParams(location.search).has("embedded");\n  // Same-origin bridge to the parent canvas (present only when embedded on the overlay).\n  const host = () => (EMBEDDED && window.parent) ? window.parent.__scFeedHost : null;',
-    '  const PARAMS = new URLSearchParams(location.search);\n  const EMBEDDED = PARAMS.has("embedded");\n  const NATIVE_WINDOW = PARAMS.has("widgetWindow");\n  // Use the canvas bridge when embedded and the restricted preload bridge in a native window.\n  const host = () => (EMBEDDED && window.parent) ? window.parent.__scFeedHost\n    : (NATIVE_WINDOW ? window.archverseNativeWidget : null);',
+    '  const PARAMS = new URLSearchParams(location.search);\n  const NATIVE_PARAMS = new URLSearchParams(location.hash.slice(1));\n  const EMBEDDED = PARAMS.has("embedded");\n  const NATIVE_WINDOW = NATIVE_PARAMS.has("widgetWindow");\n  // Use the canvas bridge when embedded and the restricted preload bridge in a native window.\n  const host = () => (EMBEDDED && window.parent) ? window.parent.__scFeedHost\n    : (NATIVE_WINDOW ? window.archverseNativeWidget : null);',
     "SC Feed host bridge",
   );
   html = mustReplace(

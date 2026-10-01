@@ -46,7 +46,8 @@ assert.match(read(preview, "app/electron/widget-window-manager.cjs"), /latched u
 assert.match(read(preview, "app/electron/widget-window-manager.cjs"), /contentActive/);
 assert.match(read(preview, "app/electron/widget-window-scfeed-preload.cjs"), /archverseNativeWidget/);
 const scFeed = read(preview, "app/server/overlay/scfeed.html");
-assert.match(scFeed, /NATIVE_WINDOW = PARAMS\.has\("widgetWindow"\)/);
+assert.match(scFeed, /NATIVE_PARAMS = new URLSearchParams\(location\.hash\.slice\(1\)\)/);
+assert.match(scFeed, /NATIVE_WINDOW = NATIVE_PARAMS\.has\("widgetWindow"\)/);
 assert.match(scFeed, /window\.archverseNativeWidget/);
 assert.match(scFeed, /archverse-native-widget-window/);
 assert.match(scFeed, /api\.drag\("start"/);

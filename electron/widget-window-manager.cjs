@@ -143,8 +143,9 @@ class WidgetWindowManager {
     win.setMinimumSize?.(260, 160);
     win.webContents?.setWindowOpenHandler?.(() => ({ action: "deny" }));
     const url = new URL(widget.page, this.baseUrl);
-    url.searchParams.set("widgetWindow", "1");
-    url.searchParams.set("widgetId", widget.id);
+    // The packaged sidecar resolves req.url directly as a file path, including any query string.
+    // Keep native-window metadata in the fragment so the request remains /scfeed.html.
+    url.hash = new URLSearchParams({ widgetWindow: "1", widgetId: widget.id }).toString();
     win.loadURL(url.toString());
     const save = () => {
       if (win.isDestroyed?.()) return;

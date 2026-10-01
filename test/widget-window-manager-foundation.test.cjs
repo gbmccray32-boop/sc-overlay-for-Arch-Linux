@@ -89,8 +89,10 @@ assert.deepEqual(win.calls[0], ["ignore", true, { forward: true }]);
 assert.deepEqual(win.windowOpenHandler(), { action: "deny" });
 const loaded = new URL(win.url);
 assert.equal(loaded.pathname, "/scfeed.html");
-assert.equal(loaded.searchParams.get("widgetWindow"), "1");
-assert.equal(loaded.searchParams.get("widgetId"), "scFeed");
+const nativeParams = new URLSearchParams(loaded.hash.slice(1));
+assert.equal(nativeParams.get("widgetWindow"), "1");
+assert.equal(nativeParams.get("widgetId"), "scFeed");
+assert.equal(loaded.search, "", "the sidecar file request must not contain a query string");
 
 assert.equal(manager.show("scFeed"), true);
 assert.deepEqual(win.calls.at(-1), ["showInactive"]);
