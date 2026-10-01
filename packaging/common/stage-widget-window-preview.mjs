@@ -26,7 +26,7 @@ fs.copyFileSync(path.join(root, "electron/widget-window-preview.html"), path.joi
 fs.copyFileSync(path.join(root, "packaging/common/sc-blueprint-tracker-window-preview"), path.join(out, "bin/sc-blueprint-tracker-window-preview"));
 fs.chmodSync(path.join(out, "bin/sc-blueprint-tracker-window-preview"), 0o755);
 
-const version = "0.1.47-r31.alpha23.candidate19.windowpreview1";
+const version = "0.1.47-r31.alpha23.candidate19.windowpreview2";
 for (const file of ["app/package.json", "app/package-lock.json"]) {
   const data = JSON.parse(read(file));
   data.version = version;
@@ -57,7 +57,7 @@ provenance.widgetWindowPreviewChangedFiles = [
   "README.md",
 ];
 fs.writeFileSync(path.join(out, "ALPHA23-PROVENANCE.json"), `${JSON.stringify(provenance, null, 2)}\n`);
-fs.writeFileSync(path.join(out, "FIELD-TEST.md"), `# Candidate 19 native-window preview 1\n\nThis is an opt-in diagnostic build. Run \`./bin/sc-blueprint-tracker-window-preview\`. No production widget has moved from the proven canvas. Verify KWin stacking, hard click-through, held-F interaction, Shift+F6 movement/resizing, and saved geometry. Then rerun the normal launcher to confirm Candidate 19 remains unchanged.\n`);
+fs.writeFileSync(path.join(out, "FIELD-TEST.md"), `# Candidate 19 native-window preview 2\n\nThis is an opt-in diagnostic build. Run \`./bin/sc-blueprint-tracker-window-preview\`. No production widget has moved from the proven canvas. The probe uses native screen coordinates, remains focusless during held-F interaction, and uses an explicit header-drag protocol under Shift+F6. Verify KWin stacking, hard click-through, held-F interaction without releasing Star Citizen pointer confinement, Shift+F6 movement/resizing, and saved geometry. The preview launcher writes \`~/.config/sc-blueprint-tracker/electron.log\`. Then rerun the normal launcher to confirm Candidate 19 remains unchanged.\n`);
 fs.copyFileSync(path.join(out, "FIELD-TEST.md"), path.join(out, "README.md"));
 fs.unlinkSync(path.join(out, "SHA256SUMS"));
 console.log(`Staged ${version}`);

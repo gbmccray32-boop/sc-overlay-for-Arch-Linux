@@ -95,6 +95,7 @@ class WidgetWindowManager {
     this.windows = new Map();
     this.arrangeMode = false;
     this.heldPointer = null;
+    this.drag = null;
     this.saveTimer = null;
   }
 
@@ -188,8 +189,12 @@ class WidgetWindowManager {
     const on = interactive === true;
     if (entry.interactive === on) return true;
     entry.interactive = on;
-    win.setFocusable?.(on);
+    // A held-F click must not activate the widget window. Star Citizen releases its confined
+    // pointer when another X11 window takes focus, and programmatic focus restoration cannot
+    // recreate that Wine/raw-input grab. Arrange mode is the only mode that may own focus.
+    win.setFocusable?.(on && this.arrangeMode);
     win.setIgnoreMouseEvents(!on, { forward: true });
+    this.logger.log?.(`[widget-window] ${id} ${on ? "interactive" : "click-through"}; focus=${on && this.arrangeMode ? "arrange" : "unchanged"}`);
     this.sendState(id);
     return true;
   }
@@ -223,9 +228,9 @@ class WidgetWindowManager {
       this.setInteractive(id, this.arrangeMode || inside);
       if (inside) {
         const win = this.get(id);
-        win?.show?.();
+        if (typeof win?.showInactive === "function") win.showInactive();
+        else win?.show?.();
         win?.moveTop?.();
-        win?.focus?.();
       }
     }
     return hit;
@@ -233,15 +238,50 @@ class WidgetWindowManager {
 
   setArrangeMode(on) {
     this.arrangeMode = on === true;
+    if (!this.arrangeMode) this.endDrag();
     for (const [id] of this.windows) {
       const win = this.get(id);
       if (!win || win.isDestroyed?.()) continue;
       win.setMovable?.(this.arrangeMode);
       win.setResizable?.(this.arrangeMode);
       this.setInteractive(id, this.arrangeMode);
+      win.setFocusable?.(this.arrangeMode);
       win.moveTop?.();
-      if (this.arrangeMode) win.show?.();
+      if (this.arrangeMode) {
+        win.show?.();
+        win.focus?.();
+      }
     }
+  }
+
+  beginDrag(id, point) {
+    const bounds = this.bounds(id);
+    const x = Number(point?.x);
+    const y = Number(point?.y);
+    if (!this.arrangeMode || !bounds || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+    this.drag = { id, x, y, bounds };
+    this.logger.log?.(`[widget-window] ${id} explicit drag started at ${Math.round(x)},${Math.round(y)}`);
+    return true;
+  }
+
+  dragTo(id, point) {
+    const x = Number(point?.x);
+    const y = Number(point?.y);
+    if (!this.arrangeMode || this.drag?.id !== id || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+    return this.setBounds(id, {
+      ...this.drag.bounds,
+      x: this.drag.bounds.x + Math.round(x - this.drag.x),
+      y: this.drag.bounds.y + Math.round(y - this.drag.y),
+    });
+  }
+
+  endDrag(id = null) {
+    if (!this.drag || (id && this.drag.id !== id)) return false;
+    const dragId = this.drag.id;
+    this.drag = null;
+    this.logger.log?.(`[widget-window] ${dragId} explicit drag ended`);
+    this.writeLayout();
+    return true;
   }
 
   resizeBy(id, deltaWidth, deltaHeight) {
@@ -269,6 +309,7 @@ class WidgetWindowManager {
       arrangeMode: this.arrangeMode,
       heldInteractive: !this.arrangeMode && this.containsPoint(id, this.heldPointer),
       interactive: entry?.interactive === true,
+      focusPolicy: this.arrangeMode ? "arrange-only" : "focusless-held-f",
       bounds: this.bounds(id),
     };
   }

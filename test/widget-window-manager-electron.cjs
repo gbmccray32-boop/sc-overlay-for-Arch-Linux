@@ -27,9 +27,13 @@ const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "archverse-widget-previe
   manager.show("windowProbe");
   assert.equal(manager.updateHeldPointer({ x: 30, y: 30 }, true), "windowProbe");
   assert.equal(manager.state("windowProbe").interactive, true);
+  assert.equal(manager.state("windowProbe").focusPolicy, "focusless-held-f");
   manager.updateHeldPointer(null, false);
   assert.equal(manager.state("windowProbe").interactive, false);
   manager.setArrangeMode(true);
+  assert.equal(manager.beginDrag("windowProbe", { x: 30, y: 30 }), true);
+  assert.equal(manager.dragTo("windowProbe", { x: 50, y: 60 }), true);
+  assert.equal(manager.endDrag("windowProbe"), true);
   assert.equal(manager.resizeBy("windowProbe", 20, 20), true);
   manager.setArrangeMode(false);
   manager.closeAll();

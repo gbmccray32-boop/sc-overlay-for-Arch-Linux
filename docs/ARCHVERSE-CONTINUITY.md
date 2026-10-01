@@ -69,12 +69,29 @@ age-band controls, widget/sidecar integration, packaging, and upload. Artifact `
 outer ZIP SHA-256 `5658952e22d91036cc908990272fdcb086a078d439a821b94a5cca40cf810a5c`.
 The contained single tarball has SHA-256
 `5f617f0413eaac230e3be918498b1134295692ce5a2752f9da82f99add0f73d2`; independent verification
-passed all 1,663 internal manifest entries. Field testing remains pending.
+passed all 1,663 internal manifest entries.
 
-Next: obtain a green packaged preview artifact, then field-test normal CachyOS KDE. Confirm the probe
-stays above Star Citizen, empty desktop/game areas remain click-through, held `F` enables its test
-button, `Shift+F6` moves and resizes it, and the saved geometry survives restart. Do not migrate SC
-Feed until that diagnostic passes.
+**Preview 1 failed its CachyOS KDE field gate on October 1.** The diagnostic card displayed the
+held-`F` state but did not accept its test-button click until `Shift+F6` arrange mode. Arrange-mode
+buttons worked, but KWin did not move the transparent toolbar from its CSS drag region. After an
+ArchVerse widget took focus, returning to Star Citizen left Wine's pointer confinement released;
+holding a physical mouse button retained the in-game grab. The supplied sidecar log contained only
+normal data-service and game-log-watcher startup plus two optional emote-provider HTTP 404s. The
+preview launcher produced no `electron.log`, so there is no main-process evidence for that run.
+
+Preview 2 repairs only the diagnostic milestone. Native-window hit testing now reads Electron screen
+coordinates instead of reusing the Canvas/Gamescope coordinate stream. Held-`F` enables mouse input
+without making or focusing the probe window, preserving Star Citizen's focus and pointer confinement.
+`Shift+F6` explicitly moves the window from validated renderer pointer deltas because Electron's
+Linux movable setter is not an implementation contract and KWin did not honor the CSS drag region.
+The preview launcher now tees complete stdout/stderr to
+`~/.config/sc-blueprint-tracker/electron.log`. Production widgets remain on the unchanged Candidate
+19 Canvas, so their focus behavior is not claimed fixed by this isolated preview.
+
+Next: package Preview 2, then field-test normal CachyOS KDE. Confirm held `F` clicks the probe while
+Star Citizen keeps its mouse confinement, `Shift+F6` moves it by the header, the geometry survives
+restart, and `electron.log` contains the widget-window transitions. Do not migrate SC Feed until
+that diagnostic passes.
 
 ## Alpha23 public Linux release — September 24, 2026
 

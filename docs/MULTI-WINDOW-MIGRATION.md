@@ -83,8 +83,10 @@ No production startup path enables the preview. Candidate 19 behavior therefore 
 The foundation validates widget IDs and pages, creates secure frameless windows, starts them in hard
 click-through mode, denies child popups, assigns stable KWin titles, and owns deterministic cleanup.
 
-The first field milestone adds one opt-in diagnostic window. Launch it with
+The second diagnostic revision adds one opt-in native window. Launch it with
 `./bin/sc-blueprint-tracker-window-preview`. The probe exercises KWin stacking, separately persisted
-native geometry, held-`F` interaction, hard click-through, and `Shift+F6` arrange mode. It contains no
+native geometry, focusless held-`F` interaction, hard click-through, and explicit `Shift+F6` header
+dragging. Native hit testing uses Electron screen coordinates and does not reuse the Canvas or
+Gamescope coordinate domain. The special launcher records `electron.log`. The probe contains no
 production widget and does not alter capture, OCR, the sidecar, or the Gamescope helper. The normal
 `./bin/sc-blueprint-tracker` launcher remains Candidate 19 canvas mode.

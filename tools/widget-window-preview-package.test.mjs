@@ -23,14 +23,18 @@ const walk = (root, relative = "") => {
 };
 
 assert.equal(JSON.parse(read(base, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19");
-assert.equal(JSON.parse(read(preview, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19.windowpreview1");
+assert.equal(JSON.parse(read(preview, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19.windowpreview2");
 const main = read(preview, "app/electron/main.cjs");
 assert.match(main, /ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME/);
-assert.match(main, /widgetWindowPreview\?\.updateHeldPointer\(lastGlobalPointer, true\)/);
+assert.match(main, /screen\.getCursorScreenPoint\(\)/);
+assert.match(main, /widgetWindowPreview\?\.updateHeldPointer\(nativePreviewPoint, true\)/);
+assert.match(main, /widget-window-preview:drag/);
 assert.match(main, /widgetWindowPreview\?\.setArrangeMode\(moveMode\)/);
 assert.match(main, /widgetWindowPreview\?\.closeAll\(\)/);
 assert.doesNotMatch(read(preview, "bin/sc-blueprint-tracker"), /SC_TRACKER_WIDGET_WINDOWS=preview/);
 assert.match(read(preview, "bin/sc-blueprint-tracker-window-preview"), /SC_TRACKER_WIDGET_WINDOWS=preview/);
+assert.match(read(preview, "bin/sc-blueprint-tracker-window-preview"), /electron\.log/);
+assert.match(read(preview, "app/electron/widget-window-manager.cjs"), /focusless-held-f/);
 
 const allowed = new Set([
   "ALPHA23-PROVENANCE.json", "FIELD-TEST.md", "README.md", "app/package-lock.json", "app/package.json",
