@@ -92,7 +92,7 @@ jobs:
       - name: Package unverified window preview
         run: |
           set -euo pipefail
-          name=ArchVerse-Native-0.1.47-r31.alpha23.candidate19.windowpreview2
+          name=ArchVerse-Native-0.1.47-r31.alpha23.candidate19.windowpreview3
           candidate="$GITHUB_WORKSPACE/preview"
           mkdir -p "$RUNNER_TEMP/field/$name" preview-artifact
           cp -a "$candidate/." "$RUNNER_TEMP/field/$name/"
@@ -101,7 +101,7 @@ jobs:
           (cd preview-artifact && sha256sum "$name.tar.gz" > SHA256SUMS && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: ArchVerse-Candidate19-native-window-preview2
+          name: ArchVerse-Candidate19-native-window-preview3
           path: preview-artifact/
           if-no-files-found: error
           retention-days: 14

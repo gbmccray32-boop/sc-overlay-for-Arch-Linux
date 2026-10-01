@@ -101,6 +101,22 @@ Citizen keeps its mouse confinement, `Shift+F6` moves it by the header, the geom
 restart, and `electron.log` contains the widget-window transitions. Do not migrate SC Feed until
 that diagnostic passes.
 
+**Preview 2 failed the October 1 field gate.** Its complete Electron log proves the native probe and
+logger loaded. The first held-`F` native hit at `3750,788` became click-through about 40 ms later
+when Star Citizen recentered the host pointer to `3132,1080`. Later stable-pointer attempts did
+deliver test-button clicks, which explains the intermittent behavior. Shift+F6 sometimes entered
+and exited arrange mode within approximately 40 ms. Explicit header drag start/end messages arrived,
+but Preview 2 did not record whether KWin applied any requested bounds. Arrange mode also focused
+the legacy full Canvas (`own-overlay-bound-game-session`), so the diagnostic did not isolate the
+reported Wine pointer-confinement loss.
+
+Preview 3 latches a native-window hit until physical `F` release instead of revoking it after a
+Star Citizen recenter. The probe stays nonfocusable in both held-F and arrange modes. In the opt-in
+preview only, Shift+F6 arranges the diagnostic probe without unlocking or focusing the production
+Canvas, and duplicate transitions within 250 ms are rejected. Main-process cursor polling drives
+header movement every 16 ms; drag completion logs its move count and requested versus actual bounds.
+Normal Candidate 19 remains unchanged.
+
 ## Alpha23 public Linux release — September 24, 2026
 
 ### Candidate 19 source checkpoint — September 24, 2026

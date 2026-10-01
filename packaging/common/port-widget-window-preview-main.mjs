@@ -6,6 +6,29 @@ const mustReplace = (source, before, after, label) => {
 
 const previewRuntime = `// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME
 let widgetWindowPreviewIpcReady = false;
+let widgetWindowPreviewDragTimer = null;
+let widgetWindowPreviewArrangeToggleAt = 0;
+function stopWidgetWindowPreviewDrag() {
+  if (widgetWindowPreviewDragTimer) clearInterval(widgetWindowPreviewDragTimer);
+  widgetWindowPreviewDragTimer = null;
+}
+function startWidgetWindowPreviewDrag(point) {
+  stopWidgetWindowPreviewDrag();
+  if (!widgetWindowPreview.beginDrag("windowProbe", point)) return;
+  widgetWindowPreviewDragTimer = setInterval(() => {
+    try {
+      const cursor = screen.getCursorScreenPoint();
+      if (cursor && Number.isFinite(cursor.x) && Number.isFinite(cursor.y)) {
+        widgetWindowPreview.dragTo("windowProbe", cursor);
+      }
+    } catch {}
+  }, 16);
+  widgetWindowPreviewDragTimer.unref?.();
+}
+function endWidgetWindowPreviewDrag() {
+  stopWidgetWindowPreviewDrag();
+  widgetWindowPreview.endDrag("windowProbe");
+}
 function registerWidgetWindowPreviewIpc() {
   if (widgetWindowPreviewIpcReady) return;
   widgetWindowPreviewIpcReady = true;
@@ -25,9 +48,9 @@ function registerWidgetWindowPreviewIpc() {
     if (!ownsSender(event) || !value || typeof value !== "object") return;
     const point = { x: Number(value.x), y: Number(value.y) };
     if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-    if (value.phase === "start") widgetWindowPreview.beginDrag("windowProbe", point);
+    if (value.phase === "start") startWidgetWindowPreviewDrag(point);
     else if (value.phase === "move") widgetWindowPreview.dragTo("windowProbe", point);
-    else if (value.phase === "end") widgetWindowPreview.endDrag("windowProbe");
+    else if (value.phase === "end") endWidgetWindowPreviewDrag();
   });
 }
 function createWidgetWindowPreview() {
@@ -109,14 +132,42 @@ export function portWidgetWindowPreviewMain(input) {
   main = mustReplace(
     main,
     "  moveMode = on;\n  if (LINUX_HARD_CLICK_THROUGH) {",
-    "  moveMode = on;\n  widgetWindowPreview?.setArrangeMode(moveMode);\n  if (LINUX_HARD_CLICK_THROUGH) {",
+    `  moveMode = on;
+  widgetWindowPreview?.setArrangeMode(moveMode);
+  if (widgetWindowPreview?.enabled()) {
+    locked = true;
+    applyMouse();
+    reapplyOverlayInputShape();
+    try { overlay?.webContents.send("overlay:move-mode", false); } catch {}
+    applyOverlayOpacity();
+    refreshTray();
+    console.log(\`[widget-window] preview-only arrange mode \${moveMode ? "enabled" : "disabled"}; canvas focus unchanged\`);
+    return;
+  }
+  if (LINUX_HARD_CLICK_THROUGH) {`,
     "arrange preview integration",
+  );
+  main = mustReplace(
+    main,
+    "function toggleMove() { setMoveMode(!moveMode); }",
+    `function toggleMove() {
+  if (widgetWindowPreview?.enabled()) {
+    const now = Date.now();
+    if (now - widgetWindowPreviewArrangeToggleAt < 250) {
+      console.log("[widget-window] ignored duplicate Shift+F6 arrange transition");
+      return;
+    }
+    widgetWindowPreviewArrangeToggleAt = now;
+  }
+  setMoveMode(!moveMode);
+}`,
+    "preview arrange debounce",
   );
   main = mustReplace(main, "    overlayEnabled = readOverlayEnabled();", "    createWidgetWindowPreview();\n    overlayEnabled = readOverlayEnabled();", "preview startup");
   main = mustReplace(
     main,
     "    hotkeys.unregisterAll();\n    if (process.platform === \"win32\") foreground.stop();",
-    "    hotkeys.unregisterAll();\n    widgetWindowPreview?.closeAll();\n    if (process.platform === \"win32\") foreground.stop();",
+    "    hotkeys.unregisterAll();\n    stopWidgetWindowPreviewDrag();\n    widgetWindowPreview?.closeAll();\n    if (process.platform === \"win32\") foreground.stop();",
     "preview shutdown",
   );
   return main;

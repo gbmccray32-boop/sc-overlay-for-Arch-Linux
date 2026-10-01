@@ -90,3 +90,9 @@ dragging. Native hit testing uses Electron screen coordinates and does not reuse
 Gamescope coordinate domain. The special launcher records `electron.log`. The probe contains no
 production widget and does not alter capture, OCR, the sidecar, or the Gamescope helper. The normal
 `./bin/sc-blueprint-tracker` launcher remains Candidate 19 canvas mode.
+
+Preview 3 treats the first native hit as authoritative until `F` is released because Star Citizen
+can recenter the host cursor immediately after the hit. Its diagnostic arrange mode is focusless,
+does not unlock the Canvas, debounces duplicate Shift+F6 transitions, and polls the main-process
+cursor during header drag. A drag log must show both nonzero movement samples and matching requested
+and actual bounds before the movement contract passes.
