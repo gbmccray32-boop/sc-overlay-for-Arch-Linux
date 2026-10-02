@@ -106,7 +106,8 @@ assert.equal(manager.setBounds("scFeed", { x: -20, y: 10, width: 0, height: 90.7
 assert.deepEqual(win.calls.findLast((call) => call[0] === "bounds"), ["bounds", { x: -20, y: 10, width: 1, height: 91 }]);
 assert.equal(manager.hide("scFeed"), true);
 assert.deepEqual(win.calls.at(-1), ["hide"]);
-
+assert.equal(manager.containsPoint("scFeed", { x: -20, y: 11 }), false, "a hidden ordinary widget must not own input");
+assert.equal(manager.show("scFeed"), true);
 assert.equal(manager.containsPoint("scFeed", { x: -20, y: 11 }), true);
 assert.equal(manager.containsPoint("scFeed", { x: -21, y: 11 }), false);
 assert.equal(manager.updateHeldPointer({ x: -20, y: 11 }, true), "scFeed");
@@ -138,6 +139,7 @@ const notifier = manager.create({
   notifier: true,
   bounds: { x: 400, y: 400, width: 340, height: 140 },
 });
+manager.show("newsAlert");
 assert.equal(manager.containsPoint("newsAlert", { x: 410, y: 410 }), false, "an idle notifier must not own input");
 assert.equal(manager.updateHeldPointer({ x: 410, y: 410 }, true), null);
 assert.equal(manager.setContentActive("newsAlert", true), true);

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { portWidgetWindowPreviewMain } from "./port-widget-window-preview-main.mjs";
-import { portNativeScFeedWindow } from "./port-widget-window-scfeed.mjs";
+import { portNativeLogWindow } from "./port-widget-window-log.mjs";
 
 const [baseArg, outArg] = process.argv.slice(2);
 if (!baseArg || !outArg) throw new Error("usage: stage-widget-window-preview.mjs <candidate19-root> <output>");
@@ -21,16 +21,16 @@ for (const line of read("SHA256SUMS").split("\n").filter(Boolean)) {
 fs.cpSync(base, out, { recursive: true, preserveTimestamps: true });
 fs.writeFileSync(path.join(out, "app/electron/main.cjs"), portWidgetWindowPreviewMain(read("app/electron/main.cjs")));
 fs.writeFileSync(
-  path.join(out, "app/server/overlay/scfeed.html"),
-  portNativeScFeedWindow(read("app/server/overlay/scfeed.html")),
+  path.join(out, "app/server/overlay/logview.html"),
+  portNativeLogWindow(read("app/server/overlay/logview.html")),
 );
-for (const file of ["widget-window-manager.cjs", "widget-window-scfeed-preload.cjs"]) {
+for (const file of ["widget-window-manager.cjs", "widget-window-log-preload.cjs"]) {
   fs.copyFileSync(path.join(root, "electron", file), path.join(out, "app/electron", file));
 }
 fs.copyFileSync(path.join(root, "packaging/common/sc-blueprint-tracker-window-preview"), path.join(out, "bin/sc-blueprint-tracker-window-preview"));
 fs.chmodSync(path.join(out, "bin/sc-blueprint-tracker-window-preview"), 0o755);
 
-const version = "0.1.47-r31.alpha23.candidate19.windowpreview4";
+const version = "0.1.47-r31.alpha23.candidate19.windowpreview5";
 for (const file of ["app/package.json", "app/package-lock.json"]) {
   const data = JSON.parse(read(file));
   data.version = version;
@@ -45,15 +45,15 @@ if (provenance.protectedFiles?.["app/electron/main.cjs"]) {
 }
 provenance.widgetWindowPreview = {
   productionWidgetsMigrated: 1,
-  migratedWidgets: ["scFeed"],
+  migratedWidgets: ["logView"],
   activation: "bin/sc-blueprint-tracker-window-preview",
   base: "Candidate 19",
 };
 provenance.widgetWindowPreviewChangedFiles = [
   "app/electron/main.cjs",
   "app/electron/widget-window-manager.cjs",
-  "app/electron/widget-window-scfeed-preload.cjs",
-  "app/server/overlay/scfeed.html",
+  "app/electron/widget-window-log-preload.cjs",
+  "app/server/overlay/logview.html",
   "bin/sc-blueprint-tracker-window-preview",
   "app/package.json",
   "app/package-lock.json",
@@ -62,7 +62,7 @@ provenance.widgetWindowPreviewChangedFiles = [
   "README.md",
 ];
 fs.writeFileSync(path.join(out, "ALPHA23-PROVENANCE.json"), `${JSON.stringify(provenance, null, 2)}\n`);
-fs.writeFileSync(path.join(out, "FIELD-TEST.md"), `# Candidate 19 native-window preview 4\n\nThis opt-in build migrates only SC Feed to a separate focusless native window. Run \`./bin/sc-blueprint-tracker-window-preview\`. Every other production widget remains on the proven Candidate 19 Canvas.\n\n1. Enable SC Feed from the tray or Overlay App menu. Confirm one SC Feed card appears and no duplicate remains on the Canvas.\n2. While a story is visible, hold F over the native card. Test Dismiss, Alert settings, and the story link. Star Citizen must retain focus and pointer confinement.\n3. Press Shift+F6. The sample SC Feed card must stay visible. Drag its header, press Shift+F6 again, and confirm the card returns to hard click-through.\n4. Restart the preview launcher and confirm the native position persists.\n5. Exercise one Canvas widget with held F. The Canvas and native SC Feed must never become interactive together.\n6. Close the preview and run \`./bin/sc-blueprint-tracker\`. Confirm the ordinary Candidate 19 Canvas mode remains unchanged.\n\nThe preview launcher writes \`~/.config/sc-blueprint-tracker/electron.log\`. Preserve that complete log. Capture, OCR, Mining, Hauling, Refinery, Gamescope, and per-widget hotkeys are unchanged.\n`);
+fs.writeFileSync(path.join(out, "FIELD-TEST.md"), `# Candidate 19 native-window preview 5\n\nThis opt-in build migrates only Log to a separate focusless native window. Run \`./bin/sc-blueprint-tracker-window-preview\`. SC Feed and every other production widget remain on the proven Candidate 19 Canvas.\n\n1. Enable Log from the tray or Overlay App menu. Confirm one continuously visible native Log appears and no duplicate remains on the Canvas.\n2. Hold F over Log. Pause and resume the stream, scroll it, and click a line to copy it. Star Citizen must retain focus and pointer confinement. Do not test filter typing in this preview; native keyboard focus is intentionally deferred to a separate gate.\n3. Press Shift+F6. Drag Log by an unused part of its header, resize it, press Shift+F6 again, and confirm it returns to hard click-through.\n4. Restart the preview launcher and confirm its native position and size persist.\n5. Exercise one Canvas widget with held F. The Canvas and native Log must never become interactive together.\n6. Disable Log and hold F over its former location. Input must pass to Star Citizen.\n7. Close the preview and run \`./bin/sc-blueprint-tracker\`. Confirm the ordinary Candidate 19 Canvas mode remains unchanged.\n\nThe preview launcher writes \`~/.config/sc-blueprint-tracker/electron.log\`. Preserve that complete log. Capture, OCR, Mining, Hauling, Refinery, Gamescope, SC Feed, and per-widget hotkeys are unchanged.\n`);
 fs.copyFileSync(path.join(out, "FIELD-TEST.md"), path.join(out, "README.md"));
 fs.unlinkSync(path.join(out, "SHA256SUMS"));
 console.log(`Staged ${version}`);

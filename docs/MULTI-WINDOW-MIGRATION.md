@@ -113,3 +113,11 @@ links, tone selection, content-active state, and header dragging. The ordinary l
 enable this path. Preview 4 passed foundation and complete packaged CI, including its real Electron
 SC Feed smoke test, exact Candidate 19 package comparison, protected hashes, and the full legacy
 widget integration suite. It remains field unverified; normal CachyOS KDE is the next gate.
+
+Preview 4's short CachyOS run verified persisted placement and the hidden-notifier exclusion: both
+held-F attempts occurred while SC Feed had no story, so the native window stayed click-through and
+Star Citizen retained input. That evidence does not verify interaction with visible SC Feed
+content. Preview 5 therefore substitutes the continuously visible Log widget as the sole opt-in
+native test surface. Its live tail, pause/resume, scrolling, line copy, native drag, geometry, and
+hidden-window exclusion are in scope. Log filter typing is explicitly deferred because it requires
+a separate keyboard-focus and hand-back contract; Preview 5 must remain focusless.

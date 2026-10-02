@@ -8,7 +8,7 @@ const previewRuntime = `// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME
 let widgetWindowPreviewIpcReady = false;
 let widgetWindowPreviewDragTimer = null;
 let widgetWindowPreviewArrangeToggleAt = 0;
-function nativeScFeedPreviewRequested() {
+function nativeLogPreviewRequested() {
   return process.platform === "linux" && process.env.SC_TRACKER_WIDGET_WINDOWS === "preview";
 }
 function stopWidgetWindowPreviewDrag() {
@@ -37,48 +37,48 @@ function registerWidgetWindowPreviewIpc() {
   widgetWindowPreviewIpcReady = true;
   const ownsSender = (event, id) => event?.sender === widgetWindowPreview?.get(id)?.webContents;
   ipcMain.on("widget-window:ready", (event) => {
-    if (ownsSender(event, "scFeed")) widgetWindowPreview.sendState("scFeed");
+    if (ownsSender(event, "logView")) widgetWindowPreview.sendState("logView");
   });
-  ipcMain.on("widget-window:active", (event, on) => {
-    if (ownsSender(event, "scFeed")) widgetWindowPreview.setContentActive("scFeed", on === true);
-  });
-  ipcMain.on("widget-window:open-url", (event, url) => {
-    if (ownsSender(event, "scFeed") && typeof url === "string" && /^https:\\/\\//i.test(url)) {
-      shell.openExternal(url).catch(() => {});
+  ipcMain.on("widget-window:typing-requested", (event) => {
+    if (ownsSender(event, "logView")) {
+      console.log("[widget-window] Log filter typing deferred; focusless Preview 5 remains read-only");
     }
   });
+  ipcMain.on("widget-window:typing-ended", (event) => {
+    if (ownsSender(event, "logView")) widgetWindowPreview.sendState("logView");
+  });
   ipcMain.on("widget-window:drag", (event, value) => {
-    if (!ownsSender(event, "scFeed") || !value || typeof value !== "object") return;
+    if (!ownsSender(event, "logView") || !value || typeof value !== "object") return;
     const point = { x: Number(value.x), y: Number(value.y) };
     if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-    if (value.phase === "start") startWidgetWindowPreviewDrag("scFeed", point);
-    else if (value.phase === "move") widgetWindowPreview.dragTo("scFeed", point);
-    else if (value.phase === "end") endWidgetWindowPreviewDrag("scFeed");
+    if (value.phase === "start") startWidgetWindowPreviewDrag("logView", point);
+    else if (value.phase === "move") widgetWindowPreview.dragTo("logView", point);
+    else if (value.phase === "end") endWidgetWindowPreviewDrag("logView");
   });
 }
-function ensureNativeScFeedWindow() {
+function ensureNativeLogWindow() {
   if (!widgetWindowPreview?.enabled()) return null;
-  const existing = widgetWindowPreview.get("scFeed");
+  const existing = widgetWindowPreview.get("logView");
   if (existing && !existing.isDestroyed?.()) return existing;
   const zone = centeredDefaultZone();
   const win = widgetWindowPreview.create({
-    id: "scFeed", page: "scfeed.html", title: "SC Feed", notifier: true,
-    bounds: { x: zone.x + Math.max(24, zone.width - 380), y: zone.y + 80, width: 340, height: 140 },
+    id: "logView", page: "logview.html", title: "Log",
+    bounds: { x: zone.x + 40, y: zone.y + 60, width: 520, height: 420 },
   });
   win?.webContents?.once("did-finish-load", () => {
-    if (scFeedVisible) widgetWindowPreview.show("scFeed");
-    widgetWindowPreview.sendState("scFeed");
-    console.log("[widget-window] native SC Feed loaded; canvas copy disabled");
+    if (logViewVisible) widgetWindowPreview.show("logView");
+    widgetWindowPreview.sendState("logView");
+    console.log("[widget-window] native Log loaded; canvas copy disabled; filter typing remains deferred");
   });
   return win;
 }
-function syncNativeScFeedWindow(on) {
-  if (!nativeScFeedPreviewRequested() || !widgetWindowPreview?.enabled()) return false;
+function syncNativeLogWindow(on) {
+  if (!nativeLogPreviewRequested() || !widgetWindowPreview?.enabled()) return false;
   if (on) {
-    ensureNativeScFeedWindow();
-    widgetWindowPreview.show("scFeed");
+    ensureNativeLogWindow();
+    widgetWindowPreview.show("logView");
   } else {
-    widgetWindowPreview.hide("scFeed");
+    widgetWindowPreview.hide("logView");
   }
   return true;
 }
@@ -86,7 +86,7 @@ function createWidgetWindowPreview() {
   if (widgetWindowPreview) return widgetWindowPreview.enabled();
   widgetWindowPreview = new WidgetWindowManager({
     BrowserWindow,
-    preloadPath: path.join(__dirname, "widget-window-scfeed-preload.cjs"),
+    preloadPath: path.join(__dirname, "widget-window-log-preload.cjs"),
     baseUrl: HUD_URL,
     platform: process.platform,
     env: process.env,
@@ -95,7 +95,7 @@ function createWidgetWindowPreview() {
   });
   if (!widgetWindowPreview.enabled()) return false;
   registerWidgetWindowPreviewIpc();
-  console.log("[widget-window] SC Feed native-window preview enabled; all other widgets remain on the canvas");
+  console.log("[widget-window] Log native-window preview enabled; all other widgets remain on the canvas");
   return true;
 }
 
@@ -132,14 +132,14 @@ export function portWidgetWindowPreviewMain(input) {
   main = mustReplace(
     main,
     "let relockTimer = null; // Linux safety: automatically restore click-through after temporary interaction",
-    "let relockTimer = null; // Linux safety: automatically restore click-through after temporary interaction\nlet widgetWindowPreview = null; // ARCHVERSE_WIDGET_WINDOW_PREVIEW: opt-in SC Feed migration",
+    "let relockTimer = null; // Linux safety: automatically restore click-through after temporary interaction\nlet widgetWindowPreview = null; // ARCHVERSE_WIDGET_WINDOW_PREVIEW: opt-in Log migration",
     "widget preview state",
   );
   main = mustReplace(main, "// What the shell believes about the displays and where it actually put the window. Posted to the", previewRuntime, "widget preview runtime");
   main = mustReplace(
     main,
     "  reportGeometry();\n}\n// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME",
-    "  reportGeometry();\n  widgetWindowPreview?.sendState(\"scFeed\");\n}\n// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME",
+    "  reportGeometry();\n  widgetWindowPreview?.sendState(\"logView\");\n}\n// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME",
     "display refit preview update",
   );
   main = mustReplace(main, "  if (lastGlobalPointer) {\n    const canvas = fullDisplayBounds();", previewHeldF, "held-F preview classification");
@@ -157,9 +157,9 @@ export function portWidgetWindowPreviewMain(input) {
   );
   main = mustReplace(
     main,
-    '// SC Feed news notifier.\nfunction sendScFeedVisible(state) { try { overlay?.webContents.send("overlay:scfeed-visible", state); } catch {} }',
-    '// SC Feed news notifier. Preview mode migrates only SC Feed and explicitly disables its Canvas copy.\nfunction sendScFeedVisible(state) {\n  const on = state?.on === true;\n  if (nativeScFeedPreviewRequested()) {\n    try { overlay?.webContents.send("overlay:scfeed-visible", { on: false, nativeWindow: true }); } catch {}\n    syncNativeScFeedWindow(on);\n    return;\n  }\n  try { overlay?.webContents.send("overlay:scfeed-visible", state); } catch {}\n}',
-    "native SC Feed visibility routing",
+    'function sendLogViewVisible(state) { try { overlay?.webContents.send("overlay:logView-visible", state); } catch {} }',
+    'function sendLogViewVisible(state) {\n  const on = state?.on === true;\n  if (nativeLogPreviewRequested()) {\n    try { overlay?.webContents.send("overlay:logView-visible", { on: false, nativeWindow: true }); } catch {}\n    syncNativeLogWindow(on);\n    return;\n  }\n  try { overlay?.webContents.send("overlay:logView-visible", state); } catch {}\n}',
+    "native Log visibility routing",
   );
   main = mustReplace(
     main,

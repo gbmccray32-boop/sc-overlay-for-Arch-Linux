@@ -170,11 +170,34 @@ Independent verification passed all 1,662 internal manifest entries, all 25 prot
 exact eleven-path Candidate 19 comparison, embedded version, and the one-widget migration
 provenance. The archive remains field unverified.
 
-Next: field-test Preview 4 on normal CachyOS KDE. Confirm one native SC Feed card and no Canvas
-duplicate, held-`F` controls without focus or pointer-confinement loss, Shift+F6 header dragging and
-restored click-through, persisted geometry, Canvas/native mutual exclusion, and unchanged normal
-launcher behavior. Preserve the complete `electron.log`. After Gabe marks this field step passed,
-stop and ask whether to begin the next step.
+**Preview 4 received partial normal CachyOS KDE field evidence on October 1.** Gabe confirmed its
+native position persisted after restart and that holding F over the saved location did not
+interrupt Star Citizen. The 33-second Electron log shows both held-F attempts were classified
+outside a widget because SC Feed had no visible story. The hidden notifier therefore remained
+click-through and did not steal focus, which passes that negative control. The run also retained
+portal capture at approximately 9–19 ms and recorded no crash, helper exit, IPC failure, or focus
+transfer. It did not exercise visible SC Feed controls, so Preview 4 is not promoted to a complete
+field pass.
+
+Gabe selected the continuously visible Log widget as the replacement test surface. Preview 5
+migrates only Log in the opt-in launcher and returns SC Feed to its unchanged Candidate 19 Canvas
+implementation. It explicitly suppresses the Canvas Log copy, preserves the native held-F latch,
+focusless arrange mode, separate geometry, and Canvas/native mutual exclusion, and adds a hidden
+ordinary-window regression so a disabled Log cannot own input at its old coordinates. Log's live
+tail, pause/resume, scrolling, and line-copy controls are in scope. Filter typing is intentionally
+deferred to a separate keyboard-focus milestone because it cannot be claimed under the current
+focusless-window contract.
+
+**Automated verified locally:** TypeScript, Linux hotkey exclusion, widget-window foundation,
+Candidate 19 staging, exact eleven-path Preview 5 package comparison, packaged main startup,
+renderer/IPC audit, Linux bridge, JavaScript syntax, and the inherited keyboard, pointer, normal
+capture, Gamescope separation, session retention, cadence, cargo, encoder, native portal, KDE
+reply, refinery, RapidOCR recovery, and preload regressions pass. The local TSX trade test remains
+blocked by the workspace's known Unix-socket `EPERM`; real Electron/Xvfb and the complete suite are
+assigned to GitHub CI. Packaging and field behavior remain unverified.
+
+Next: commit and push Preview 5, wait for both CI workflows, independently verify the resulting
+archive, and then field-test it on normal CachyOS KDE. Do not mark Log filter typing as passed.
 
 ## Alpha23 public Linux release — September 24, 2026
 

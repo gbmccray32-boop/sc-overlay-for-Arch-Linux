@@ -164,6 +164,7 @@ class WidgetWindowManager {
       window: win,
       interactive: false,
       contentActive: !widget.notifier,
+      requestedVisible: false,
     });
     this.logger.log?.(
       `[widget-window] created ${widget.id}; mode=${this.mode} stacking=${this.stackingOwner()}`,
@@ -176,17 +177,21 @@ class WidgetWindowManager {
   }
 
   show(id) {
-    const win = this.get(id);
-    if (!win || win.isDestroyed?.()) return false;
+    const entry = this.windows.get(id);
+    const win = entry?.window;
+    if (!entry || !win || win.isDestroyed?.()) return false;
+    entry.requestedVisible = true;
     if (typeof win.showInactive === "function") win.showInactive();
     else win.show();
     return true;
   }
 
   hide(id) {
-    const win = this.get(id);
-    if (!win || win.isDestroyed?.()) return false;
-    win.hide();
+    const entry = this.windows.get(id);
+    const win = entry?.window;
+    if (!entry || !win || win.isDestroyed?.()) return false;
+    entry.requestedVisible = false;
+    if (!this.arrangeMode) win.hide();
     return true;
   }
 
@@ -226,7 +231,7 @@ class WidgetWindowManager {
 
   containsPoint(id, point) {
     const entry = this.windows.get(id);
-    if (!entry || (!this.arrangeMode && entry.contentActive !== true)) return false;
+    if (!entry || (!this.arrangeMode && (entry.requestedVisible !== true || entry.contentActive !== true))) return false;
     return pointInsideBounds(point, this.bounds(id));
   }
 
@@ -279,6 +284,7 @@ class WidgetWindowManager {
     this.arrangeMode = on === true;
     if (!this.arrangeMode) this.endDrag();
     for (const [id] of this.windows) {
+      const entry = this.windows.get(id);
       const win = this.get(id);
       if (!win || win.isDestroyed?.()) continue;
       win.setMovable?.(this.arrangeMode);
@@ -289,6 +295,8 @@ class WidgetWindowManager {
       if (this.arrangeMode) {
         if (typeof win.showInactive === "function") win.showInactive();
         else win.show?.();
+      } else if (entry?.requestedVisible !== true) {
+        win.hide?.();
       }
     }
   }
@@ -353,6 +361,7 @@ class WidgetWindowManager {
       heldInteractive: !this.arrangeMode && this.heldWindowId === id,
       interactive: entry?.interactive === true,
       contentActive: entry?.contentActive === true,
+      requestedVisible: entry?.requestedVisible === true,
       focusPolicy: "focusless-all-modes",
       bounds: this.bounds(id),
     };
