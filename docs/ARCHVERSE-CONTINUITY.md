@@ -194,10 +194,24 @@ renderer/IPC audit, Linux bridge, JavaScript syntax, and the inherited keyboard,
 capture, Gamescope separation, session retention, cadence, cargo, encoder, native portal, KDE
 reply, refinery, RapidOCR recovery, and preload regressions pass. The local TSX trade test remains
 blocked by the workspace's known Unix-socket `EPERM`; real Electron/Xvfb and the complete suite are
-assigned to GitHub CI. Packaging and field behavior remain unverified.
+assigned to GitHub CI.
 
-Next: commit and push Preview 5, wait for both CI workflows, independently verify the resulting
-archive, and then field-test it on normal CachyOS KDE. Do not mark Log filter typing as passed.
+**Preview 5 packaged verification passed.** Remote commit
+`ebb3ac302b71aaf0124a568bbb625529d979f7d5` passed foundation workflow `36965096514` and the
+complete packaged workflow `36965096634`. The latter includes the real native Log Electron smoke
+test, full widget/sidecar integration, and every inherited packaged regression. Artifact
+`11209542316` has outer ZIP SHA-256
+`f7a905eb34b51c400c9414ff0223e5e0c02afb2052c99266d2b0bd48b2689fd2`; its native archive
+SHA-256 is `344ef106e2260a1ef9446b9c4461d72fa54d6a52df84b22adc1217f39453b6ba`.
+Independent direct-archive verification passed all 1,662 internal manifest entries, the embedded
+version and migration provenance, and the exact eleven-path Candidate 19 package comparison. The
+archive remains field unverified.
+
+Next: field-test Preview 5 on normal CachyOS KDE. Confirm that the continuously visible native Log
+supports held-F pause/resume, scrolling, and line copy without taking Star Citizen focus; verify
+focusless Shift+F6 drag/resize and geometry persistence; disable Log and verify input passes through
+its old location; then confirm Canvas/native mutual exclusion and the normal Candidate 19 rollback
+launcher. Do not mark Log filter typing as passed.
 
 ## Alpha23 public Linux release — September 24, 2026
 
