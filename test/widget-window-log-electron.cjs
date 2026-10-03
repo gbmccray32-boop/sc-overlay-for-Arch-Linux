@@ -35,6 +35,14 @@ const waitFor = async (predicate, label) => {
   });
   const owns = (event) => event?.sender === manager.get("logView")?.webContents;
   ipcMain.on("widget-window:ready", (event) => { if (owns(event)) manager.sendState("logView"); });
+  ipcMain.on("widget-window:resize", (event, value) => {
+    if (!owns(event) || !value || typeof value !== "object") return;
+    const point = { x: Number(value.x), y: Number(value.y) };
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    if (value.phase === "start") manager.beginResize("logView", point);
+    else if (value.phase === "move") manager.resizeTo("logView", point);
+    else if (value.phase === "end") manager.endResize("logView");
+  });
 
   const win = manager.create({
     id: "logView",
@@ -62,10 +70,24 @@ const waitFor = async (predicate, label) => {
     () => win.webContents.executeJavaScript("document.documentElement.classList.contains('native-arrange')"),
     "native Log arrange state",
   );
+  assert.equal(
+    await win.webContents.executeJavaScript("getComputedStyle(document.querySelector('.archverse-native-resize-handle')).display"),
+    "block",
+  );
   assert.equal(manager.beginDrag("logView", { x: 30, y: 30 }), true);
   assert.equal(manager.dragTo("logView", { x: 60, y: 70 }), true);
   assert.equal(manager.endDrag("logView"), true);
+  await win.webContents.executeJavaScript("window.archverseNativeWidget.resize('start', 100, 100)");
+  await win.webContents.executeJavaScript("window.archverseNativeWidget.resize('move', 220, 180)");
+  await waitFor(() => manager.bounds("logView").width === 640, "native Log resize IPC");
+  await win.webContents.executeJavaScript("window.archverseNativeWidget.resize('end', 220, 180)");
+  assert.deepEqual(manager.bounds("logView"), { x: 50, y: 60, width: 640, height: 500 });
   manager.setArrangeMode(false);
+  await waitFor(
+    async () => await win.webContents.executeJavaScript("getComputedStyle(document.querySelector('.archverse-native-resize-handle')).display") === "none",
+    "native Log resize handle hide",
+  );
+  assert.equal(manager.state("logView").focusPolicy, "focusless-all-modes");
 
   manager.hide("logView");
   assert.equal(manager.state("logView").requestedVisible, false);
@@ -78,5 +100,6 @@ const waitFor = async (predicate, label) => {
   process.exitCode = 1;
 }).finally(() => {
   ipcMain.removeAllListeners("widget-window:ready");
+  ipcMain.removeAllListeners("widget-window:resize");
   app.exit(process.exitCode || 0);
 });

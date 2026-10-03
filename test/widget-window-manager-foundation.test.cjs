@@ -129,8 +129,17 @@ assert.equal(manager.endDrag("scFeed"), true);
 assert.equal(manager.dragTo("scFeed", { x: 200, y: 300 }), false);
 assert.equal(manager.resizeBy("scFeed", 50, 70), true);
 assert.deepEqual(manager.bounds("scFeed"), { x: 25, y: 35, width: 260, height: 161 });
+assert.equal(manager.resizeBy("scFeed", Number.NaN, 20), false, "non-finite resize deltas are rejected");
+assert.equal(manager.beginResize("scFeed", { x: 100, y: 100 }), true);
+assert.equal(manager.beginResize("scFeed", { x: 110, y: 110 }), false, "an active resize cannot be replaced");
+assert.equal(manager.beginDrag("scFeed", { x: 100, y: 100 }), false, "resize owns the pointer operation");
+assert.equal(manager.resizeTo("scFeed", { x: 340, y: 300 }), true);
+assert.deepEqual(manager.bounds("scFeed"), { x: 25, y: 35, width: 500, height: 361 });
+assert.equal(manager.endResize("scFeed"), true);
+assert.equal(manager.resizeTo("scFeed", { x: 400, y: 400 }), false);
 manager.setArrangeMode(false);
 assert.equal(manager.beginDrag("scFeed", { x: 100, y: 200 }), false);
+assert.equal(manager.beginResize("scFeed", { x: 100, y: 200 }), false);
 
 const notifier = manager.create({
   id: "newsAlert",

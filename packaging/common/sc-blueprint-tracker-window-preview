@@ -7,7 +7,7 @@ export SC_TRACKER_WIDGET_WINDOWS=preview
 export SC_TRACKER_CONFIG_DIR="${SC_TRACKER_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/sc-blueprint-tracker}"
 mkdir -p -- "$SC_TRACKER_CONFIG_DIR"
 LOG_FILE="$SC_TRACKER_CONFIG_DIR/electron.log"
-printf '%s\n' '[widget-window] launching Candidate 19 SC Feed native-window preview; all other widgets remain on the canvas' | tee "$LOG_FILE" >&2
+printf '%s\n' '[widget-window] launching Candidate 19 Log native-window preview; all other widgets remain on the canvas' | tee "$LOG_FILE" >&2
 set +e
 "$ROOT/bin/sc-blueprint-tracker" "$@" 2>&1 | tee -a "$LOG_FILE"
 status=${PIPESTATUS[0]}

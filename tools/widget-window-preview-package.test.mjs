@@ -23,13 +23,15 @@ const walk = (root, relative = "") => {
 };
 
 assert.equal(JSON.parse(read(base, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19");
-assert.equal(JSON.parse(read(preview, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19.windowpreview5");
+assert.equal(JSON.parse(read(preview, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19.windowpreview6");
 const main = read(preview, "app/electron/main.cjs");
 assert.match(main, /ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME/);
 assert.match(main, /screen\.getCursorScreenPoint\(\)/);
 assert.match(main, /widgetWindowPreview\?\.updateHeldPointer\(nativePreviewPoint, true\)/);
 assert.match(main, /widget-window:drag/);
 assert.match(main, /startWidgetWindowPreviewDrag/);
+assert.match(main, /widget-window:resize/);
+assert.match(main, /startWidgetWindowPreviewResize/);
 assert.match(main, /preview-only arrange mode/);
 assert.match(main, /ignored duplicate Shift\+F6 arrange transition/);
 assert.match(main, /widgetWindowPreview\?\.setArrangeMode\(moveMode\)/);
@@ -45,12 +47,15 @@ assert.match(read(preview, "app/electron/widget-window-manager.cjs"), /focusless
 assert.match(read(preview, "app/electron/widget-window-manager.cjs"), /latched until interaction-key release/);
 assert.match(read(preview, "app/electron/widget-window-manager.cjs"), /contentActive/);
 assert.match(read(preview, "app/electron/widget-window-log-preload.cjs"), /archverseNativeWidget/);
+assert.match(read(preview, "app/electron/widget-window-log-preload.cjs"), /widget-window:resize/);
 const logView = read(preview, "app/server/overlay/logview.html");
 assert.match(logView, /NATIVE_PARAMS = new URLSearchParams\(location\.hash\.slice\(1\)\)/);
 assert.match(logView, /NATIVE_WINDOW = NATIVE_PARAMS\.has\("widgetWindow"\)/);
 assert.match(logView, /window\.archverseNativeWidget/);
 assert.match(logView, /archverse-native-widget-window/);
 assert.match(logView, /api\.drag\("start"/);
+assert.match(logView, /archverse-native-resize-handle/);
+assert.match(logView, /api\.resize\("start"/);
 
 const allowed = new Set([
   "ALPHA23-PROVENANCE.json", "FIELD-TEST.md", "README.md", "app/package-lock.json", "app/package.json",

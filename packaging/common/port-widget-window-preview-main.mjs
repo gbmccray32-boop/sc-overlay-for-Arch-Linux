@@ -6,19 +6,19 @@ const mustReplace = (source, before, after, label) => {
 
 const previewRuntime = `// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME
 let widgetWindowPreviewIpcReady = false;
-let widgetWindowPreviewDragTimer = null;
+let widgetWindowPreviewPointerTimer = null;
 let widgetWindowPreviewArrangeToggleAt = 0;
 function nativeLogPreviewRequested() {
   return process.platform === "linux" && process.env.SC_TRACKER_WIDGET_WINDOWS === "preview";
 }
-function stopWidgetWindowPreviewDrag() {
-  if (widgetWindowPreviewDragTimer) clearInterval(widgetWindowPreviewDragTimer);
-  widgetWindowPreviewDragTimer = null;
+function stopWidgetWindowPreviewPointerOperation() {
+  if (widgetWindowPreviewPointerTimer) clearInterval(widgetWindowPreviewPointerTimer);
+  widgetWindowPreviewPointerTimer = null;
 }
 function startWidgetWindowPreviewDrag(id, point) {
-  stopWidgetWindowPreviewDrag();
   if (!widgetWindowPreview.beginDrag(id, point)) return;
-  widgetWindowPreviewDragTimer = setInterval(() => {
+  stopWidgetWindowPreviewPointerOperation();
+  widgetWindowPreviewPointerTimer = setInterval(() => {
     try {
       const cursor = screen.getCursorScreenPoint();
       if (cursor && Number.isFinite(cursor.x) && Number.isFinite(cursor.y)) {
@@ -26,11 +26,28 @@ function startWidgetWindowPreviewDrag(id, point) {
       }
     } catch {}
   }, 16);
-  widgetWindowPreviewDragTimer.unref?.();
+  widgetWindowPreviewPointerTimer.unref?.();
 }
 function endWidgetWindowPreviewDrag(id) {
-  stopWidgetWindowPreviewDrag();
+  stopWidgetWindowPreviewPointerOperation();
   widgetWindowPreview.endDrag(id);
+}
+function startWidgetWindowPreviewResize(id, point) {
+  if (!widgetWindowPreview.beginResize(id, point)) return;
+  stopWidgetWindowPreviewPointerOperation();
+  widgetWindowPreviewPointerTimer = setInterval(() => {
+    try {
+      const cursor = screen.getCursorScreenPoint();
+      if (cursor && Number.isFinite(cursor.x) && Number.isFinite(cursor.y)) {
+        widgetWindowPreview.resizeTo(id, cursor);
+      }
+    } catch {}
+  }, 16);
+  widgetWindowPreviewPointerTimer.unref?.();
+}
+function endWidgetWindowPreviewResize(id) {
+  stopWidgetWindowPreviewPointerOperation();
+  widgetWindowPreview.endResize(id);
 }
 function registerWidgetWindowPreviewIpc() {
   if (widgetWindowPreviewIpcReady) return;
@@ -41,7 +58,7 @@ function registerWidgetWindowPreviewIpc() {
   });
   ipcMain.on("widget-window:typing-requested", (event) => {
     if (ownsSender(event, "logView")) {
-      console.log("[widget-window] Log filter typing deferred; focusless Preview 5 remains read-only");
+      console.log("[widget-window] Log filter typing deferred; focusless Preview 6 remains read-only");
     }
   });
   ipcMain.on("widget-window:typing-ended", (event) => {
@@ -54,6 +71,14 @@ function registerWidgetWindowPreviewIpc() {
     if (value.phase === "start") startWidgetWindowPreviewDrag("logView", point);
     else if (value.phase === "move") widgetWindowPreview.dragTo("logView", point);
     else if (value.phase === "end") endWidgetWindowPreviewDrag("logView");
+  });
+  ipcMain.on("widget-window:resize", (event, value) => {
+    if (!ownsSender(event, "logView") || !value || typeof value !== "object") return;
+    const point = { x: Number(value.x), y: Number(value.y) };
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    if (value.phase === "start") startWidgetWindowPreviewResize("logView", point);
+    else if (value.phase === "move") widgetWindowPreview.resizeTo("logView", point);
+    else if (value.phase === "end") endWidgetWindowPreviewResize("logView");
   });
 }
 function ensureNativeLogWindow() {
@@ -165,6 +190,7 @@ export function portWidgetWindowPreviewMain(input) {
     main,
     "  moveMode = on;\n  if (LINUX_HARD_CLICK_THROUGH) {",
     `  moveMode = on;
+  if (!moveMode) stopWidgetWindowPreviewPointerOperation();
   widgetWindowPreview?.setArrangeMode(moveMode);
   if (widgetWindowPreview?.enabled()) {
     locked = true;
@@ -199,7 +225,7 @@ export function portWidgetWindowPreviewMain(input) {
   main = mustReplace(
     main,
     "    hotkeys.unregisterAll();\n    if (process.platform === \"win32\") foreground.stop();",
-    "    hotkeys.unregisterAll();\n    stopWidgetWindowPreviewDrag();\n    widgetWindowPreview?.closeAll();\n    if (process.platform === \"win32\") foreground.stop();",
+    "    hotkeys.unregisterAll();\n    stopWidgetWindowPreviewPointerOperation();\n    widgetWindowPreview?.closeAll();\n    if (process.platform === \"win32\") foreground.stop();",
     "preview shutdown",
   );
   return main;

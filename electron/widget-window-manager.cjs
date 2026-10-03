@@ -98,6 +98,7 @@ class WidgetWindowManager {
     this.heldPointer = null;
     this.heldWindowId = null;
     this.drag = null;
+    this.resize = null;
     this.saveTimer = null;
   }
 
@@ -282,7 +283,10 @@ class WidgetWindowManager {
 
   setArrangeMode(on) {
     this.arrangeMode = on === true;
-    if (!this.arrangeMode) this.endDrag();
+    if (!this.arrangeMode) {
+      this.endDrag();
+      this.endResize();
+    }
     for (const [id] of this.windows) {
       const entry = this.windows.get(id);
       const win = this.get(id);
@@ -305,7 +309,7 @@ class WidgetWindowManager {
     const bounds = this.bounds(id);
     const x = Number(point?.x);
     const y = Number(point?.y);
-    if (!this.arrangeMode || !bounds || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+    if (this.drag || this.resize || !this.arrangeMode || !bounds || !Number.isFinite(x) || !Number.isFinite(y)) return false;
     this.drag = { id, x, y, bounds, moves: 0, requested: { ...bounds } };
     this.logger.log?.(`[widget-window] ${id} explicit drag started at ${Math.round(x)},${Math.round(y)}`);
     return true;
@@ -338,11 +342,48 @@ class WidgetWindowManager {
   resizeBy(id, deltaWidth, deltaHeight) {
     const bounds = this.bounds(id);
     if (!bounds || !this.arrangeMode) return false;
+    const widthDelta = Number(deltaWidth);
+    const heightDelta = Number(deltaHeight);
+    if (!Number.isFinite(widthDelta) || !Number.isFinite(heightDelta)) return false;
     return this.setBounds(id, {
       ...bounds,
-      width: Math.max(260, bounds.width + Number(deltaWidth || 0)),
-      height: Math.max(160, bounds.height + Number(deltaHeight || 0)),
+      width: Math.max(260, bounds.width + Math.round(widthDelta)),
+      height: Math.max(160, bounds.height + Math.round(heightDelta)),
     });
+  }
+
+  beginResize(id, point) {
+    const bounds = this.bounds(id);
+    const x = Number(point?.x);
+    const y = Number(point?.y);
+    if (this.drag || this.resize || !this.arrangeMode || !bounds || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+    this.resize = { id, x, y, bounds, moves: 0, requested: { ...bounds } };
+    this.logger.log?.(`[widget-window] ${id} explicit resize started at ${Math.round(x)},${Math.round(y)}`);
+    return true;
+  }
+
+  resizeTo(id, point) {
+    const x = Number(point?.x);
+    const y = Number(point?.y);
+    if (!this.arrangeMode || this.resize?.id !== id || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+    const requested = {
+      ...this.resize.bounds,
+      width: Math.max(260, this.resize.bounds.width + Math.round(x - this.resize.x)),
+      height: Math.max(160, this.resize.bounds.height + Math.round(y - this.resize.y)),
+    };
+    this.resize.moves += 1;
+    this.resize.requested = requested;
+    return this.setBounds(id, requested);
+  }
+
+  endResize(id = null) {
+    if (!this.resize || (id && this.resize.id !== id)) return false;
+    const { id: resizeId, moves, requested } = this.resize;
+    const actual = this.bounds(resizeId);
+    this.resize = null;
+    this.logger.log?.(`[widget-window] ${resizeId} explicit resize ended moves=${moves} requested=${JSON.stringify(requested)} actual=${JSON.stringify(actual)}`);
+    this.writeLayout();
+    return true;
   }
 
   resetBounds(id) {

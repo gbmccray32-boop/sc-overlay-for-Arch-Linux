@@ -229,6 +229,25 @@ Next: add a visible arrange-only resize handle with sender-validated IPC and mai
 polling, log requested versus actual resize bounds, add packaged Electron and hidden/click-through
 regressions, and field-test only that repair before advancing to another widget.
 
+Preview 6 implements that focused repair. Shift+F6 exposes a lower-right resize grip only on the
+native Log window. The restricted preload sends finite screen coordinates through a Log-owned IPC
+route, while the main process polls the Electron cursor every 16 ms so resizing continues after the
+pointer crosses the original window boundary. Move and resize cannot own the pointer operation at
+the same time. The manager enforces a 260x160 minimum, logs requested versus actual completion
+bounds, and persists the final geometry. Leaving arrange mode ends any active operation and hides
+the grip. Log remains focusless, filter typing remains deferred, and the ordinary Candidate 19
+launcher is unchanged.
+
+**Automated verified locally:** TypeScript, Linux hotkey exclusion, widget-window foundation,
+Candidate 19 staging, exact eleven-path Preview 6 package comparison, packaged main startup,
+Linux bridge, JavaScript syntax, repository literal and whitespace checks, and every inherited
+packaged capture, input, session, cadence, cargo, encoder, portal, refinery, RapidOCR, and preload
+regression pass. The workspace still blocks TSX Unix sockets and network-interface discovery, so
+the trade/configuration controls and real Electron/Xvfb smoke test remain assigned to GitHub CI.
+
+Next: push Preview 6, require both workflows and independent archive verification to pass, then
+field-test only native Log resizing on normal CachyOS KDE before advancing to another widget.
+
 ## Alpha23 public Linux release — September 24, 2026
 
 ### Candidate 19 source checkpoint — September 24, 2026

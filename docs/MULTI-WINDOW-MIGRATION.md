@@ -121,3 +121,11 @@ content. Preview 5 therefore substitutes the continuously visible Log widget as 
 native test surface. Its live tail, pause/resume, scrolling, line copy, native drag, geometry, and
 hidden-window exclusion are in scope. Log filter typing is explicitly deferred because it requires
 a separate keyboard-focus and hand-back contract; Preview 5 must remain focusless.
+
+Preview 5 passed its normal CachyOS interaction, focus, movement, persistence, and rollback checks,
+but exposed that the frameless Log window had no user-accessible resize path. Preview 6 adds one
+arrange-only lower-right resize grip. Its renderer bridge is restricted, main validates the Log
+sender and finite coordinates, and the manager serializes move and resize operations. Main-process
+cursor polling continues the resize across the window boundary. Completion logs requested and
+actual bounds, persists the result, and retains the 260x160 minimum. This is a focused repair;
+filter typing and every other widget remain outside the milestone.
