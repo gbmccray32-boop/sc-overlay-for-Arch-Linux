@@ -245,8 +245,19 @@ packaged capture, input, session, cadence, cargo, encoder, portal, refinery, Rap
 regression pass. The workspace still blocks TSX Unix sockets and network-interface discovery, so
 the trade/configuration controls and real Electron/Xvfb smoke test remain assigned to GitHub CI.
 
-Next: push Preview 6, require both workflows and independent archive verification to pass, then
-field-test only native Log resizing on normal CachyOS KDE before advancing to another widget.
+**Preview 6 packaged verification passed.** Remote commit
+`0af3ac6b7ab2c36ca5c3ac9e5fff3272ec516d59` passed foundation workflow `37097222184` and the
+complete packaged workflow `37097222165`. The latter includes the real native Log Electron resize
+smoke test, all inherited Linux contract and packaged regressions, configuration and age-band
+controls, and the complete widget/sidecar integration suite. Artifact `11265430005` has outer ZIP
+SHA-256 `95a9a94dbf465ef9372bf2a677bb6b6d0e780f90abc6b3ebb5c8c2c36b6da19b`. Its native archive
+SHA-256 is `3c04a5d7fdcf49b83c12f66871d75697ab7dca1337d5405bae43b69734631410`.
+Independent verification passed all 1,662 internal manifest entries, the embedded Preview 6
+version, and the exact eleven-path Candidate 19 comparison. The archive remains field unverified.
+
+Next: field-test only native Log resizing on normal CachyOS KDE. Do not advance to another widget
+until the grip, focusless resize, move/resize separation, geometry persistence, and rollback checks
+pass and the complete Electron log is reviewed.
 
 ## Alpha23 public Linux release — September 24, 2026
 
