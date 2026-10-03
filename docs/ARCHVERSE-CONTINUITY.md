@@ -207,11 +207,27 @@ Independent direct-archive verification passed all 1,662 internal manifest entri
 version and migration provenance, and the exact eleven-path Candidate 19 package comparison. The
 archive remains field unverified.
 
-Next: field-test Preview 5 on normal CachyOS KDE. Confirm that the continuously visible native Log
-supports held-F pause/resume, scrolling, and line copy without taking Star Citizen focus; verify
-focusless Shift+F6 drag/resize and geometry persistence; disable Log and verify input passes through
-its old location; then confirm Canvas/native mutual exclusion and the normal Candidate 19 rollback
-launcher. Do not mark Log filter typing as passed.
+**Preview 5 received a partial normal CachyOS KDE field pass on October 2.** Gabe reported that
+held-F Log interaction, its read-only controls, focus and pointer behavior, Shift+F6 movement,
+geometry persistence after restart, hidden-window exclusion, Canvas/native mutual exclusion, and
+the normal Candidate 19 rollback behaved correctly. Across the initial and post-restart Electron
+logs, six explicit arrange gestures completed with KWin's actual bounds matching the requested
+bounds. The native Log remained focusless, normal portal capture stayed active at approximately
+8–17 ms, Mining transport reported zero failures, and no crash, helper exit, or sidecar restart was
+recorded. The Electron log SHA-256 values are
+`ca7339c62d2f53d530c37d87c3357d2d8cafc402bc70dca06ca2e87b9d0c27ac` and
+`dda1f0b147a1939d69916cf8c6a8d9ae6e375d0e5663aba676bc5eb4640d715d`.
+
+Window resizing failed. Every attempted gesture entered the explicit header-drag path, and all six
+completed bounds remained exactly 520x420. The frameless window sets Electron's `resizable` policy,
+but the Log page exposes only header-drag IPC; the manager's tested `resizeBy()` method has no
+renderer/preload/main-process route or visible resize handle. This is an implementation gap, not a
+KWin bounds rejection. Preview 5 therefore remains short of a complete field pass. Filter typing
+also remains intentionally untested.
+
+Next: add a visible arrange-only resize handle with sender-validated IPC and main-process cursor
+polling, log requested versus actual resize bounds, add packaged Electron and hidden/click-through
+regressions, and field-test only that repair before advancing to another widget.
 
 ## Alpha23 public Linux release — September 24, 2026
 
