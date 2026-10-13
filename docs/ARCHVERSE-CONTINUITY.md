@@ -276,9 +276,21 @@ check, finite clamps, and a fixed action allowlist. Releasing F closes the nativ
 returns the whole window to hard click-through. The shared native chrome generator is the reusable
 base for subsequent widget migrations; Preview 7 still migrates only Log.
 
-Next: package and field-test Preview 7 on normal CachyOS KDE. Verify menu persistence, Overlay App
-menu access, Settings hand-back, arrange/reset, hard click-through, and ordinary Canvas rollback.
-After that focused gate passes, migrate the next read-only/reference widget on the shared chrome.
+**Preview 7 packaged verification passed.** Remote commit
+`3b4160dd253031fc4bfe2660fd966df04633eee6` passed foundation workflow `38344923006` and the
+complete packaged workflow `38344923010`. The latter includes the real native Log Electron menu
+test, exact Candidate 19 staging and package comparison, every inherited Linux regression,
+configuration controls, and complete widget/sidecar integration. Artifact `11788044663` has outer
+ZIP SHA-256 `66ee8da3bd088fdc95dd72370bf22ce7e43975c0821bc34bc37edcda7fb023fe`.
+The contained native archive SHA-256 is
+`ff77b2c5dacdecd40f7cd48a43445941550b24ffdd84cadd91f9242902af6d74`.
+Independent verification passed the artifact checksum, all 1,663 internal manifest entries, the
+embedded Preview 7 version and provenance, and the intended native-menu markers. The archive
+remains field unverified.
+
+Next: field-test Preview 7 on normal CachyOS KDE. Verify menu persistence, Overlay App cog access,
+Settings hand-back, arrange/reset, hard click-through, and ordinary Canvas rollback. After that
+focused gate passes, migrate the next read-only/reference widget on the shared chrome.
 
 ## Alpha23 public Linux release — September 24, 2026
 
