@@ -49,6 +49,43 @@ function endWidgetWindowPreviewResize(id) {
   stopWidgetWindowPreviewPointerOperation();
   widgetWindowPreview.endResize(id);
 }
+function nativeWidgetAppearanceState(id) {
+  const saved = readWidgets()?.[id] || {};
+  const clamp = (value, min, max, fallback) => value != null && Number.isFinite(Number(value))
+    ? Math.max(min, Math.min(max, Number(value))) : fallback;
+  const dim = clamp(saved.dim, 0.2, 1, 1);
+  return {
+    text: clamp(saved.text, 0.7, 2, 1),
+    dim,
+    dimText: clamp(saved.dimText, 0.2, 1, dim),
+    hoverFull: saved.hoverFull !== false,
+  };
+}
+function updateNativeWidgetAppearance(id, value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return nativeWidgetAppearanceState(id);
+  const current = nativeWidgetAppearanceState(id);
+  const patch = {};
+  if (Object.hasOwn(value, "text") && Number.isFinite(Number(value.text))) {
+    patch.text = Math.max(0.7, Math.min(2, Math.round(Number(value.text) * 100) / 100));
+  }
+  for (const key of ["dim", "dimText"]) {
+    if (Object.hasOwn(value, key) && Number.isFinite(Number(value[key]))) {
+      patch[key] = Math.max(0.2, Math.min(1, Math.round(Number(value[key]) * 100) / 100));
+    }
+  }
+  if (Object.hasOwn(value, "hoverFull")) patch.hoverFull = value.hoverFull === true;
+  if (Object.keys(patch).length) saveWidget(id, patch);
+  const next = { ...current, ...patch };
+  widgetWindowPreview?.get(id)?.webContents?.send?.("widget-window:menu-state", next);
+  return next;
+}
+function resetNativeWidgetAppearance(id) {
+  saveWidget(id, { text: null, dim: null, dimText: null, hoverFull: null });
+  widgetWindowPreview?.resetBounds(id);
+  const next = { text: 1, dim: 1, dimText: 1, hoverFull: true };
+  widgetWindowPreview?.get(id)?.webContents?.send?.("widget-window:menu-state", next);
+  return next;
+}
 function registerWidgetWindowPreviewIpc() {
   if (widgetWindowPreviewIpcReady) return;
   widgetWindowPreviewIpcReady = true;
@@ -58,11 +95,34 @@ function registerWidgetWindowPreviewIpc() {
   });
   ipcMain.on("widget-window:typing-requested", (event) => {
     if (ownsSender(event, "logView")) {
-      console.log("[widget-window] Log filter typing deferred; focusless Preview 6 remains read-only");
+      console.log("[widget-window] Log filter typing deferred; focusless Preview 7 remains read-only");
     }
   });
   ipcMain.on("widget-window:typing-ended", (event) => {
     if (ownsSender(event, "logView")) widgetWindowPreview.sendState("logView");
+  });
+  ipcMain.on("widget-window:summon-cog", (event) => {
+    if (!ownsSender(event, "logView")) return;
+    try { overlay?.webContents.send("overlay:summon-cog"); } catch {}
+  });
+  ipcMain.handle("widget-window:menu-state", (event) => {
+    if (!ownsSender(event, "logView")) return null;
+    return nativeWidgetAppearanceState("logView");
+  });
+  ipcMain.handle("widget-window:update-appearance", (event, value) => {
+    if (!ownsSender(event, "logView")) return null;
+    return updateNativeWidgetAppearance("logView", value);
+  });
+  ipcMain.handle("widget-window:menu-action", (event, action) => {
+    if (!ownsSender(event, "logView")) return null;
+    if (action === "reset") return resetNativeWidgetAppearance("logView");
+    if (action === "arrange") { setMoveMode(true); return nativeWidgetAppearanceState("logView"); }
+    if (action === "overlay-menu") {
+      try { overlay?.webContents.send("overlay:summon-cog"); } catch {}
+      return nativeWidgetAppearanceState("logView");
+    }
+    if (action === "settings") { openSettingsSurface(); return nativeWidgetAppearanceState("logView"); }
+    return nativeWidgetAppearanceState("logView");
   });
   ipcMain.on("widget-window:drag", (event, value) => {
     if (!ownsSender(event, "logView") || !value || typeof value !== "object") return;
@@ -93,7 +153,7 @@ function ensureNativeLogWindow() {
   win?.webContents?.once("did-finish-load", () => {
     if (logViewVisible) widgetWindowPreview.show("logView");
     widgetWindowPreview.sendState("logView");
-    console.log("[widget-window] native Log loaded; canvas copy disabled; filter typing remains deferred");
+    console.log("[widget-window] native Log loaded; Canvas copy disabled; native menus restored; filter typing remains deferred");
   });
   return win;
 }
@@ -120,7 +180,7 @@ function createWidgetWindowPreview() {
   });
   if (!widgetWindowPreview.enabled()) return false;
   registerWidgetWindowPreviewIpc();
-  console.log("[widget-window] Log native-window preview enabled; all other widgets remain on the canvas");
+  console.log("[widget-window] Log native-window Preview 7 enabled; shared native menu foundation active; all other widgets remain on the Canvas");
   return true;
 }
 

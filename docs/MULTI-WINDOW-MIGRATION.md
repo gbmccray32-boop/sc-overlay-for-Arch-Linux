@@ -129,3 +129,15 @@ sender and finite coordinates, and the manager serializes move and resize operat
 cursor polling continues the resize across the window boundary. Completion logs requested and
 actual bounds, persists the result, and retains the 260x160 minimum. This is a focused repair;
 filter typing and every other widget remain outside the milestone.
+
+Preview 6 passed its normal CachyOS field gate. Focusless resize, drag/resize separation, persisted
+geometry, held-F interaction, and Canvas rollback behaved correctly in the supplied pre-restart and
+post-restart logs. The run exposed one missing migration surface: the Canvas wrapper had owned the
+per-widget gear menu and the embedded page's route to the shared Overlay App cog.
+
+Preview 7 restores that surface for native Log and introduces reusable native widget chrome.
+Renderer access remains limited to sender-validated appearance updates and a fixed action allowlist.
+The native menu persists Text size and fade values through the existing `widgets.json` schema,
+offers reset and arrange, opens full Settings through main, and restores the existing Canvas
+`summonCog` route. Releasing F closes the popover and restores hard click-through. Log remains the
+only migrated production widget until this menu milestone passes its focused field gate.

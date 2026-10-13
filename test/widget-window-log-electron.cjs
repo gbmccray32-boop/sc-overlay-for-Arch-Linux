@@ -34,7 +34,23 @@ const waitFor = async (predicate, label) => {
     layoutPath: path.join(temporary, "layout.json"),
   });
   const owns = (event) => event?.sender === manager.get("logView")?.webContents;
+  let appearance = { text: 1, dim: 1, dimText: 1, hoverFull: true };
+  const menuActions = [];
+  let summonedCog = 0;
   ipcMain.on("widget-window:ready", (event) => { if (owns(event)) manager.sendState("logView"); });
+  ipcMain.on("widget-window:summon-cog", (event) => { if (owns(event)) summonedCog += 1; });
+  ipcMain.handle("widget-window:menu-state", (event) => owns(event) ? appearance : null);
+  ipcMain.handle("widget-window:update-appearance", (event, value) => {
+    if (!owns(event) || !value || typeof value !== "object") return null;
+    appearance = { ...appearance, ...value };
+    return appearance;
+  });
+  ipcMain.handle("widget-window:menu-action", (event, action) => {
+    if (!owns(event)) return null;
+    menuActions.push(action);
+    if (action === "reset") appearance = { text: 1, dim: 1, dimText: 1, hoverFull: true };
+    return appearance;
+  });
   ipcMain.on("widget-window:resize", (event, value) => {
     if (!owns(event) || !value || typeof value !== "object") return;
     const point = { x: Number(value.x), y: Number(value.y) };
@@ -61,6 +77,22 @@ const waitFor = async (predicate, label) => {
   assert.equal(await win.webContents.executeJavaScript("document.body.classList.contains('native-window')"), true);
   assert.equal(manager.state("logView").contentActive, true, "Log is continuously active while shown");
   assert.equal(manager.state("logView").requestedVisible, true);
+
+  assert.equal(await win.webContents.executeJavaScript("!!document.querySelector('.archverse-native-menu-button')"), true);
+  await win.webContents.executeJavaScript("document.querySelector('.archverse-native-menu-button').click()");
+  assert.equal(await win.webContents.executeJavaScript("document.querySelector('.archverse-native-menu').classList.contains('open')"), true);
+  await win.webContents.executeJavaScript("document.querySelector('[data-native-text=\"0.1\"]').click()");
+  await waitFor(() => appearance.text === 1.1, "native Log text-size persistence");
+  await win.webContents.executeJavaScript(`(() => {
+    const input = document.querySelector('[data-native-range="dim"]');
+    input.value = "65";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await waitFor(() => appearance.dim === 0.65, "native Log fade persistence");
+  await win.webContents.executeJavaScript("document.querySelector('[data-native-action=\"overlay-menu\"]').click()");
+  await waitFor(() => menuActions.includes("overlay-menu"), "native Overlay App menu action");
+  await win.webContents.executeJavaScript("document.getElementById('panel').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))");
+  await waitFor(() => summonedCog > 0, "native Log summon-cog bridge");
 
   await win.webContents.executeJavaScript("document.getElementById('pauseBtn').click()");
   assert.match(await win.webContents.executeJavaScript("document.getElementById('pauseBtn').textContent"), /Resume/);
@@ -100,6 +132,10 @@ const waitFor = async (predicate, label) => {
   process.exitCode = 1;
 }).finally(() => {
   ipcMain.removeAllListeners("widget-window:ready");
+  ipcMain.removeAllListeners("widget-window:summon-cog");
   ipcMain.removeAllListeners("widget-window:resize");
+  ipcMain.removeHandler("widget-window:menu-state");
+  ipcMain.removeHandler("widget-window:update-appearance");
+  ipcMain.removeHandler("widget-window:menu-action");
   app.exit(process.exitCode || 0);
 });

@@ -1,3 +1,5 @@
+import { nativeWidgetChromeScript, nativeWidgetChromeStyle } from "./widget-window-native-chrome.mjs";
+
 const mustReplace = (source, before, after, label) => {
   const count = source.split(before).length - 1;
   if (count !== 1) throw new Error(`${label}: expected one anchor, found ${count}`);
@@ -19,9 +21,12 @@ const nativeWindowScript = `
     resizeHandle.setAttribute("aria-hidden", "true");
     document.body.appendChild(resizeHandle);
 
+${nativeWidgetChromeScript({ title: "Log" })}
+
     api.onState((state) => {
       arrange = state?.arrangeMode === true;
       document.documentElement.classList.toggle("native-arrange", arrange);
+      if (!arrange && state?.interactive !== true) nativeMenu.classList.remove("open");
     });
 
     head?.addEventListener("pointerdown", (event) => {
@@ -68,7 +73,7 @@ export function portNativeLogWindow(input) {
   html = mustReplace(
     html,
     '  body.embedded { overflow: visible; background: transparent; }\n  body.embedded #panel { width: 100%; height: 100%; margin: 0; }',
-    '  body.embedded, body.native-window { overflow: visible; background: transparent; }\n  body.embedded #panel, body.native-window #panel { width: 100%; height: 100%; margin: 0; }\n  html.native-arrange .head { cursor: move; background: rgba(var(--accent-rgb), 0.18); touch-action: none; }\n  .archverse-native-resize-handle { display: none; }\n  html.native-arrange body.native-window .archverse-native-resize-handle { display: block; position: fixed; right: 0; bottom: 0; width: 28px; height: 28px; z-index: 2147483647; cursor: nwse-resize; touch-action: none; background: linear-gradient(135deg, transparent 0 42%, rgba(var(--accent-rgb), 0.92) 43% 53%, transparent 54% 62%, rgba(var(--accent-rgb), 0.92) 63% 73%, transparent 74%); }',
+    '  body.embedded, body.native-window { overflow: visible; background: transparent; }\n  body.embedded #panel, body.native-window #panel { width: 100%; height: 100%; margin: 0; }\n  body.native-window #rows { font-size: calc(10.5px * var(--native-widget-text-scale, 1)); }\n  body.native-window #filter { font-size: calc(11px * var(--native-widget-text-scale, 1)); }\n  body.native-window .foot { font-size: calc(9.5px * var(--native-widget-text-scale, 1)); }\n  html.native-arrange .head { cursor: move; background: rgba(var(--accent-rgb), 0.18); touch-action: none; }\n  .archverse-native-resize-handle { display: none; }\n  html.native-arrange body.native-window .archverse-native-resize-handle { display: block; position: fixed; right: 0; bottom: 0; width: 28px; height: 28px; z-index: 2147483647; cursor: nwse-resize; touch-action: none; background: linear-gradient(135deg, transparent 0 42%, rgba(var(--accent-rgb), 0.92) 43% 53%, transparent 54% 62%, rgba(var(--accent-rgb), 0.92) 63% 73%, transparent 74%); }\n' + nativeWidgetChromeStyle,
     "Log native window style",
   );
   html = mustReplace(

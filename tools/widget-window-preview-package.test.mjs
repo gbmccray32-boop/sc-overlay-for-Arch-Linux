@@ -23,7 +23,7 @@ const walk = (root, relative = "") => {
 };
 
 assert.equal(JSON.parse(read(base, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19");
-assert.equal(JSON.parse(read(preview, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19.windowpreview6");
+assert.equal(JSON.parse(read(preview, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19.windowpreview7");
 const main = read(preview, "app/electron/main.cjs");
 assert.match(main, /ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME/);
 assert.match(main, /screen\.getCursorScreenPoint\(\)/);
@@ -37,7 +37,11 @@ assert.match(main, /ignored duplicate Shift\+F6 arrange transition/);
 assert.match(main, /widgetWindowPreview\?\.setArrangeMode\(moveMode\)/);
 assert.match(main, /widgetWindowPreview\?\.closeAll\(\)/);
 assert.match(main, /widgetWindowPreview\?\.heldInteractionId\(\)/);
-assert.match(main, /native Log loaded; canvas copy disabled; filter typing remains deferred/);
+assert.match(main, /native Log loaded; Canvas copy disabled; native menus restored; filter typing remains deferred/);
+assert.match(main, /widget-window:menu-state/);
+assert.match(main, /widget-window:update-appearance/);
+assert.match(main, /widget-window:menu-action/);
+assert.match(main, /widget-window:summon-cog/);
 assert.match(main, /overlay:logView-visible", \{ on: false, nativeWindow: true \}/);
 assert.match(main, /id: "logView", page: "logview\.html", title: "Log"/);
 assert.doesNotMatch(read(preview, "bin/sc-blueprint-tracker"), /SC_TRACKER_WIDGET_WINDOWS=preview/);
@@ -48,6 +52,7 @@ assert.match(read(preview, "app/electron/widget-window-manager.cjs"), /latched u
 assert.match(read(preview, "app/electron/widget-window-manager.cjs"), /contentActive/);
 assert.match(read(preview, "app/electron/widget-window-log-preload.cjs"), /archverseNativeWidget/);
 assert.match(read(preview, "app/electron/widget-window-log-preload.cjs"), /widget-window:resize/);
+assert.match(read(preview, "app/electron/widget-window-log-preload.cjs"), /widget-window:menu-state/);
 const logView = read(preview, "app/server/overlay/logview.html");
 assert.match(logView, /NATIVE_PARAMS = new URLSearchParams\(location\.hash\.slice\(1\)\)/);
 assert.match(logView, /NATIVE_WINDOW = NATIVE_PARAMS\.has\("widgetWindow"\)/);
@@ -56,6 +61,8 @@ assert.match(logView, /archverse-native-widget-window/);
 assert.match(logView, /api\.drag\("start"/);
 assert.match(logView, /archverse-native-resize-handle/);
 assert.match(logView, /api\.resize\("start"/);
+assert.match(logView, /archverse-native-menu-button/);
+assert.match(logView, /Show Overlay App cog/);
 
 const allowed = new Set([
   "ALPHA23-PROVENANCE.json", "FIELD-TEST.md", "README.md", "app/package-lock.json", "app/package.json",
