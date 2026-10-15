@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { portWidgetWindowPreviewMain } from "./port-widget-window-preview-main.mjs";
 import { portNativeLogWindow } from "./port-widget-window-log.mjs";
+import { portNativeBindingChartWindow } from "./port-widget-window-bindingchart.mjs";
 import { portRapidOcrWorkerShutdown } from "./port-rapidocr-worker-shutdown.mjs";
 
 const [baseArg, outArg] = process.argv.slice(2);
@@ -29,13 +30,17 @@ fs.writeFileSync(
   path.join(out, "app/server/overlay/logview.html"),
   portNativeLogWindow(read("app/server/overlay/logview.html")),
 );
-for (const file of ["widget-window-manager.cjs", "widget-window-log-preload.cjs"]) {
+fs.writeFileSync(
+  path.join(out, "app/server/overlay/bindingwidget.html"),
+  portNativeBindingChartWindow(read("app/server/overlay/bindingwidget.html")),
+);
+for (const file of ["widget-window-manager.cjs", "widget-window-log-preload.cjs", "widget-window-bindingchart-preload.cjs"]) {
   fs.copyFileSync(path.join(root, "electron", file), path.join(out, "app/electron", file));
 }
 fs.copyFileSync(path.join(root, "packaging/common/sc-blueprint-tracker-window-preview"), path.join(out, "bin/sc-blueprint-tracker-window-preview"));
 fs.chmodSync(path.join(out, "bin/sc-blueprint-tracker-window-preview"), 0o755);
 
-const version = "0.1.47-r31.alpha23.candidate19.windowpreview8";
+const version = "0.1.47-r31.alpha23.candidate19.windowpreview9";
 for (const file of ["app/package.json", "app/package-lock.json"]) {
   const data = JSON.parse(read(file));
   data.version = version;
@@ -52,8 +57,8 @@ if (provenance.protectedFiles?.["app/electron/rapidocr-worker.cjs"]) {
   provenance.protectedFiles["app/electron/rapidocr-worker.cjs"] = hash(path.join(out, "app/electron/rapidocr-worker.cjs"));
 }
 provenance.widgetWindowPreview = {
-  productionWidgetsMigrated: 1,
-  migratedWidgets: ["logView"],
+  productionWidgetsMigrated: 2,
+  migratedWidgets: ["logView", "bindingChart"],
   activation: "bin/sc-blueprint-tracker-window-preview",
   base: "Candidate 19",
 };
@@ -62,7 +67,9 @@ provenance.widgetWindowPreviewChangedFiles = [
   "app/electron/rapidocr-worker.cjs",
   "app/electron/widget-window-manager.cjs",
   "app/electron/widget-window-log-preload.cjs",
+  "app/electron/widget-window-bindingchart-preload.cjs",
   "app/server/overlay/logview.html",
+  "app/server/overlay/bindingwidget.html",
   "bin/sc-blueprint-tracker-window-preview",
   "app/package.json",
   "app/package-lock.json",
@@ -71,7 +78,7 @@ provenance.widgetWindowPreviewChangedFiles = [
   "README.md",
 ];
 fs.writeFileSync(path.join(out, "ALPHA23-PROVENANCE.json"), `${JSON.stringify(provenance, null, 2)}\n`);
-fs.writeFileSync(path.join(out, "FIELD-TEST.md"), `# Candidate 19 native-window preview 8\n\nThis milestone retains Preview 7's field-working native Log menu and prevents a late RapidOCR worker result from raising EPIPE after taskbar Quit closes the parent IPC pipe. Run \`./bin/sc-blueprint-tracker-window-preview\`. Every other production widget remains on the proven Candidate 19 Canvas.\n\n1. Hold F over Log and click its gear. Confirm the native menu shows Text size, Panel fade, Text fade, Full on hover, Reset, Arrange, Overlay App cog, and full Settings actions.\n2. Change Text size and both fade values. Release F, then hold F again and confirm the values persist and Log returns to hard click-through between interactions.\n3. Select Show Overlay App cog. Confirm the Canvas global cog appears without focusing the Canvas or taking Star Citizen's pointer confinement. Release F, then hold F over that cog to open its existing application menu.\n4. Open full Settings from the native menu, close Settings, and confirm control returns to Star Citizen.\n5. Use Arrange widget windows, drag and resize Log, then leave arrange mode. Confirm the menu, gear, and resize grip do not remain interactive.\n6. Restart the preview launcher. Confirm position, size, and appearance persist.\n7. Use Reset and confirm Log returns to its default native bounds and appearance.\n8. Close the preview and run \`./bin/sc-blueprint-tracker\`. Confirm the ordinary Candidate 19 Canvas mode remains unchanged.\n9. While Mining or Refinery OCR is active, select Quit from the taskbar menu. Confirm ArchVerse exits without an EPIPE or corrupt/error warning.\n\nDo not test Log filter typing; native keyboard focus remains a separate gate. The preview launcher writes \`~/.config/sc-blueprint-tracker/electron.log\`. Preserve that complete log. Capture, OCR, Mining, Hauling, Refinery, Gamescope, and per-widget hotkeys are otherwise unchanged.\n`);
+fs.writeFileSync(path.join(out, "FIELD-TEST.md"), `# Candidate 19 native-window preview 9\n\nThis milestone keeps the field-proven native Log window and migrates only Infographic Viewer as the second production native window. Run \`./bin/sc-blueprint-tracker-window-preview\`. Every other production widget remains on the proven Candidate 19 Canvas.\n\n1. Enable Infographic Viewer from the taskbar Widgets menu. Confirm one native viewer appears and its old Canvas copy remains hidden.\n2. Hold F over the viewer. Test Fit, 1:1, reload, scrolling, and its gear menu. Release F and confirm Star Citizen immediately owns input again.\n3. Use Change… to select a PNG. Confirm the chosen image loads and remains after hiding and reopening the viewer.\n4. Change Text size and fade values. Confirm the viewer and Log keep separate appearance values.\n5. Select Arrange widget windows. Drag and resize both Log and Infographic Viewer, then leave arrange mode. Confirm both return to hard click-through.\n6. Restart the preview launcher. Confirm both windows retain their independent positions, sizes, and appearance.\n7. Hide Infographic Viewer. Hold F over its former position and confirm the hidden window cannot intercept input.\n8. Close the preview and run \`./bin/sc-blueprint-tracker\`. Confirm the ordinary Candidate 19 Canvas mode remains unchanged.\n\nDo not test Log filter typing; native keyboard focus remains a separate gate. The preview launcher writes \`~/.config/sc-blueprint-tracker/electron.log\`. Preserve that complete log. Capture, OCR, Mining, Hauling, Refinery, Gamescope, and per-widget hotkeys are unchanged.\n`);
 fs.copyFileSync(path.join(out, "FIELD-TEST.md"), path.join(out, "README.md"));
 fs.unlinkSync(path.join(out, "SHA256SUMS"));
 console.log(`Staged ${version}`);

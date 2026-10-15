@@ -37,12 +37,17 @@ function normalizeDefinition(definition) {
   if (!PAGE_PATTERN.test(page) || path.basename(page) !== page) {
     throw new Error(`invalid widget window page: ${page || "(empty)"}`);
   }
+  const preloadPath = definition.preloadPath == null ? null : String(definition.preloadPath);
+  if (preloadPath && !path.isAbsolute(preloadPath)) {
+    throw new Error(`invalid widget window preload path: ${preloadPath}`);
+  }
   return {
     id,
     page,
     title: String(definition.title || id),
     bounds: normalizeBounds(definition.bounds),
     notifier: definition.notifier === true,
+    preloadPath,
   };
 }
 
@@ -133,7 +138,7 @@ class WidgetWindowManager {
       fullscreenable: false,
       type: this.platform === "linux" ? "toolbar" : undefined,
       webPreferences: {
-        preload: this.preloadPath,
+        preload: widget.preloadPath || this.preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,

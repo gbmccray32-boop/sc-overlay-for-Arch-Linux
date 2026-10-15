@@ -89,9 +89,16 @@ function resetNativeWidgetAppearance(id) {
 function registerWidgetWindowPreviewIpc() {
   if (widgetWindowPreviewIpcReady) return;
   widgetWindowPreviewIpcReady = true;
-  const ownsSender = (event, id) => event?.sender === widgetWindowPreview?.get(id)?.webContents;
+  const nativeWidgetIdForSender = (event) => {
+    for (const id of ["logView", "bindingChart"]) {
+      if (event?.sender === widgetWindowPreview?.get(id)?.webContents) return id;
+    }
+    return null;
+  };
+  const ownsSender = (event, id) => nativeWidgetIdForSender(event) === id;
   ipcMain.on("widget-window:ready", (event) => {
-    if (ownsSender(event, "logView")) widgetWindowPreview.sendState("logView");
+    const id = nativeWidgetIdForSender(event);
+    if (id) widgetWindowPreview.sendState(id);
   });
   ipcMain.on("widget-window:typing-requested", (event) => {
     if (ownsSender(event, "logView")) {
@@ -102,43 +109,58 @@ function registerWidgetWindowPreviewIpc() {
     if (ownsSender(event, "logView")) widgetWindowPreview.sendState("logView");
   });
   ipcMain.on("widget-window:summon-cog", (event) => {
-    if (!ownsSender(event, "logView")) return;
+    if (!nativeWidgetIdForSender(event)) return;
     try { overlay?.webContents.send("overlay:summon-cog"); } catch {}
   });
   ipcMain.handle("widget-window:menu-state", (event) => {
-    if (!ownsSender(event, "logView")) return null;
-    return nativeWidgetAppearanceState("logView");
+    const id = nativeWidgetIdForSender(event);
+    return id ? nativeWidgetAppearanceState(id) : null;
   });
   ipcMain.handle("widget-window:update-appearance", (event, value) => {
-    if (!ownsSender(event, "logView")) return null;
-    return updateNativeWidgetAppearance("logView", value);
+    const id = nativeWidgetIdForSender(event);
+    return id ? updateNativeWidgetAppearance(id, value) : null;
   });
   ipcMain.handle("widget-window:menu-action", (event, action) => {
-    if (!ownsSender(event, "logView")) return null;
-    if (action === "reset") return resetNativeWidgetAppearance("logView");
-    if (action === "arrange") { setMoveMode(true); return nativeWidgetAppearanceState("logView"); }
+    const id = nativeWidgetIdForSender(event);
+    if (!id) return null;
+    if (action === "reset") return resetNativeWidgetAppearance(id);
+    if (action === "arrange") { setMoveMode(true); return nativeWidgetAppearanceState(id); }
     if (action === "overlay-menu") {
       try { overlay?.webContents.send("overlay:summon-cog"); } catch {}
-      return nativeWidgetAppearanceState("logView");
+      return nativeWidgetAppearanceState(id);
     }
-    if (action === "settings") { openSettingsSurface(); return nativeWidgetAppearanceState("logView"); }
-    return nativeWidgetAppearanceState("logView");
+    if (action === "settings") { openSettingsSurface(); return nativeWidgetAppearanceState(id); }
+    return nativeWidgetAppearanceState(id);
+  });
+  ipcMain.handle("widget-window:binding-pick-png", async (event) => {
+    if (!ownsSender(event, "bindingChart")) return null;
+    const result = await dialog.showOpenDialog(overlay ?? undefined, {
+      title: "Choose a PNG to show in Infographic Viewer",
+      filters: [{ name: "PNG image", extensions: ["png"] }],
+      properties: ["openFile"],
+    });
+    if (result.canceled || !result.filePaths.length) return null;
+    const selected = result.filePaths[0];
+    await postConfig({ bindingPng: selected });
+    return selected;
   });
   ipcMain.on("widget-window:drag", (event, value) => {
-    if (!ownsSender(event, "logView") || !value || typeof value !== "object") return;
+    const id = nativeWidgetIdForSender(event);
+    if (!id || !value || typeof value !== "object") return;
     const point = { x: Number(value.x), y: Number(value.y) };
     if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-    if (value.phase === "start") startWidgetWindowPreviewDrag("logView", point);
-    else if (value.phase === "move") widgetWindowPreview.dragTo("logView", point);
-    else if (value.phase === "end") endWidgetWindowPreviewDrag("logView");
+    if (value.phase === "start") startWidgetWindowPreviewDrag(id, point);
+    else if (value.phase === "move") widgetWindowPreview.dragTo(id, point);
+    else if (value.phase === "end") endWidgetWindowPreviewDrag(id);
   });
   ipcMain.on("widget-window:resize", (event, value) => {
-    if (!ownsSender(event, "logView") || !value || typeof value !== "object") return;
+    const id = nativeWidgetIdForSender(event);
+    if (!id || !value || typeof value !== "object") return;
     const point = { x: Number(value.x), y: Number(value.y) };
     if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-    if (value.phase === "start") startWidgetWindowPreviewResize("logView", point);
-    else if (value.phase === "move") widgetWindowPreview.resizeTo("logView", point);
-    else if (value.phase === "end") endWidgetWindowPreviewResize("logView");
+    if (value.phase === "start") startWidgetWindowPreviewResize(id, point);
+    else if (value.phase === "move") widgetWindowPreview.resizeTo(id, point);
+    else if (value.phase === "end") endWidgetWindowPreviewResize(id);
   });
 }
 function ensureNativeLogWindow() {
@@ -167,6 +189,34 @@ function syncNativeLogWindow(on) {
   }
   return true;
 }
+function ensureNativeBindingChartWindow() {
+  if (!widgetWindowPreview?.enabled()) return null;
+  const existing = widgetWindowPreview.get("bindingChart");
+  if (existing && !existing.isDestroyed?.()) return existing;
+  const zone = centeredDefaultZone();
+  const win = widgetWindowPreview.create({
+    id: "bindingChart", page: "bindingwidget.html", title: "Infographic Viewer",
+    preloadPath: path.join(__dirname, "widget-window-bindingchart-preload.cjs"),
+    bounds: { x: zone.x + 600, y: zone.y + 60, width: 620, height: 340 },
+  });
+  win?.webContents?.once("did-finish-load", () => {
+    if (bindingChartVisible) widgetWindowPreview.show("bindingChart");
+    widgetWindowPreview.sendState("bindingChart");
+    console.log("[widget-window] native Infographic Viewer loaded; Canvas copy disabled; reference controls and native menus active");
+  });
+  return win;
+}
+function syncNativeBindingChartWindow(on) {
+  if (!nativeLogPreviewRequested() || !widgetWindowPreview?.enabled()) return false;
+  if (on) {
+    const win = ensureNativeBindingChartWindow();
+    widgetWindowPreview.show("bindingChart");
+    try { win?.webContents?.send?.("widget-window:binding-reload"); } catch {}
+  } else {
+    widgetWindowPreview.hide("bindingChart");
+  }
+  return true;
+}
 function createWidgetWindowPreview() {
   if (widgetWindowPreview) return widgetWindowPreview.enabled();
   widgetWindowPreview = new WidgetWindowManager({
@@ -180,7 +230,7 @@ function createWidgetWindowPreview() {
   });
   if (!widgetWindowPreview.enabled()) return false;
   registerWidgetWindowPreviewIpc();
-  console.log("[widget-window] Log native-window Preview 7 enabled; shared native menu foundation active; all other widgets remain on the Canvas");
+  console.log("[widget-window] native-window Preview 9 enabled; Log and Infographic Viewer migrated; all other widgets remain on the Canvas");
   return true;
 }
 
@@ -217,14 +267,14 @@ export function portWidgetWindowPreviewMain(input) {
   main = mustReplace(
     main,
     "let relockTimer = null; // Linux safety: automatically restore click-through after temporary interaction",
-    "let relockTimer = null; // Linux safety: automatically restore click-through after temporary interaction\nlet widgetWindowPreview = null; // ARCHVERSE_WIDGET_WINDOW_PREVIEW: opt-in Log migration",
+    "let relockTimer = null; // Linux safety: automatically restore click-through after temporary interaction\nlet widgetWindowPreview = null; // ARCHVERSE_WIDGET_WINDOW_PREVIEW: opt-in Log and Infographic Viewer migration",
     "widget preview state",
   );
   main = mustReplace(main, "// What the shell believes about the displays and where it actually put the window. Posted to the", previewRuntime, "widget preview runtime");
   main = mustReplace(
     main,
     "  reportGeometry();\n}\n// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME",
-    "  reportGeometry();\n  widgetWindowPreview?.sendState(\"logView\");\n}\n// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME",
+    "  reportGeometry();\n  widgetWindowPreview?.sendState(\"logView\");\n  widgetWindowPreview?.sendState(\"bindingChart\");\n}\n// ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME",
     "display refit preview update",
   );
   main = mustReplace(main, "  if (lastGlobalPointer) {\n    const canvas = fullDisplayBounds();", previewHeldF, "held-F preview classification");
@@ -245,6 +295,12 @@ export function portWidgetWindowPreviewMain(input) {
     'function sendLogViewVisible(state) { try { overlay?.webContents.send("overlay:logView-visible", state); } catch {} }',
     'function sendLogViewVisible(state) {\n  const on = state?.on === true;\n  if (nativeLogPreviewRequested()) {\n    try { overlay?.webContents.send("overlay:logView-visible", { on: false, nativeWindow: true }); } catch {}\n    syncNativeLogWindow(on);\n    return;\n  }\n  try { overlay?.webContents.send("overlay:logView-visible", state); } catch {}\n}',
     "native Log visibility routing",
+  );
+  main = mustReplace(
+    main,
+    'function sendBindingChartVisible(state){ try { overlay?.webContents.send("overlay:bindingchart-visible", state); } catch {} }',
+    'function sendBindingChartVisible(state){\n  const on = state?.on === true;\n  if (nativeLogPreviewRequested()) {\n    try { overlay?.webContents.send("overlay:bindingchart-visible", { on: false, nativeWindow: true }); } catch {}\n    syncNativeBindingChartWindow(on);\n    return;\n  }\n  try { overlay?.webContents.send("overlay:bindingchart-visible", state); } catch {}\n}',
+    "native Infographic Viewer visibility routing",
   );
   main = mustReplace(
     main,

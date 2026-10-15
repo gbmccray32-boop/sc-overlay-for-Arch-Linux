@@ -72,6 +72,7 @@ const win = manager.create({
   page: "scfeed.html",
   title: "SC Feed",
   bounds: { x: 480.4, y: 560.6, width: 340, height: 140 },
+  preloadPath: path.join("/opt", "archverse", "electron", "scfeed-preload.cjs"),
 });
 assert.equal(win.options.title, "ArchVerse Widget [scFeed]");
 assert.equal(win.options.type, "toolbar");
@@ -81,6 +82,7 @@ assert.equal(win.options.focusable, false);
 assert.equal(win.options.webPreferences.contextIsolation, true);
 assert.equal(win.options.webPreferences.nodeIntegration, false);
 assert.equal(win.options.webPreferences.sandbox, true);
+assert.equal(win.options.webPreferences.preload, path.join("/opt", "archverse", "electron", "scfeed-preload.cjs"));
 assert.deepEqual(
   { x: win.options.x, y: win.options.y, width: win.options.width, height: win.options.height },
   { x: 480, y: 561, width: 340, height: 140 },
@@ -171,6 +173,7 @@ assert.deepEqual(kwinRuleHints("mining"), {
 assert.deepEqual(normalizeBounds({ width: Number.NaN }), { x: 0, y: 0, width: 320, height: 240 });
 assert.throws(() => manager.create({ id: "../mining", page: "mining.html" }), /invalid widget window id/);
 assert.throws(() => manager.create({ id: "mining", page: "..\/mining.html" }), /invalid widget window page/);
+assert.throws(() => manager.create({ id: "mining", page: "mining.html", preloadPath: "relative.cjs" }), /invalid widget window preload path/);
 assert.throws(() => manager.create({ id: "scFeed", page: "scfeed.html" }), /already exists/);
 
 manager.closeAll();

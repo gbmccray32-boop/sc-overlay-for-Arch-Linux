@@ -23,7 +23,7 @@ const walk = (root, relative = "") => {
 };
 
 assert.equal(JSON.parse(read(base, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19");
-assert.equal(JSON.parse(read(preview, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19.windowpreview8");
+assert.equal(JSON.parse(read(preview, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19.windowpreview9");
 const main = read(preview, "app/electron/main.cjs");
 assert.match(main, /ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME/);
 assert.match(main, /screen\.getCursorScreenPoint\(\)/);
@@ -44,6 +44,10 @@ assert.match(main, /widget-window:menu-action/);
 assert.match(main, /widget-window:summon-cog/);
 assert.match(main, /overlay:logView-visible", \{ on: false, nativeWindow: true \}/);
 assert.match(main, /id: "logView", page: "logview\.html", title: "Log"/);
+assert.match(main, /native-window Preview 9 enabled; Log and Infographic Viewer migrated/);
+assert.match(main, /overlay:bindingchart-visible", \{ on: false, nativeWindow: true \}/);
+assert.match(main, /id: "bindingChart", page: "bindingwidget\.html", title: "Infographic Viewer"/);
+assert.match(main, /widget-window:binding-pick-png/);
 assert.doesNotMatch(read(preview, "bin/sc-blueprint-tracker"), /SC_TRACKER_WIDGET_WINDOWS=preview/);
 assert.match(read(preview, "bin/sc-blueprint-tracker-window-preview"), /SC_TRACKER_WIDGET_WINDOWS=preview/);
 assert.match(read(preview, "bin/sc-blueprint-tracker-window-preview"), /electron\.log/);
@@ -53,6 +57,10 @@ assert.match(read(preview, "app/electron/widget-window-manager.cjs"), /contentAc
 assert.match(read(preview, "app/electron/widget-window-log-preload.cjs"), /archverseNativeWidget/);
 assert.match(read(preview, "app/electron/widget-window-log-preload.cjs"), /widget-window:resize/);
 assert.match(read(preview, "app/electron/widget-window-log-preload.cjs"), /widget-window:menu-state/);
+const bindingPreload = read(preview, "app/electron/widget-window-bindingchart-preload.cjs");
+assert.match(bindingPreload, /archverseNativeWidget/);
+assert.match(bindingPreload, /widget-window:binding-pick-png/);
+assert.match(bindingPreload, /widget-window:binding-reload/);
 const rapidWorker = read(preview, "app/electron/rapidocr-worker.cjs");
 assert.match(rapidWorker, /process\.on\("error", handleIpcError\)/);
 assert.match(rapidWorker, /process\.send\(message, \(error\) =>/);
@@ -67,11 +75,19 @@ assert.match(logView, /archverse-native-resize-handle/);
 assert.match(logView, /api\.resize\("start"/);
 assert.match(logView, /archverse-native-menu-button/);
 assert.match(logView, /Show Overlay App cog/);
+const bindingChart = read(preview, "app/server/overlay/bindingwidget.html");
+assert.match(bindingChart, /NATIVE_PARAMS = new URLSearchParams\(location\.hash\.slice\(1\)\)/);
+assert.match(bindingChart, /NATIVE_WINDOW = NATIVE_PARAMS\.has\("widgetWindow"\)/);
+assert.match(bindingChart, /window\.archverseNativeWidget/);
+assert.match(bindingChart, /archverse-native-widget-window/);
+assert.match(bindingChart, /archverse-native-resize-handle/);
+assert.match(bindingChart, /Infographic Viewer settings/);
 
 const allowed = new Set([
   "ALPHA23-PROVENANCE.json", "FIELD-TEST.md", "README.md", "app/package-lock.json", "app/package.json",
   "app/electron/main.cjs", "app/electron/rapidocr-worker.cjs", "app/electron/widget-window-manager.cjs", "app/electron/widget-window-log-preload.cjs",
-  "app/server/overlay/logview.html", "bin/sc-blueprint-tracker-window-preview", "SHA256SUMS",
+  "app/electron/widget-window-bindingchart-preload.cjs", "app/server/overlay/logview.html", "app/server/overlay/bindingwidget.html",
+  "bin/sc-blueprint-tracker-window-preview", "SHA256SUMS",
 ]);
 const baseFiles = new Set(walk(base));
 const previewFiles = new Set(walk(preview));
@@ -90,8 +106,8 @@ for (const required of allowed) {
 }
 
 const provenance = JSON.parse(read(preview, "ALPHA23-PROVENANCE.json"));
-assert.equal(provenance.widgetWindowPreview.productionWidgetsMigrated, 1);
-assert.deepEqual(provenance.widgetWindowPreview.migratedWidgets, ["logView"]);
+assert.equal(provenance.widgetWindowPreview.productionWidgetsMigrated, 2);
+assert.deepEqual(provenance.widgetWindowPreview.migratedWidgets, ["logView", "bindingChart"]);
 assert.equal(
   provenance.protectedFiles["app/electron/main.cjs"],
   hash(path.join(preview, "app/electron/main.cjs")),
