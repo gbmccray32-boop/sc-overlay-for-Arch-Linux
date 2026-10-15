@@ -286,11 +286,35 @@ The contained native archive SHA-256 is
 `ff77b2c5dacdecd40f7cd48a43445941550b24ffdd84cadd91f9242902af6d74`.
 Independent verification passed the artifact checksum, all 1,663 internal manifest entries, the
 embedded Preview 7 version and provenance, and the intended native-menu markers. The archive
-remains field unverified.
+remained field unverified at packaging time.
 
-Next: field-test Preview 7 on normal CachyOS KDE. Verify menu persistence, Overlay App cog access,
-Settings hand-back, arrange/reset, hard click-through, and ordinary Canvas rollback. After that
-focused gate passes, migrate the next read-only/reference widget on the shared chrome.
+**Preview 7 passed its native Log behavior gate on normal CachyOS KDE on October 14.** Gabe reported
+that the restored menu and widget behavior worked. The complete 39-minute Electron log contains
+repeated native Log latches and releases with focus unchanged, 157 Mining heartbeats with zero IPC
+failures, and portal frames that remained live. The log SHA-256 is
+`48fdddeec0375fe4fb20248190e6b7cd2df8531b0f1e7943a1b90bb846db73f4`.
+
+Taskbar Quit exposed one shutdown-only fault. Electron closed the sidecar IPC routes while a
+RapidOCR worker was still returning a result. The worker's `process.connected` check raced the
+asynchronous pipe close, and `process.send()` emitted an unhandled `EPIPE`. Preview 8 routes every
+worker reply through a callback-based send guard, treats only `EPIPE` and
+`ERR_IPC_CHANNEL_CLOSED` as normal shutdown, and installs a process error listener as a final
+closed-pipe guard. The default Candidate 19 Canvas launcher is unchanged.
+
+**Preview 8 automated verification passed locally:** the new regression starts a disposable OCR
+worker, begins a delayed detection, disconnects its parent, and verifies code 0 with no `EPIPE` or
+unhandled error. The native-window foundation, Linux widget-hotkey exclusion, JavaScript syntax,
+and repository whitespace checks also pass. Packaged CI and the taskbar-Quit field check remain
+pending.
+
+The same field log records a separate late-session RapidOCR timeout cascade during its final
+83 seconds: both the 900 ms Mining worker and 5,000 ms background worker repeatedly recycled and
+fell back to Tesseract. Capture stayed live, transport remained healthy until shutdown, and this
+was not the cause of the taskbar error. Preserve it as a later OCR-performance behavior group; do
+not combine that work with the shutdown repair.
+
+Next: package Preview 8, then field-test taskbar Quit while Mining or Refinery OCR is active. After
+that focused gate passes, migrate the next read-only/reference widget on the shared chrome.
 
 ## Alpha23 public Linux release — September 24, 2026
 

@@ -23,7 +23,7 @@ const walk = (root, relative = "") => {
 };
 
 assert.equal(JSON.parse(read(base, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19");
-assert.equal(JSON.parse(read(preview, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19.windowpreview7");
+assert.equal(JSON.parse(read(preview, "app/package.json")).version, "0.1.47-r31.alpha23.candidate19.windowpreview8");
 const main = read(preview, "app/electron/main.cjs");
 assert.match(main, /ARCHVERSE_WIDGET_WINDOW_PREVIEW_RUNTIME/);
 assert.match(main, /screen\.getCursorScreenPoint\(\)/);
@@ -53,6 +53,10 @@ assert.match(read(preview, "app/electron/widget-window-manager.cjs"), /contentAc
 assert.match(read(preview, "app/electron/widget-window-log-preload.cjs"), /archverseNativeWidget/);
 assert.match(read(preview, "app/electron/widget-window-log-preload.cjs"), /widget-window:resize/);
 assert.match(read(preview, "app/electron/widget-window-log-preload.cjs"), /widget-window:menu-state/);
+const rapidWorker = read(preview, "app/electron/rapidocr-worker.cjs");
+assert.match(rapidWorker, /process\.on\("error", handleIpcError\)/);
+assert.match(rapidWorker, /process\.send\(message, \(error\) =>/);
+assert.doesNotMatch(rapidWorker, /if \(process\.connected\) process\.send/);
 const logView = read(preview, "app/server/overlay/logview.html");
 assert.match(logView, /NATIVE_PARAMS = new URLSearchParams\(location\.hash\.slice\(1\)\)/);
 assert.match(logView, /NATIVE_WINDOW = NATIVE_PARAMS\.has\("widgetWindow"\)/);
@@ -66,7 +70,7 @@ assert.match(logView, /Show Overlay App cog/);
 
 const allowed = new Set([
   "ALPHA23-PROVENANCE.json", "FIELD-TEST.md", "README.md", "app/package-lock.json", "app/package.json",
-  "app/electron/main.cjs", "app/electron/widget-window-manager.cjs", "app/electron/widget-window-log-preload.cjs",
+  "app/electron/main.cjs", "app/electron/rapidocr-worker.cjs", "app/electron/widget-window-manager.cjs", "app/electron/widget-window-log-preload.cjs",
   "app/server/overlay/logview.html", "bin/sc-blueprint-tracker-window-preview", "SHA256SUMS",
 ]);
 const baseFiles = new Set(walk(base));
@@ -93,4 +97,11 @@ assert.equal(
   hash(path.join(preview, "app/electron/main.cjs")),
   "main-process protected hash must describe the preview package",
 );
+if (provenance.protectedFiles["app/electron/rapidocr-worker.cjs"]) {
+  assert.equal(
+    provenance.protectedFiles["app/electron/rapidocr-worker.cjs"],
+    hash(path.join(preview, "app/electron/rapidocr-worker.cjs")),
+    "RapidOCR worker protected hash must describe the preview package",
+  );
+}
 console.log(`widget-window preview package test: passed (${changed.length} approved changes)`);
