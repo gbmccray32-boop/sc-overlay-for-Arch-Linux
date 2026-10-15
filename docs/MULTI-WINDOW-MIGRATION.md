@@ -141,3 +141,10 @@ The native menu persists Text size and fade values through the existing `widgets
 offers reset and arrange, opens full Settings through main, and restores the existing Canvas
 `summonCog` route. Releasing F closes the popover and restores hard click-through. Log remains the
 only migrated production widget until this menu milestone passes its focused field gate.
+
+Preview 8 passed its normal CachyOS field gate and repaired taskbar shutdown while a disposable OCR
+worker was still returning a result. Preview 9 migrates Infographic Viewer as the second production
+native window. It retains Fit, 1:1, reload, scrolling, and PNG selection through a restricted preload
+and sender-validated main-process IPC. Log and Infographic Viewer keep independent geometry and
+appearance, share the proven focusless input and native chrome contracts, and suppress only their own
+Canvas copies in the opt-in launcher. Every other widget stays on the Candidate 19 Canvas.

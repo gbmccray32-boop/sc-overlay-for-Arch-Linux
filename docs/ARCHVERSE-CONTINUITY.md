@@ -332,9 +332,30 @@ fell back to Tesseract. Capture stayed live, transport remained healthy until sh
 was not the cause of the taskbar error. Preserve it as a later OCR-performance behavior group; do
 not combine that work with the shutdown repair.
 
-Next: after Gabe approves the next milestone, migrate one continuously visible read-only/reference
-widget onto the shared native chrome. Keep Log as the field-proven native reference and keep every
-other widget on the Candidate 19 Canvas rollback path.
+Preview 9 migrates Infographic Viewer as the second production native window while keeping Log as
+the field-proven reference. Its Canvas copy is explicitly disabled only in the opt-in launcher. The
+viewer retains Fit, 1:1, reload, scrolling, and its PNG selector through a sender-validated native
+bridge. It uses the shared native menu, focusless held-F latch, arrange-only drag/resize, independent
+appearance and geometry persistence, and hidden-window exclusion. Each widget selects an explicit
+restricted preload; an absolute-path policy prevents a renderer from choosing a relative preload.
+Every other widget remains on the Candidate 19 Canvas rollback path. Capture, OCR, Mining, Hauling,
+Refinery, Gamescope, and the permanent Linux hotkey exclusion are unchanged.
+
+**Preview 9 packaged verification passed.** Remote implementation commit
+`9b3046cac35447987732dc1612d9f80a7c193f84` passed foundation workflow `38680288400` and the
+complete packaged workflow `38680290400`. The latter passed the checksum-pinned Candidate 19 stage,
+exact approved-file comparison, both native-window Electron tests, every inherited Linux regression,
+configuration and age-band controls, and the complete legacy widget/sidecar integration suite.
+Artifact `11948470803` has outer ZIP SHA-256
+`f9efdd78241531931b3cfa847175e4bdbdfca99ff7a150dde75ce9562574d400`. The contained native
+archive SHA-256 is `943185b8e8f5c7635d94ebe00ecf8a7ee69cf7989bf60c05f3ca037018d29c02`.
+Independent verification passed ZIP and gzip integrity, the exact version and two-widget provenance,
+the executable preview launcher, native Infographic Viewer markers, and all 1,663 internal manifest
+entries. Field status remains **Unverified**.
+
+Next: field-test Preview 9 on normal CachyOS KDE. Verify Infographic Viewer's held-F controls, PNG
+selection, separate appearance, drag/resize, restart persistence, hidden-window exclusion, and the
+ordinary Candidate 19 Canvas rollback. If it passes, ask Gabe whether to advance to the next widget.
 
 ## Alpha23 public Linux release — September 24, 2026
 
