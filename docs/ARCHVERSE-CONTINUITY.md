@@ -315,8 +315,16 @@ SHA-256 `2a308d8c5b73d8ab776af5c892fd417d50f5969865b49e36708c27e528361cae`.
 The contained native archive SHA-256 is
 `2322a302c96406d648f6892138ab2ee7da92ea63fb2003b371d54f150f79ccc5`.
 Independent verification passed ZIP and gzip integrity, the exact version and provenance, the
-shutdown markers, and all 1,662 internal manifest entries. Taskbar-Quit field verification remains
-pending.
+shutdown markers, and all 1,662 internal manifest entries.
+
+**Preview 8 passed its normal CachyOS KDE field gate on October 14.** Gabe reported that it worked
+well and taskbar Quit no longer produced the error. The complete 8-minute Electron log ends while
+Mining OCR is active: the worker reports its expected shutdown cancellation, then exits without
+`EPIPE`, `ERR_IPC_CHANNEL_CLOSED`, an unhandled error, crash, sidecar restart, or corrupt-file
+warning. All 33 Mining heartbeats report zero IPC failures. Portal capture remains live at roughly
+13-16 ms, RapidOCR records no timeout, and the native Log held-F interaction returns to hard
+click-through with focus unchanged. The log SHA-256 is
+`9c0acf3bb6ec99eb9687511a92625d515b98f8b6c9920463f54fe0f0b2f80d21`.
 
 The same field log records a separate late-session RapidOCR timeout cascade during its final
 83 seconds: both the 900 ms Mining worker and 5,000 ms background worker repeatedly recycled and
@@ -324,8 +332,9 @@ fell back to Tesseract. Capture stayed live, transport remained healthy until sh
 was not the cause of the taskbar error. Preserve it as a later OCR-performance behavior group; do
 not combine that work with the shutdown repair.
 
-Next: package Preview 8, then field-test taskbar Quit while Mining or Refinery OCR is active. After
-that focused gate passes, migrate the next read-only/reference widget on the shared chrome.
+Next: after Gabe approves the next milestone, migrate one continuously visible read-only/reference
+widget onto the shared native chrome. Keep Log as the field-proven native reference and keep every
+other widget on the Candidate 19 Canvas rollback path.
 
 ## Alpha23 public Linux release — September 24, 2026
 
