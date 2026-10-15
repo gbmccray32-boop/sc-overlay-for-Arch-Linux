@@ -304,7 +304,18 @@ closed-pipe guard. The default Candidate 19 Canvas launcher is unchanged.
 **Preview 8 automated verification passed locally:** the new regression starts a disposable OCR
 worker, begins a delayed detection, disconnects its parent, and verifies code 0 with no `EPIPE` or
 unhandled error. The native-window foundation, Linux widget-hotkey exclusion, JavaScript syntax,
-and repository whitespace checks also pass. Packaged CI and the taskbar-Quit field check remain
+and repository whitespace checks also pass.
+
+**Preview 8 packaged verification passed.** Remote commit
+`858858b9625755cd16a9377bba0011df2c91c378` passed foundation workflow `38676741763` and the
+complete packaged workflow `38676741432`. The latter passed checksum-pinned Candidate 19 staging,
+the exact Preview 8 package comparison, every inherited Linux regression, the native Log Electron
+suite, complete widget integration, packaging, and upload. Artifact `11946544458` has outer ZIP
+SHA-256 `2a308d8c5b73d8ab776af5c892fd417d50f5969865b49e36708c27e528361cae`.
+The contained native archive SHA-256 is
+`2322a302c96406d648f6892138ab2ee7da92ea63fb2003b371d54f150f79ccc5`.
+Independent verification passed ZIP and gzip integrity, the exact version and provenance, the
+shutdown markers, and all 1,662 internal manifest entries. Taskbar-Quit field verification remains
 pending.
 
 The same field log records a separate late-session RapidOCR timeout cascade during its final
