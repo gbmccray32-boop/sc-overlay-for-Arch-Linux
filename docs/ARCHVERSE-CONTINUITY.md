@@ -353,9 +353,31 @@ Independent verification passed ZIP and gzip integrity, the exact version and tw
 the executable preview launcher, native Infographic Viewer markers, and all 1,663 internal manifest
 entries. Field status remains **Unverified**.
 
-Next: field-test Preview 9 on normal CachyOS KDE. Verify Infographic Viewer's held-F controls, PNG
-selection, separate appearance, drag/resize, restart persistence, hidden-window exclusion, and the
-ordinary Candidate 19 Canvas rollback. If it passes, ask Gabe whether to advance to the next widget.
+**Preview 9 passed its normal CachyOS KDE field gate on October 14.** Gabe reported that the
+two-window preview worked well. The complete 9.4-minute Electron log shows three held-F
+Infographic Viewer latches with focus unchanged and a matching return to hard click-through after
+each release. Four explicit drags and three resizes completed with nonzero movement samples; every
+requested bound exactly matched KWin's actual bound, including the final 3645x2084 viewer size.
+Log and Infographic Viewer entered and left arrange mode together without changing Canvas focus.
+The log SHA-256 is
+`cb54b46a4cd0c06feb4a068fcc9d4952a9cdf910698607675f5ad4fb0fa634d3`.
+
+Normal capture remained on `portal-pipewire-window` at a 15 ms median across 35 reported
+heartbeats. All 37 Mining heartbeats reported zero IPC failures and zero pending requests. One
+portal frame missed its 1,100 ms caller deadline during a large resize, used the Spectacle fallback
+once, and returned to the retained portal stream on the next frame. A separate short sidecar
+backlog produced four failed health probes, cleared without a restart, and preserved the last
+confirmed vehicle state. No crash, helper exit, or focus transfer occurred. The log ends during
+normal operation rather than recording an orderly shutdown.
+
+The launcher's first un-timestamped banner still says Preview 7, but the authoritative startup
+record and runtime behavior identify Preview 9 with both native windows. Correct that stale banner
+in the next implementation milestone. Control-specific clicks such as Fit, 1:1, reload, and PNG
+selection are not individually logged; their field evidence is Gabe's successful observation.
+
+Next: after Gabe approves advancing, migrate the next read-only/reference widget on the shared
+native chrome. Keep Log and Infographic Viewer as the field-proven controls, preserve the ordinary
+Candidate 19 Canvas rollback, and do not combine the widget migration with capture or OCR changes.
 
 ## Alpha23 public Linux release — September 24, 2026
 

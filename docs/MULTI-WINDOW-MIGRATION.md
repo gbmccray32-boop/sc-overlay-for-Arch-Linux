@@ -148,3 +148,10 @@ native window. It retains Fit, 1:1, reload, scrolling, and PNG selection through
 and sender-validated main-process IPC. Log and Infographic Viewer keep independent geometry and
 appearance, share the proven focusless input and native chrome contracts, and suppress only their own
 Canvas copies in the opt-in launcher. Every other widget stays on the Candidate 19 Canvas.
+
+Preview 9 passed its normal CachyOS KDE field gate on October 14. Three held-F viewer interactions
+kept focus with Star Citizen, all four moves and three resizes matched KWin's requested bounds, and
+arrange mode kept Canvas focus unchanged. Portal capture remained live apart from one bounded
+single-frame Spectacle fallback, and all 37 Mining heartbeats reported zero IPC failures. A short
+sidecar backlog recovered without a restart. The next milestone may migrate one additional
+read-only/reference widget only after Gabe approves advancing; capture and OCR remain unchanged.
